@@ -2,11 +2,11 @@
 
 **Milestone:** M-13
 **Realizes:** D-04
-**Status:** DONE
+**Status:** PENDING
 **Derived:** 2026-02-18
 
 ## Actions
 
 ### A-26: Write commands/declare/dashboard.md
-**Status:** DONE
+**Status:** PENDING
 **Produces:** /declare:dashboard slash command that starts the server, opens the browser, and tails server logs

@@ -2,15 +2,15 @@
 
 **Milestone:** M-14
 **Realizes:** D-05
-**Status:** DONE
+**Status:** PENDING
 **Derived:** 2026-02-18
 
 ## Actions
 
 ### A-27: Add quick-task and todo CJS commands
-**Status:** DONE
+**Status:** PENDING
 **Produces:** src/commands/quick-task.js and src/commands/todo.js with .planning/quick/ and .planning/todos/ management, rebuilt bundle
 
 ### A-28: Write commands/declare/quick.md, add-todo.md, check-todos.md
-**Status:** DONE
+**Status:** PENDING
 **Produces:** 3 slash commands mirroring GSD quick/todo workflow

@@ -2,15 +2,15 @@
 
 **Milestone:** M-12
 **Realizes:** D-04
-**Status:** DONE
+**Status:** PENDING
 **Derived:** 2026-02-18
 
 ## Actions
 
 ### A-24: Build frontend DAG visualization
-**Status:** DONE
+**Status:** PENDING
 **Produces:** src/server/public/index.html + JS rendering D→M→A hierarchy with status markers, integrity badges, performance scores
 
 ### A-25: Wire frontend to API
-**Status:** DONE
+**Status:** PENDING
 **Produces:** Complete browser UI with live refresh and node detail views

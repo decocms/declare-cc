@@ -2,15 +2,15 @@
 
 **Milestone:** M-06
 **Realizes:** D-02
-**Status:** DONE
+**Status:** PENDING
 **Derived:** 2026-02-18
 
 ## Actions
 
 ### A-13: Add complete-milestone CJS command
-**Status:** DONE
+**Status:** PENDING
 **Produces:** src/commands/complete-milestone.js with graph snapshot to .planning/milestones/vX.Y/, git tag creation, rebuilt bundle
 
 ### A-14: Write commands/declare/complete-milestone.md
-**Status:** DONE
+**Status:** PENDING
 **Produces:** /declare:complete-milestone slash command with pre-flight checks, stats, archiving, PROJECT.md update
