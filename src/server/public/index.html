@@ -460,10 +460,17 @@
       stroke: var(--border);
       stroke-width: 1.5;
       opacity: 0.6;
+      transition: opacity 0.3s ease;
     }
     .edge.highlight {
       stroke: var(--text-dim);
       opacity: 1;
+    }
+    .edge.focus-dim {
+      opacity: 0.04;
+    }
+    #edges-svg {
+      transition: none;
     }
 
     /* Scrollbar */

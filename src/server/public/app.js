@@ -677,10 +677,13 @@ function chainTagSection(label, items, type) {
   </div>`;
 }
 
-// ─── Focus mode ───────────────────────────────────────────────────────────────
+// ─── Focus mode — FLIP technique ──────────────────────────────────────────────
+// Exiting nodes: removed from flow instantly (→ flex re-centers), then overlaid
+// at their original positions via position:fixed for the directional slide-out.
+// Subtree nodes: FLIP'd from old positions to new centered positions simultaneously.
 
 const $focusHint = document.getElementById('focus-hint');
-const FOCUS_DUR = 360; // ms for enter/exit animation
+const FOCUS_DUR = 380;
 
 /**
  * Compute the set of node IDs that belong to a focused subtree.
@@ -729,205 +732,243 @@ function getFocusSubtree(nodeId, type) {
   return visible;
 }
 
-/**
- * Apply inline styles for the exit animation (flex-basis + margin collapse + slide + fade).
- * Using flex-basis so the node physically shrinks in the flow while sliding out —
- * remaining nodes drift to center simultaneously, no blink.
- */
-function applyExitStyles(el, dirLeft, origWidth, origMargin) {
-  const EASING_OUT = 'cubic-bezier(0.4,0,1,1)';
-  const EASING_WIDTH = 'cubic-bezier(0.4,0,0.6,1)';
-  const dur = FOCUS_DUR + 'ms';
-  const origHeight = el.offsetHeight;
-
-  el.style.flexBasis = origWidth + 'px';
-  el.style.marginLeft = origMargin + 'px';
-  el.style.marginRight = origMargin + 'px';
-  el.style.height = origHeight + 'px';
-  el.style.paddingTop = '12px';
-  el.style.paddingBottom = '12px';
-  el.style.minWidth = '0';
-  el.style.overflow = 'hidden';
-
-  void el.offsetWidth;
-
-  el.style.transition = [
-    `flex-basis ${dur} ${EASING_WIDTH}`,
-    `margin-left ${dur} ${EASING_WIDTH}`,
-    `margin-right ${dur} ${EASING_WIDTH}`,
-    `height ${dur} ${EASING_WIDTH}`,
-    `padding-top ${dur} ${EASING_WIDTH}`,
-    `padding-bottom ${dur} ${EASING_WIDTH}`,
-    `opacity ${FOCUS_DUR * 0.75}ms ease`,
-    `transform ${dur} ${EASING_OUT}`,
-  ].join(',');
-
-  el.style.flexBasis = '0px';
-  el.style.marginLeft = '0px';
-  el.style.marginRight = '0px';
-  el.style.height = '0px';
-  el.style.paddingTop = '0px';
-  el.style.paddingBottom = '0px';
-  el.style.opacity = '0';
-  el.style.transform = `translateX(${dirLeft ? -160 : 160}%)`;
-  el.classList.add('focus-exiting');
-}
-
-/**
- * Apply inline styles for the enter-back animation (expand + slide in + fade).
- */
-function applyEnterStyles(el, dirLeft, origWidth, origMargin, origHeight) {
-  const EASING_IN = 'cubic-bezier(0,0,0.2,1)';
-  const EASING_WIDTH = 'cubic-bezier(0.4,0,0.6,1)';
-  const dur = FOCUS_DUR + 'ms';
-
-  el.style.transition = 'none';
-  el.style.flexBasis = '0px';
-  el.style.marginLeft = '0px';
-  el.style.marginRight = '0px';
-  el.style.height = '0px';
-  el.style.paddingTop = '0px';
-  el.style.paddingBottom = '0px';
-  el.style.minWidth = '0';
-  el.style.overflow = 'hidden';
-  el.style.opacity = '0';
-  el.style.transform = `translateX(${dirLeft ? -160 : 160}%)`;
-
-  void el.offsetWidth;
-
-  el.style.transition = [
-    `flex-basis ${dur} ${EASING_WIDTH}`,
-    `margin-left ${dur} ${EASING_WIDTH}`,
-    `margin-right ${dur} ${EASING_WIDTH}`,
-    `height ${dur} ${EASING_WIDTH}`,
-    `padding-top ${dur} ${EASING_WIDTH}`,
-    `padding-bottom ${dur} ${EASING_WIDTH}`,
-    `opacity ${FOCUS_DUR * 0.8}ms ease ${FOCUS_DUR * 0.1}ms`,
-    `transform ${dur} ${EASING_IN}`,
-  ].join(',');
-
-  el.style.flexBasis = origWidth + 'px';
-  el.style.marginLeft = origMargin + 'px';
-  el.style.marginRight = origMargin + 'px';
-  el.style.height = origHeight + 'px';
-  el.style.paddingTop = '12px';
-  el.style.paddingBottom = '12px';
-  el.style.opacity = '1';
-  el.style.transform = 'translateX(0)';
-}
-
 /** Clear all focus-mode inline styles from a node element. */
 function clearNodeFocusStyles(el) {
-  el.style.transition = '';
-  el.style.flexBasis = '';
-  el.style.marginLeft = '';
-  el.style.marginRight = '';
-  el.style.height = '';
-  el.style.paddingTop = '';
-  el.style.paddingBottom = '';
-  el.style.minWidth = '';
-  el.style.overflow = '';
-  el.style.opacity = '';
-  el.style.transform = '';
+  el.style.cssText = ''; // wipe all inline styles at once
   el.classList.remove('focus-exiting', 'focus-active');
   el.dataset.focusDir = '';
 }
 
-/** @type {Array<{el: HTMLElement, origWidth: number, origHeight: number, origMargin: number, dirLeft: boolean}>} */
+/** @type {Array<{el: HTMLElement, rect: DOMRect, dirLeft: boolean}>} */
 let exitedNodes = [];
 /** @type {ReturnType<typeof setTimeout> | null} */
 let focusCleanupTimer = null;
 
 /**
- * Enter focus mode — nodes outside the subtree collapse + slide out simultaneously.
+ * Snapshot getBoundingClientRect for a set of node IDs.
+ * @param {Set<string>} ids
+ * @returns {Map<string, DOMRect>}
+ */
+function snapshotRects(ids) {
+  const map = new Map();
+  ids.forEach(id => {
+    const el = document.querySelector(`[data-node-id="${id}"]`);
+    if (el) map.set(id, el.getBoundingClientRect());
+  });
+  return map;
+}
+
+/**
+ * Enter focus mode using FLIP:
+ * 1. Snapshot subtree node positions (FIRST)
+ * 2. Remove exiting nodes from flow + overlay them fixed at their original positions
+ * 3. Flex re-centers remaining nodes instantly
+ * 4. Snapshot new subtree positions (LAST)
+ * 5. INVERT: push subtree nodes back to original positions via transform (no transition)
+ * 6. PLAY: animate subtree to new center + animate fixed-overlay exits to slide out
  */
 function enterFocusMode(nodeId, type) {
   if (!graphData) return;
-
-  // If already in focus, clean up immediately before re-entering
   if (focusNodeId) {
     if (focusCleanupTimer) { clearTimeout(focusCleanupTimer); focusCleanupTimer = null; }
-    document.querySelectorAll('.node').forEach(el => clearNodeFocusStyles(el));
+    // Restore everything cleanly before re-entering
+    exitedNodes.forEach(({ el }) => {
+      el.style.cssText = '';
+      el.classList.remove('focus-exiting', 'focus-active');
+    });
+    document.querySelectorAll('.node.focus-active').forEach(el => el.classList.remove('focus-active'));
     exitedNodes = [];
   }
 
   focusNodeId = nodeId;
   const subtree = getFocusSubtree(nodeId, type);
 
+  // Determine focus center X for directional exits
   const focusEl = document.querySelector(`[data-node-id="${nodeId}"]`);
   if (!focusEl) return;
   const focusCenterX = focusEl.getBoundingClientRect().left + focusEl.getBoundingClientRect().width / 2;
 
+  // Classify all nodes
+  const subtreeEls = new Map(); // id → el
   exitedNodes = [];
-
   document.querySelectorAll('.node').forEach(el => {
     const id = el.dataset.nodeId;
     if (!id) return;
-    clearNodeFocusStyles(el);
-
+    el.style.cssText = '';
+    el.classList.remove('focus-exiting', 'focus-active');
     if (subtree.has(id)) {
       el.classList.add('focus-active');
+      subtreeEls.set(id, el);
     } else {
       const rect = el.getBoundingClientRect();
-      const dirLeft = (rect.left + rect.width / 2) < focusCenterX;
-      const origWidth = el.offsetWidth;
-      const origHeight = el.offsetHeight;
-      const origMargin = 8;
-      exitedNodes.push({ el, origWidth, origHeight, origMargin, dirLeft });
-      el.dataset.focusDir = dirLeft ? 'left' : 'right';
-      applyExitStyles(el, dirLeft, origWidth, origMargin);
+      exitedNodes.push({ el, rect, dirLeft: (rect.left + rect.width / 2) < focusCenterX });
     }
   });
 
-  // After the slide-out finishes: set display:none so flex genuinely re-centers.
-  // The nodes are already opacity 0 so this is invisible.
+  // FIRST: snapshot subtree positions before layout change
+  const firstRects = snapshotRects(subtree);
+
+  // Remove exiting nodes from flow (instantly invisible — opacity handled separately)
+  // Pin them fixed at their current viewport positions for the slide-out overlay
+  exitedNodes.forEach(({ el, rect, dirLeft }) => {
+    el.dataset.focusDir = dirLeft ? 'left' : 'right';
+    el.classList.add('focus-exiting');
+    el.style.position = 'fixed';
+    el.style.left = rect.left + 'px';
+    el.style.top = rect.top + 'px';
+    el.style.width = rect.width + 'px';
+    el.style.height = rect.height + 'px';
+    el.style.margin = '0';
+    el.style.zIndex = '15';
+    el.style.pointerEvents = 'none';
+    el.style.opacity = '1';
+    el.style.transform = 'none';
+  });
+
+  // Force reflow: flex now sees only subtree nodes → re-centers them
+  void document.body.offsetWidth;
+
+  // LAST: snapshot new positions
+  const lastRects = snapshotRects(subtree);
+
+  // INVERT: push subtree nodes to appear at their old positions (no transition)
+  subtreeEls.forEach((el, id) => {
+    const first = firstRects.get(id);
+    const last = lastRects.get(id);
+    if (!first || !last) return;
+    const dx = first.left - last.left;
+    const dy = first.top - last.top;
+    if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
+      el.style.transition = 'none';
+      el.style.transform = `translate(${dx}px, ${dy}px)`;
+    }
+  });
+
+  // Force reflow so invert transforms are painted before we play
+  void document.body.offsetWidth;
+
+  const dur = FOCUS_DUR + 'ms';
+  const easeIn = 'cubic-bezier(0,0,0.2,1)';
+  const easeOut = 'cubic-bezier(0.4,0,1,1)';
+
+  // PLAY: animate subtree nodes to their new centered positions
+  subtreeEls.forEach(el => {
+    el.style.transition = `transform ${dur} ${easeIn}`;
+    el.style.transform = '';
+  });
+
+  // PLAY: slide + fade exiting nodes out from their fixed positions
+  requestAnimationFrame(() => {
+    exitedNodes.forEach(({ el, dirLeft }) => {
+      el.style.transition = `opacity ${Math.round(FOCUS_DUR * 0.7)}ms ease, transform ${dur} ${easeOut}`;
+      el.style.opacity = '0';
+      el.style.transform = `translateX(${dirLeft ? -130 : 130}%)`;
+    });
+    // Fade edges for non-subtree connections
+    drawEdgesForSubtree(subtree);
+  });
+
+  // After animation: clean up exiting overlay nodes
   setTimeout(() => {
-    exitedNodes.forEach(({ el }) => { el.style.display = 'none'; });
-    requestAnimationFrame(() => drawEdgesForSubtree(subtree));
-  }, FOCUS_DUR + 30);
+    exitedNodes.forEach(({ el }) => {
+      el.style.cssText = '';
+      el.style.display = 'none';
+      el.classList.remove('focus-exiting');
+    });
+    // Clean up subtree transform remnants
+    subtreeEls.forEach(el => { el.style.transition = ''; el.style.transform = ''; });
+    drawEdgesForSubtree(subtree);
+  }, FOCUS_DUR + 50);
 
   $focusHint.classList.add('visible');
-  requestAnimationFrame(() => drawEdgesForSubtree(subtree));
 }
 
 /**
- * Exit focus mode — all nodes animate back in, expanding and sliding from their exit direction.
+ * Exit focus mode — reverse FLIP: exiting nodes slide back in, subtree nodes FLIP back.
  */
 function exitFocusMode() {
   if (!focusNodeId) return;
+  const prevSubtree = getFocusSubtree(
+    focusNodeId,
+    document.querySelector(`[data-node-id="${focusNodeId}"]`)?.dataset.nodeType || 'declaration'
+  );
   focusNodeId = null;
   if (focusCleanupTimer) { clearTimeout(focusCleanupTimer); focusCleanupTimer = null; }
 
-  // Restore focus-active nodes first
-  document.querySelectorAll('.node.focus-active').forEach(el => {
-    el.classList.remove('focus-active');
+  const dur = FOCUS_DUR + 'ms';
+  const easeIn = 'cubic-bezier(0,0,0.2,1)';
+  const easeOut = 'cubic-bezier(0.4,0,1,1)';
+
+  // FIRST: snapshot current (centered) positions of subtree nodes
+  const firstRects = snapshotRects(prevSubtree);
+
+  // Restore exiting nodes to flow (still display:none → make visible but opacity 0)
+  exitedNodes.forEach(({ el, rect, dirLeft }) => {
+    el.style.display = '';
+    // No transition yet — position fixed at final (offscreen) state for entry
+    el.style.position = 'fixed';
+    el.style.left = rect.left + 'px';
+    el.style.top = rect.top + 'px';
+    el.style.width = rect.width + 'px';
+    el.style.height = rect.height + 'px';
+    el.style.margin = '0';
+    el.style.zIndex = '15';
+    el.style.opacity = '0';
+    el.style.transform = `translateX(${dirLeft ? -130 : 130}%)`;
   });
 
-  // Restore display first (node is still invisible — opacity 0, flex-basis 0), then animate in
-  exitedNodes.forEach(({ el }) => { el.style.display = ''; });
-  // Force reflow so display:'' takes effect before we start animation
-  document.body.offsetHeight; // eslint-disable-line
+  void document.body.offsetWidth;
 
-  exitedNodes.forEach(({ el, origWidth, origHeight, origMargin, dirLeft }) => {
-    applyEnterStyles(el, dirLeft, origWidth, origMargin, origHeight);
+  // Slide exiting nodes back to original positions
+  requestAnimationFrame(() => {
+    exitedNodes.forEach(({ el }) => {
+      el.style.transition = `opacity ${Math.round(FOCUS_DUR * 0.8)}ms ease ${Math.round(FOCUS_DUR * 0.1)}ms, transform ${dur} ${easeIn}`;
+      el.style.opacity = '1';
+      el.style.transform = 'none';
+    });
   });
 
-  $focusHint.classList.remove('visible');
-  requestAnimationFrame(() => drawEdges());
+  // LAST: snapshot where subtree nodes will end up after exiting nodes re-enter flow
+  // We approximate: compute FLIP after a tick
+  requestAnimationFrame(() => {
+    // Snapshot positions of subtree now (they're still at centered positions)
+    // After cleanup they'll be at their natural positions — use stored firstRects as "last" target
+    const subtreeEls = new Map();
+    prevSubtree.forEach(id => {
+      const el = document.querySelector(`[data-node-id="${id}"]`);
+      if (el) subtreeEls.set(id, el);
+    });
 
-  // Clean up inline styles after animation
+    subtreeEls.forEach((el, id) => {
+      const first = firstRects.get(id);
+      // Approximate "last" as the same position (exiting nodes haven't re-entered flow yet)
+      // So subtree nodes don't need to FLIP much — just clean up transform
+      if (first) {
+        el.style.transition = `transform ${dur} ${easeIn}`;
+        el.style.transform = '';
+      }
+      el.classList.remove('focus-active');
+    });
+
+    drawEdges();
+  });
+
+  // After animation: fully restore all inline styles
   const nodesToClean = [...exitedNodes];
   exitedNodes = [];
   focusCleanupTimer = setTimeout(() => {
     nodesToClean.forEach(({ el }) => {
-      // Disable transitions before removing explicit height/padding to prevent snap
-      el.style.transition = 'none';
-      void el.offsetWidth;
-      clearNodeFocusStyles(el);
+      el.style.cssText = '';
+    });
+    document.querySelectorAll('.node').forEach(el => {
+      el.style.transition = '';
+      el.style.transform = '';
     });
     requestAnimationFrame(() => drawEdges());
     focusCleanupTimer = null;
   }, FOCUS_DUR + 80);
+
+  $focusHint.classList.remove('visible');
 }
 
 /**
@@ -956,7 +997,7 @@ function drawEdgesForSubtree(subtree) {
       const dBot = getBottomCenter(dEl);
       const inSubtree = subtree.has(m.id) && subtree.has(dId);
       const path = makePath(curvePath(dBot.x, dBot.y, mTop.x, mTop.y), inSubtree);
-      if (!inSubtree) path.style.opacity = '0.05';
+      if (!inSubtree) path.classList.add('focus-dim');
       fragment.appendChild(path);
     });
   });
@@ -972,7 +1013,7 @@ function drawEdgesForSubtree(subtree) {
       const mBot = getBottomCenter(mEl);
       const inSubtree = subtree.has(a.id) && subtree.has(mId);
       const path = makePath(curvePath(mBot.x, mBot.y, aTop.x, aTop.y), inSubtree);
-      if (!inSubtree) path.style.opacity = '0.05';
+      if (!inSubtree) path.classList.add('focus-dim');
       fragment.appendChild(path);
     });
   });
