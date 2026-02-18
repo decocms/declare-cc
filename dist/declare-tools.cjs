@@ -479,7 +479,24 @@ var require_plan = __commonJS({
       }
       return lines.join("\n");
     }
-    module2.exports = { parsePlanFile, writePlanFile };
+    function updateActionStatus(content, actionId, newStatus) {
+      const lines = content.split("\n");
+      let inSection = false;
+      let patched = false;
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (line.startsWith("### ")) {
+          inSection = line.startsWith(`### ${actionId}:`);
+          if (!inSection) patched = false;
+        }
+        if (inSection && !patched && /^\*\*Status:\*\*/i.test(line.trim())) {
+          lines[i] = `**Status:** ${newStatus}`;
+          patched = true;
+        }
+      }
+      return lines.join("\n");
+    }
+    module2.exports = { parsePlanFile, writePlanFile, updateActionStatus };
   }
 });
 
@@ -2928,6 +2945,156 @@ var require_complete_milestone = __commonJS({
   }
 });
 
+// src/commands/sync-status.js
+var require_sync_status = __commonJS({
+  "src/commands/sync-status.js"(exports2, module2) {
+    "use strict";
+    var { existsSync, readFileSync, writeFileSync } = require("node:fs");
+    var { join, resolve } = require("node:path");
+    var { buildDagFromDisk, loadActionsFromFolders } = require_build_dag();
+    var { parseMilestonesFile, writeMilestonesFile } = require_milestones();
+    var { parseFutureFile, writeFutureFile } = require_future();
+    var { parsePlanFile, updateActionStatus } = require_plan();
+    var { findMilestoneFolder } = require_milestone_folders();
+    var { isCompleted } = require_engine();
+    function looksLikeFilePath(produces) {
+      if (!produces || !produces.trim()) return false;
+      return /[/\\]/.test(produces) || /\.\w{1,10}$/.test(produces);
+    }
+    function runSyncStatus2(cwd) {
+      const planningDir = join(cwd, ".planning");
+      if (!existsSync(planningDir)) {
+        return { error: "No Declare project found. Run /declare:init first." };
+      }
+      const graphResult = buildDagFromDisk(cwd);
+      if ("error" in graphResult) return graphResult;
+      const { dag, milestones, declarations } = graphResult;
+      const actionResults = [];
+      const milestoneResults = [];
+      const declarationResults = [];
+      for (const m of milestones) {
+        const folderPath = findMilestoneFolder(planningDir, m.id);
+        if (!folderPath) continue;
+        const planPath = join(folderPath, "PLAN.md");
+        if (!existsSync(planPath)) continue;
+        let planContent = readFileSync(planPath, "utf-8");
+        const { actions } = parsePlanFile(planContent);
+        let planDirty = false;
+        const milestoneAlreadyDone = isCompleted(m.status);
+        for (const action of actions) {
+          if (isCompleted(action.status)) {
+            actionResults.push({ id: action.id, milestone: m.id, changed: false, reason: "already DONE" });
+            continue;
+          }
+          if (milestoneAlreadyDone) {
+            planContent = updateActionStatus(planContent, action.id, "DONE");
+            planDirty = true;
+            actionResults.push({ id: action.id, milestone: m.id, changed: true, reason: `milestone ${m.id} is DONE` });
+            continue;
+          }
+          const produces = action.produces || "";
+          if (looksLikeFilePath(produces)) {
+            const filePath = resolve(cwd, produces);
+            if (existsSync(filePath)) {
+              planContent = updateActionStatus(planContent, action.id, "DONE");
+              planDirty = true;
+              actionResults.push({ id: action.id, milestone: m.id, changed: true, reason: `produces exists: ${produces}` });
+            } else {
+              actionResults.push({ id: action.id, milestone: m.id, changed: false, reason: `produces missing: ${produces}` });
+            }
+          } else {
+            actionResults.push({ id: action.id, milestone: m.id, changed: false, reason: "no verifiable produces path" });
+          }
+        }
+        if (planDirty) {
+          writeFileSync(planPath, planContent, "utf-8");
+        }
+      }
+      const freshActions = loadActionsFromFolders(planningDir);
+      const milestoneActionIds = /* @__PURE__ */ new Map();
+      const actionStatusMap = /* @__PURE__ */ new Map();
+      for (const a of freshActions) {
+        actionStatusMap.set(a.id, a.status);
+        for (const mid of a.causes) {
+          if (!milestoneActionIds.has(mid)) milestoneActionIds.set(mid, []);
+          milestoneActionIds.get(mid).push(a.id);
+        }
+      }
+      const milestonesPath = join(planningDir, "MILESTONES.md");
+      const milestonesContent = existsSync(milestonesPath) ? readFileSync(milestonesPath, "utf-8") : "";
+      const { milestones: parsedMilestones } = parseMilestonesFile(milestonesContent);
+      let milestonesDirty = false;
+      const updatedMilestones = parsedMilestones.map((m) => {
+        if (isCompleted(m.status)) {
+          milestoneResults.push({ id: m.id, changed: false, reason: "already DONE" });
+          return m;
+        }
+        const actionIds = milestoneActionIds.get(m.id) || [];
+        if (actionIds.length === 0) {
+          milestoneResults.push({ id: m.id, changed: false, reason: "no actions found" });
+          return m;
+        }
+        const allDone = actionIds.every((aid) => isCompleted(actionStatusMap.get(aid) || "PENDING"));
+        if (allDone) {
+          milestonesDirty = true;
+          milestoneResults.push({ id: m.id, changed: true, reason: `all ${actionIds.length} actions DONE` });
+          return { ...m, status: "DONE" };
+        } else {
+          const doneCount = actionIds.filter((aid) => isCompleted(actionStatusMap.get(aid) || "PENDING")).length;
+          milestoneResults.push({ id: m.id, changed: false, reason: `${doneCount}/${actionIds.length} actions DONE` });
+          return m;
+        }
+      });
+      if (milestonesDirty) {
+        const projectNameMatch = milestonesContent.match(/^# Milestones:\s*(.+)/m);
+        const projectName = projectNameMatch ? projectNameMatch[1].trim() : "Project";
+        writeFileSync(milestonesPath, writeMilestonesFile(updatedMilestones, projectName), "utf-8");
+      }
+      const futurePath = join(planningDir, "FUTURE.md");
+      const futureContent = existsSync(futurePath) ? readFileSync(futurePath, "utf-8") : "";
+      const parsedDeclarations = parseFutureFile(futureContent);
+      const milestoneStatusMap = new Map(updatedMilestones.map((m) => [m.id, m.status]));
+      let futureDirty = false;
+      const updatedDeclarations = parsedDeclarations.map((d) => {
+        if (isCompleted(d.status)) {
+          declarationResults.push({ id: d.id, changed: false, reason: "already DONE" });
+          return d;
+        }
+        const realizingMilestones = updatedMilestones.filter((m) => m.realizes.includes(d.id));
+        if (realizingMilestones.length === 0) {
+          declarationResults.push({ id: d.id, changed: false, reason: "no milestones realize this declaration" });
+          return d;
+        }
+        const allDone = realizingMilestones.every((m) => isCompleted(milestoneStatusMap.get(m.id) || "PENDING"));
+        if (allDone) {
+          futureDirty = true;
+          declarationResults.push({ id: d.id, changed: true, reason: `all ${realizingMilestones.length} milestones DONE` });
+          return { ...d, status: "DONE" };
+        } else {
+          const doneCount = realizingMilestones.filter((m) => isCompleted(milestoneStatusMap.get(m.id) || "PENDING")).length;
+          declarationResults.push({ id: d.id, changed: false, reason: `${doneCount}/${realizingMilestones.length} milestones DONE` });
+          return d;
+        }
+      });
+      if (futureDirty) {
+        const projectNameMatch = futureContent.match(/^# Future:\s*(.+)/m);
+        const projectName = projectNameMatch ? projectNameMatch[1].trim() : "Project";
+        writeFileSync(futurePath, writeFutureFile(updatedDeclarations, projectName), "utf-8");
+      }
+      const actionsDone = actionResults.filter((r) => r.changed).length;
+      const msDone = milestoneResults.filter((r) => r.changed).length;
+      const declsDone = declarationResults.filter((r) => r.changed).length;
+      const summary = [
+        `Actions marked DONE: ${actionsDone}/${actionResults.length}`,
+        `Milestones marked DONE: ${msDone}/${milestoneResults.length}`,
+        `Declarations marked DONE: ${declsDone}/${declarationResults.length}`
+      ].join(" | ");
+      return { actions: actionResults, milestones: milestoneResults, declarations: declarationResults, summary };
+    }
+    module2.exports = { runSyncStatus: runSyncStatus2 };
+  }
+});
+
 // src/commands/quick-task.js
 var require_quick_task = __commonJS({
   "src/commands/quick-task.js"(exports2, module2) {
@@ -3708,6 +3875,7 @@ var { runCheckOccurrence } = require_check_occurrence();
 var { runComputePerformance } = require_compute_performance();
 var { runRenegotiate } = require_renegotiate();
 var { runCompleteMilestone } = require_complete_milestone();
+var { runSyncStatus } = require_sync_status();
 var { runQuickTask } = require_quick_task();
 var { runAddTodo, runCheckTodos, runCompleteTodo } = require_todo();
 var { runConfigGet } = require_config_get();
@@ -3756,7 +3924,7 @@ function main() {
   const args = process.argv.slice(2);
   const command = args[0];
   if (!command) {
-    console.log(JSON.stringify({ error: "No command specified. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, serve, record-session, get-state, quick-task, add-todo, check-todos, complete-todo, config-get, config-set, health-check, help" }));
+    console.log(JSON.stringify({ error: "No command specified. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, sync-status, serve, record-session, get-state, quick-task, add-todo, check-todos, complete-todo, config-get, config-set, health-check, help" }));
     process.exit(1);
   }
   try {
@@ -3873,6 +4041,13 @@ function main() {
       case "verify-wave": {
         const cwdVerifyWave = parseCwdFlag(args) || process.cwd();
         const result = runVerifyWave(cwdVerifyWave, args.slice(1));
+        console.log(JSON.stringify(result));
+        if (result.error) process.exit(1);
+        break;
+      }
+      case "sync-status": {
+        const cwdSync = parseCwdFlag(args) || process.cwd();
+        const result = runSyncStatus(cwdSync);
         console.log(JSON.stringify(result));
         if (result.error) process.exit(1);
         break;
@@ -4007,7 +4182,7 @@ function main() {
         break;
       }
       default:
-        console.log(JSON.stringify({ error: `Unknown command: ${command}. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, serve, record-session, get-state, quick-task, add-todo, check-todos, complete-todo, config-get, config-set, health-check, help` }));
+        console.log(JSON.stringify({ error: `Unknown command: ${command}. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, sync-status, serve, record-session, get-state, quick-task, add-todo, check-todos, complete-todo, config-get, config-set, health-check, help` }));
         process.exit(1);
     }
   } catch (err) {

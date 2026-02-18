@@ -53,6 +53,7 @@ const { runCheckOccurrence } = require('./commands/check-occurrence');
 const { runComputePerformance } = require('./commands/compute-performance');
 const { runRenegotiate } = require('./commands/renegotiate');
 const { runCompleteMilestone } = require('./commands/complete-milestone');
+const { runSyncStatus } = require('./commands/sync-status');
 const { runQuickTask } = require('./commands/quick-task');
 const { runAddTodo, runCheckTodos, runCompleteTodo } = require('./commands/todo');
 const { runConfigGet } = require('./commands/config-get');
@@ -134,7 +135,7 @@ function main() {
   const command = args[0];
 
   if (!command) {
-    console.log(JSON.stringify({ error: 'No command specified. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, serve, record-session, get-state, quick-task, add-todo, check-todos, complete-todo, config-get, config-set, health-check, help' }));
+    console.log(JSON.stringify({ error: 'No command specified. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, sync-status, serve, record-session, get-state, quick-task, add-todo, check-todos, complete-todo, config-get, config-set, health-check, help' }));
     process.exit(1);
   }
 
@@ -267,6 +268,14 @@ function main() {
       case 'verify-wave': {
         const cwdVerifyWave = parseCwdFlag(args) || process.cwd();
         const result = runVerifyWave(cwdVerifyWave, args.slice(1));
+        console.log(JSON.stringify(result));
+        if (result.error) process.exit(1);
+        break;
+      }
+
+      case 'sync-status': {
+        const cwdSync = parseCwdFlag(args) || process.cwd();
+        const result = runSyncStatus(cwdSync);
         console.log(JSON.stringify(result));
         if (result.error) process.exit(1);
         break;
@@ -422,7 +431,7 @@ function main() {
       }
 
       default:
-        console.log(JSON.stringify({ error: `Unknown command: ${command}. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, serve, record-session, get-state, quick-task, add-todo, check-todos, complete-todo, config-get, config-set, health-check, help` }));
+        console.log(JSON.stringify({ error: `Unknown command: ${command}. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, sync-status, serve, record-session, get-state, quick-task, add-todo, check-todos, complete-todo, config-get, config-set, health-check, help` }));
         process.exit(1);
     }
   } catch (err) {

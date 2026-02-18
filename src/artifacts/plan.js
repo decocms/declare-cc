@@ -122,4 +122,34 @@ function writePlanFile(milestoneId, milestoneTitle, realizes, actions) {
   return lines.join('\n');
 }
 
-module.exports = { parsePlanFile, writePlanFile };
+/**
+ * Update a single action's Status field inside a PLAN.md content string.
+ * Scans line-by-line to find the ### A-XX section, then patches the first
+ * **Status:** line inside it. Does not reformat the rest of the file.
+ *
+ * @param {string} content - Raw PLAN.md content
+ * @param {string} actionId - e.g. 'A-01'
+ * @param {string} newStatus - e.g. 'DONE'
+ * @returns {string} Updated content (unchanged if action not found)
+ */
+function updateActionStatus(content, actionId, newStatus) {
+  const lines = content.split('\n');
+  let inSection = false;
+  let patched = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.startsWith('### ')) {
+      inSection = line.startsWith(`### ${actionId}:`);
+      if (!inSection) patched = false; // reset per section
+    }
+    if (inSection && !patched && /^\*\*Status:\*\*/i.test(line.trim())) {
+      lines[i] = `**Status:** ${newStatus}`;
+      patched = true;
+    }
+  }
+
+  return lines.join('\n');
+}
+
+module.exports = { parsePlanFile, writePlanFile, updateActionStatus };
