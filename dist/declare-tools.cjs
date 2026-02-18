@@ -1329,7 +1329,7 @@ var require_help = __commonJS({
             usage: "/declare:help"
           }
         ],
-        version: "0.4.0"
+        version: "0.4.3"
       };
     }
     module2.exports = { runHelp: runHelp2 };
@@ -3760,6 +3760,31 @@ var require_server = __commonJS({
         sendJson(res, 500, { error: String(err) });
       }
     }
+    var sseClients = /* @__PURE__ */ new Set();
+    function broadcastChange() {
+      for (const client of sseClients) {
+        try {
+          client.write("event: change\ndata: {}\n\n");
+        } catch (_) {
+          sseClients.delete(client);
+        }
+      }
+    }
+    function watchPlanning(cwd) {
+      const planningDir = path.join(cwd, ".planning");
+      if (!fs.existsSync(planningDir)) return;
+      let debounceTimer = null;
+      try {
+        fs.watch(planningDir, { recursive: true }, () => {
+          if (debounceTimer) clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(() => {
+            broadcastChange();
+            debounceTimer = null;
+          }, 200);
+        });
+      } catch (_) {
+      }
+    }
     function route(req, res, cwd) {
       const method = req.method || "GET";
       const url = req.url || "/";
@@ -3775,6 +3800,18 @@ var require_server = __commonJS({
       }
       if (method !== "GET") {
         sendJson(res, 405, { error: "Method Not Allowed" });
+        return;
+      }
+      if (urlPath === "/events") {
+        res.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          "Connection": "keep-alive",
+          "Access-Control-Allow-Origin": "*"
+        });
+        res.write("retry: 3000\n\n");
+        sseClients.add(res);
+        req.on("close", () => sseClients.delete(res));
         return;
       }
       if (urlPath === "/api/graph") {
@@ -3818,6 +3855,7 @@ var require_server = __commonJS({
       const resolvedPort = port || parseInt(process.env.PORT || "", 10) || 3847;
       const server = createServer(cwd, resolvedPort);
       server.listen(resolvedPort, "127.0.0.1", () => {
+        watchPlanning(cwd);
       });
       const url = `http://localhost:${resolvedPort}`;
       return { server, port: resolvedPort, url };

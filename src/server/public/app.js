@@ -2,7 +2,7 @@
  * Declare DAG Visualizer — app.js
  *
  * Fetches /api/graph and /api/status, renders a layered DAG with SVG edges,
- * supports node click for full details in a side panel, and polls every 5s.
+ * supports node click for full details in a side panel, and live-updates via SSE when .planning/ changes.
  *
  * Zero external dependencies. Vanilla JS, no build step.
  */
@@ -1086,6 +1086,25 @@ window.addEventListener('resize', () => {
 document.getElementById('canvas-wrap').addEventListener('scroll', () => {
   if (graphData) requestAnimationFrame(() => drawEdges());
 });
+
+// ─── Live updates via Server-Sent Events ─────────────────────────────────────
+// Server watches .planning/ with fs.watch and pushes a 'change' event.
+// Client re-renders only when idle (not mid-animation).
+
+function connectSSE() {
+  const es = new EventSource('/events');
+  es.addEventListener('change', () => {
+    if (focusNodeId || focusCleanupTimer) return; // skip during animation
+    loadData();
+  });
+  es.addEventListener('error', () => {
+    // Connection dropped — reconnect after 3s
+    es.close();
+    setTimeout(connectSSE, 3000);
+  });
+}
+
+connectSSE();
 
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
 

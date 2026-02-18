@@ -77,5 +77,10 @@ After all declarations processed:
 node dist/declare-tools.cjs load-graph
 ```
 
-2. Show summary: declarations processed, milestones derived.
-3. Suggest: "Run `/declare:actions` to derive action plans for each milestone."
+2. Start the dashboard if not already running (dashboard updates live when files change):
+```bash
+curl -sf http://localhost:3847/api/graph -o /dev/null || (node dist/declare-tools.cjs serve --port 3847 > /tmp/declare-dashboard.log 2>&1 & sleep 1 && open http://localhost:3847 2>/dev/null || true)
+```
+
+3. Show summary: declarations processed, milestones derived.
+4. Suggest: "Milestones are live in the dashboard → http://localhost:3847 — Run `/declare:actions` to derive action plans."

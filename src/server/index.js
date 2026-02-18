@@ -11,6 +11,7 @@
  *   GET /api/graph          - full graph (declarations, milestones, actions, stats)
  *   GET /api/status         - graph health and performance metrics
  *   GET /api/milestone/:id  - single milestone with full action details
+ *   GET /events             - SSE stream; pushes 'change' event when .planning/ changes
  *   GET /                   - serve src/server/public/index.html
  *   GET /public/*           - serve static files from src/server/public/
  *
@@ -177,6 +178,46 @@ function handleMilestone(res, cwd, milestoneId) {
   }
 }
 
+/** @type {Set<http.ServerResponse>} Active SSE clients */
+const sseClients = new Set();
+
+/**
+ * Notify all connected SSE clients that .planning/ changed.
+ */
+function broadcastChange() {
+  for (const client of sseClients) {
+    try {
+      client.write('event: change\ndata: {}\n\n');
+    } catch (_) {
+      sseClients.delete(client);
+    }
+  }
+}
+
+/**
+ * Watch .planning/ for changes and broadcast to SSE clients.
+ * Uses fs.watch with a short debounce to avoid rapid-fire events.
+ *
+ * @param {string} cwd
+ */
+function watchPlanning(cwd) {
+  const planningDir = path.join(cwd, '.planning');
+  if (!fs.existsSync(planningDir)) return;
+
+  let debounceTimer = null;
+  try {
+    fs.watch(planningDir, { recursive: true }, () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        broadcastChange();
+        debounceTimer = null;
+      }, 200);
+    });
+  } catch (_) {
+    // fs.watch may not support recursive on all platforms — fail silently
+  }
+}
+
 /**
  * Route an incoming request to the appropriate handler.
  *
@@ -204,6 +245,20 @@ function route(req, res, cwd) {
 
   if (method !== 'GET') {
     sendJson(res, 405, { error: 'Method Not Allowed' });
+    return;
+  }
+
+  // SSE — live change events for the dashboard
+  if (urlPath === '/events') {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+    });
+    res.write('retry: 3000\n\n'); // tell client to reconnect after 3s if dropped
+    sseClients.add(res);
+    req.on('close', () => sseClients.delete(res));
     return;
   }
 
@@ -274,7 +329,7 @@ function startServer(cwd, port) {
   const server = createServer(cwd, resolvedPort);
 
   server.listen(resolvedPort, '127.0.0.1', () => {
-    // Server started — listening on resolvedPort
+    watchPlanning(cwd);
   });
 
   const url = `http://localhost:${resolvedPort}`;

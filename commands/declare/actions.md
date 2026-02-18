@@ -95,11 +95,16 @@ After all milestones processed:
 node dist/declare-tools.cjs load-graph
 ```
 
-2. Show summary: milestones processed, plans created, total actions derived.
-3. Suggest the next step clearly:
+2. Start the dashboard if not already running:
+```bash
+curl -sf http://localhost:3847/api/graph -o /dev/null || (node dist/declare-tools.cjs serve --port 3847 > /tmp/declare-dashboard.log 2>&1 & sleep 1 && open http://localhost:3847 2>/dev/null || true)
+```
+
+3. Show summary: milestones processed, plans created, total actions derived.
+4. Suggest the next step clearly:
 
 ```
-Actions defined. Next: create executable plans.
+Actions and edges are live in the dashboard → http://localhost:3847
 
   /declare:plan M-XX    — research + planner + checker loop → EXEC-PLAN files
   /declare:execute M-XX — once plans exist, execute with wave scheduling

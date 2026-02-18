@@ -44,9 +44,29 @@ node dist/declare-tools.cjs add-declaration --title "Short Title" --statement "F
 
 Parse the JSON output to confirm the declaration was created and note its assigned ID (e.g., D-01).
 
-**Step 5: Show summary and suggest next step.**
+**Step 5: Launch dashboard and show summary.**
 
 After all declarations are captured:
 
-1. List all declarations with their IDs and statements.
-2. Suggest: "Run `/declare:milestones` to work backward from these declarations to milestones and actions."
+1. Start the dashboard server (if not already running):
+
+```bash
+node dist/declare-tools.cjs serve --port 3847 > /tmp/declare-dashboard.log 2>&1 &
+sleep 1 && curl -sf http://localhost:3847/api/graph -o /dev/null && echo "RUNNING" || echo "FAILED"
+```
+
+If RUNNING, open it:
+```bash
+open http://localhost:3847 2>/dev/null || true
+```
+
+2. List all declarations with their IDs and statements.
+
+3. Suggest next step:
+
+```
+Your declarations are live in the dashboard → http://localhost:3847
+The graph updates every 5 seconds as you add milestones and actions.
+
+Run /declare:milestones to work backward from these declarations.
+```
