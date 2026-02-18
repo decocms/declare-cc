@@ -28,9 +28,18 @@
       --act-bg: #0a2018;
       --act-border: #1a4d34;
 
-      --done-color: #4a5060;
-      --done-bg: #111318;
-      --done-border: #252830;
+      /* done tones — dimmed hue-specific variants, not grey */
+      --decl-done-color: #4a7ab8;
+      --decl-done-bg: #0a1c2e;
+      --decl-done-border: #163454;
+
+      --mile-done-color: #7050b8;
+      --mile-done-bg: #130c28;
+      --mile-done-border: #251848;
+
+      --act-done-color: #26906a;
+      --act-done-bg: #08180f;
+      --act-done-border: #123428;
 
       --broken-color: #ff4d6d;
       --broken-bg: #2a0a10;
@@ -226,14 +235,32 @@
       max-width: 190px;
     }
 
-    /* Status overrides */
-    .node.status-done,
-    .node.status-honored,
-    .node.status-kept {
-      background: var(--done-bg);
-      border-color: var(--done-border);
-      color: var(--done-color);
-      opacity: 0.75;
+    /* Status overrides — DONE uses dimmed type-specific hues, not grey */
+    .node-declaration.status-done,
+    .node-declaration.status-honored,
+    .node-declaration.status-kept {
+      background: var(--decl-done-bg);
+      border-color: var(--decl-done-border);
+      color: var(--decl-done-color);
+      opacity: 0.82;
+    }
+
+    .node-milestone.status-done,
+    .node-milestone.status-honored,
+    .node-milestone.status-kept {
+      background: var(--mile-done-bg);
+      border-color: var(--mile-done-border);
+      color: var(--mile-done-color);
+      opacity: 0.82;
+    }
+
+    .node-action.status-done,
+    .node-action.status-honored,
+    .node-action.status-kept {
+      background: var(--act-done-bg);
+      border-color: var(--act-done-border);
+      color: var(--act-done-color);
+      opacity: 0.82;
     }
 
     .node.status-broken {
@@ -264,11 +291,17 @@
       word-break: break-word;
     }
 
-    .node.status-done .node-title,
-    .node.status-honored .node-title,
-    .node.status-kept .node-title {
-      color: var(--done-color);
-    }
+    .node-declaration.status-done .node-title,
+    .node-declaration.status-honored .node-title,
+    .node-declaration.status-kept .node-title { color: var(--decl-done-color); }
+
+    .node-milestone.status-done .node-title,
+    .node-milestone.status-honored .node-title,
+    .node-milestone.status-kept .node-title { color: var(--mile-done-color); }
+
+    .node-action.status-done .node-title,
+    .node-action.status-honored .node-title,
+    .node-action.status-kept .node-title { color: var(--act-done-color); }
 
     .node.status-broken .node-title   { color: var(--broken-color); }
     .node.status-renegotiated .node-title { color: var(--renegotiated-color); }
