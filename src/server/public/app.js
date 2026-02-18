@@ -857,6 +857,9 @@ function enterFocusMode(nodeId, type) {
     el.style.transform = '';
   });
 
+  // Fade edges out immediately — redraw only after animation settles
+  $edgesSvg.style.opacity = '0';
+
   // PLAY: slide + fade exiting nodes out from their fixed positions
   requestAnimationFrame(() => {
     exitedNodes.forEach(({ el, dirLeft }) => {
@@ -864,20 +867,18 @@ function enterFocusMode(nodeId, type) {
       el.style.opacity = '0';
       el.style.transform = `translateX(${dirLeft ? -130 : 130}%)`;
     });
-    // Fade edges for non-subtree connections
-    drawEdgesForSubtree(subtree);
   });
 
-  // After animation: clean up exiting overlay nodes
+  // After animation: clean up + redraw edges at final positions, then fade back in
   setTimeout(() => {
     exitedNodes.forEach(({ el }) => {
       el.style.cssText = '';
       el.style.display = 'none';
       el.classList.remove('focus-exiting');
     });
-    // Clean up subtree transform remnants
     subtreeEls.forEach(el => { el.style.transition = ''; el.style.transform = ''; });
     drawEdgesForSubtree(subtree);
+    $edgesSvg.style.opacity = '1';
   }, FOCUS_DUR + 50);
 
   $focusHint.classList.add('visible');
@@ -919,6 +920,9 @@ function exitFocusMode() {
 
   void document.body.offsetWidth;
 
+  // Fade edges out immediately
+  $edgesSvg.style.opacity = '0';
+
   // Slide exiting nodes back to original positions
   requestAnimationFrame(() => {
     exitedNodes.forEach(({ el }) => {
@@ -926,45 +930,31 @@ function exitFocusMode() {
       el.style.opacity = '1';
       el.style.transform = 'none';
     });
-  });
 
-  // LAST: snapshot where subtree nodes will end up after exiting nodes re-enter flow
-  // We approximate: compute FLIP after a tick
-  requestAnimationFrame(() => {
-    // Snapshot positions of subtree now (they're still at centered positions)
-    // After cleanup they'll be at their natural positions — use stored firstRects as "last" target
+    // Clean up subtree node transforms
     const subtreeEls = new Map();
     prevSubtree.forEach(id => {
       const el = document.querySelector(`[data-node-id="${id}"]`);
       if (el) subtreeEls.set(id, el);
     });
-
-    subtreeEls.forEach((el, id) => {
-      const first = firstRects.get(id);
-      // Approximate "last" as the same position (exiting nodes haven't re-entered flow yet)
-      // So subtree nodes don't need to FLIP much — just clean up transform
-      if (first) {
-        el.style.transition = `transform ${dur} ${easeIn}`;
-        el.style.transform = '';
-      }
+    subtreeEls.forEach((el) => {
+      el.style.transition = `transform ${dur} ${easeIn}`;
+      el.style.transform = '';
       el.classList.remove('focus-active');
     });
-
-    drawEdges();
   });
 
-  // After animation: fully restore all inline styles
+  // After animation: fully restore + redraw edges at final positions, fade back in
   const nodesToClean = [...exitedNodes];
   exitedNodes = [];
   focusCleanupTimer = setTimeout(() => {
-    nodesToClean.forEach(({ el }) => {
-      el.style.cssText = '';
-    });
+    nodesToClean.forEach(({ el }) => { el.style.cssText = ''; });
     document.querySelectorAll('.node').forEach(el => {
       el.style.transition = '';
       el.style.transform = '';
     });
-    requestAnimationFrame(() => drawEdges());
+    drawEdges();
+    $edgesSvg.style.opacity = '1';
     focusCleanupTimer = null;
   }, FOCUS_DUR + 80);
 
