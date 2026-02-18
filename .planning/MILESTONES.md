@@ -17,7 +17,7 @@
 | M-11 | DAG web server                          | PENDING | D-04     | YES  |
 | M-12 | Interactive DAG visualizer              | PENDING | D-04     | YES  |
 | M-13 | Dashboard served via /declare:dashboard | PENDING | D-04     | YES  |
-| M-14 | Quick tasks and todos                   | PENDING | D-05     | NO   |
+| M-14 | Quick tasks and todos                   | PENDING | D-05     | YES  |
 | M-15 | Session management                      | PENDING | D-05     | NO   |
 | M-16 | Configuration and health                | PENDING | D-05     | NO   |
 | M-17 | Self-update system                      | PENDING | D-05     | NO   |
