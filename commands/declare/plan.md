@@ -228,21 +228,34 @@ After displaying the summary, reload the graph and check for milestones that sti
   Plan all milestones before executing. Run /declare:execute only when all are planned.
   ```
 
-- If **this was the last milestone to plan**, suggest parallel execution — this is the point of the system:
+- If **this was the last milestone to plan**, spawn all milestone executors in parallel using the Task tool — this is the core value of the system:
+
+  Group milestones by their declaration dependencies. Milestones that realize different declarations are independent and can run simultaneously.
+
+  For each independent milestone, spawn a Task agent (subagent_type: `gsd-executor`) with a prompt like:
+
   ```
-  All milestones planned. Ready to execute in parallel.
+  Execute milestone [M-XX] "[title]" for the Declare project at [cwd].
 
-  Milestones with independent declarations can run simultaneously.
-  Open a separate Claude Code window per milestone and run each:
+  Run: /declare:execute [M-XX]
 
-    Window 1: /declare:execute M-01
-    Window 2: /declare:execute M-02
-    Window 3: /declare:execute M-03
+  Working directory: [cwd]
+  EXEC-PLANs are at: .planning/milestones/[M-XX-slug]/
+  ```
 
-  Or execute sequentially if you prefer:
-    /declare:execute M-01  (then M-02, then M-03)
+  Spawn all independent milestones in a single message so they execute in parallel. Milestones that depend on others (e.g., their declaration depends on another milestone's output) should wait for their dependencies first.
 
-  /clear first in each window — fresh context per execution.
+  While agents run, display:
+  ```
+  Spawning [N] executor agents in parallel...
+    ⟳ M-01: [title]
+    ⟳ M-02: [title]
+    ⟳ M-03: [title]
+  ```
+
+  After all agents complete, run sync-status and report results:
+  ```bash
+  node dist/declare-tools.cjs sync-status
   ```
 
 If max revisions reached with issues remaining, display blocker list prominently:
