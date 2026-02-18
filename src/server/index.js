@@ -28,6 +28,7 @@ const path = require('node:path');
 
 const { runLoadGraph } = require('../commands/load-graph');
 const { runStatus } = require('../commands/status');
+const { runGetExecPlan } = require('../commands/get-exec-plan');
 
 /** @type {Record<string, string>} */
 const MIME_TYPES = {
@@ -284,6 +285,13 @@ function route(req, res, cwd) {
   const milestoneMatch = urlPath.match(/^\/api\/milestone\/([^/]+)$/);
   if (milestoneMatch) {
     handleMilestone(res, cwd, milestoneMatch[1]);
+    return;
+  }
+
+  const actionMatch = urlPath.match(/^\/api\/action\/([^/]+)$/);
+  if (actionMatch) {
+    const result = runGetExecPlan(cwd, ['--action', actionMatch[1]]);
+    sendJson(res, result.error ? 404 : 200, result);
     return;
   }
 

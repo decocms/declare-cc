@@ -54,6 +54,7 @@ const { runComputePerformance } = require('./commands/compute-performance');
 const { runRenegotiate } = require('./commands/renegotiate');
 const { runCompleteMilestone } = require('./commands/complete-milestone');
 const { runSyncStatus } = require('./commands/sync-status');
+const { runGetExecPlan } = require('./commands/get-exec-plan');
 const { runQuickTask } = require('./commands/quick-task');
 const { runAddTodo, runCheckTodos, runCompleteTodo } = require('./commands/todo');
 const { runConfigGet } = require('./commands/config-get');
@@ -276,6 +277,14 @@ function main() {
       case 'sync-status': {
         const cwdSync = parseCwdFlag(args) || process.cwd();
         const result = runSyncStatus(cwdSync);
+        console.log(JSON.stringify(result));
+        if (result.error) process.exit(1);
+        break;
+      }
+
+      case 'get-exec-plan': {
+        const cwdGep = parseCwdFlag(args) || process.cwd();
+        const result = runGetExecPlan(cwdGep, args.slice(1));
         console.log(JSON.stringify(result));
         if (result.error) process.exit(1);
         break;

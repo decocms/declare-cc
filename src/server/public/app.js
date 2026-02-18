@@ -650,10 +650,16 @@ function renderPanelChain(item, type) {
         const causedBy = actions.filter(a => (a.causes || []).includes(s.item.id));
         if (causedBy.length) html += chainTagSection('Actions', causedBy, 'action');
       }
-      if (s.type === 'action' && s.item.produces) {
-        html += `<div style="margin-top:14px">
-          <div class="detail-label">Produces</div>
-          <div class="detail-value" style="margin-top:5px">${escHtml(s.item.produces)}</div>
+      if (s.type === 'action') {
+        if (s.item.produces) {
+          html += `<div style="margin-top:14px">
+            <div class="detail-label">Produces</div>
+            <div class="detail-value" style="margin-top:5px">${escHtml(s.item.produces)}</div>
+          </div>`;
+        }
+        // Exec-plan placeholder — filled asynchronously after render
+        html += `<div id="exec-plan-detail" style="margin-top:16px">
+          <div class="detail-label" style="opacity:0.4">Loading exec-plan…</div>
         </div>`;
       }
     }
@@ -667,6 +673,12 @@ function renderPanelChain(item, type) {
       selectNode(tag.dataset.chainId, tag.dataset.chainType);
     });
   });
+
+  // If an action is focused, fetch and render its exec-plan
+  const focusSection = sections.find(s => s.role === 'focus');
+  if (focusSection && focusSection.type === 'action') {
+    loadExecPlan(focusSection.item.id);
+  }
 }
 
 function chainTagSection(label, items, type) {
@@ -678,6 +690,121 @@ function chainTagSection(label, items, type) {
     <div class="detail-label">${label}</div>
     <div class="detail-tag-list" style="margin-top:6px">${tags}</div>
   </div>`;
+}
+
+/**
+ * Fetch /api/action/:id and render the exec-plan into #exec-plan-detail.
+ * @param {string} actionId
+ */
+async function loadExecPlan(actionId) {
+  const container = document.getElementById('exec-plan-detail');
+  if (!container) return;
+
+  try {
+    const res = await fetch(`/api/action/${encodeURIComponent(actionId)}`);
+    const data = await res.json();
+
+    if (data.error || !data.execPlan) {
+      container.innerHTML = `<div class="detail-label" style="opacity:0.4">No exec-plan found</div>`;
+      return;
+    }
+
+    const ep = data.execPlan;
+    let html = '';
+
+    // Execution metadata bar
+    const metaParts = [];
+    if (ep.wave != null) metaParts.push(`Wave ${ep.wave}`);
+    if (ep.autonomous != null) metaParts.push(ep.autonomous ? '⚡ Autonomous' : '🧑 Checkpoint');
+    if (ep.dependsOn && ep.dependsOn.length) metaParts.push(`Depends: ${ep.dependsOn.join(', ')}`);
+    if (data.summaryExists) metaParts.push('✓ Executed');
+
+    if (metaParts.length) {
+      html += `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">
+        ${metaParts.map(p => `<span style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:2px 8px;font-size:10px;font-weight:600;color:var(--text-dim)">${p}</span>`).join('')}
+      </div>`;
+    }
+
+    // Files modified
+    if (ep.filesModified && ep.filesModified.length) {
+      html += `<div style="margin-bottom:14px">
+        <div class="detail-label">Files</div>
+        <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:5px">
+          ${ep.filesModified.map(f => `<span style="background:var(--act-bg);border:1px solid var(--act-border);color:var(--act-color);border-radius:4px;padding:2px 7px;font-size:10px;font-family:monospace">${escHtml(f)}</span>`).join('')}
+        </div>
+      </div>`;
+    }
+
+    // Objective
+    if (ep.objective) {
+      html += `<div style="margin-bottom:14px">
+        <div class="detail-label">Objective</div>
+        <div class="detail-value" style="margin-top:5px;white-space:pre-wrap">${escHtml(ep.objective)}</div>
+      </div>`;
+    }
+
+    // Tasks
+    if (ep.tasks && ep.tasks.length) {
+      html += `<div style="margin-bottom:14px">
+        <div class="detail-label">Tasks (${ep.tasks.length})</div>
+        <div style="margin-top:8px;display:flex;flex-direction:column;gap:8px">
+          ${ep.tasks.map((t, i) => {
+            const isCheckpoint = t.type && t.type.includes('checkpoint');
+            const typeColor = isCheckpoint ? 'var(--renegotiated-color)' : 'var(--act-color)';
+            const typeBg = isCheckpoint ? 'var(--renegotiated-bg)' : 'var(--act-bg)';
+            const typeBorder = isCheckpoint ? 'var(--renegotiated-border)' : 'var(--act-border)';
+            const taskText = t.action || t.whatBuilt || '';
+            const verifyText = t.howToVerify || t.verify || '';
+            return `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:10px 12px">
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+                <span style="font-size:10px;font-weight:700;color:var(--text-dim)">${i + 1}</span>
+                <span style="font-weight:600;font-size:12px;color:var(--text-bright);flex:1">${escHtml(t.name)}</span>
+                <span style="background:${typeBg};color:${typeColor};border:1px solid ${typeBorder};border-radius:4px;padding:1px 6px;font-size:9px;font-weight:700;white-space:nowrap">${escHtml(t.type)}</span>
+              </div>
+              ${taskText ? `<div style="font-size:11px;color:var(--text-dim);white-space:pre-wrap;margin-bottom:6px">${escHtml(taskText.slice(0, 300))}${taskText.length > 300 ? '…' : ''}</div>` : ''}
+              ${verifyText ? `<div style="font-size:10px;color:var(--text-dim);border-top:1px solid var(--border);padding-top:6px;margin-top:4px;white-space:pre-wrap"><span style="font-weight:700">Verify:</span> ${escHtml(verifyText.slice(0, 200))}${verifyText.length > 200 ? '…' : ''}</div>` : ''}
+            </div>`;
+          }).join('')}
+        </div>
+      </div>`;
+    }
+
+    // Must-haves
+    if (ep.mustHaves) {
+      if (ep.mustHaves.truths && ep.mustHaves.truths.length) {
+        html += `<div style="margin-bottom:14px">
+          <div class="detail-label">Must be true</div>
+          <ul style="margin-top:6px;padding-left:16px;display:flex;flex-direction:column;gap:3px">
+            ${ep.mustHaves.truths.map(t => `<li style="font-size:11px;color:var(--text-dim)">${escHtml(t)}</li>`).join('')}
+          </ul>
+        </div>`;
+      }
+      if (ep.mustHaves.artifacts && ep.mustHaves.artifacts.length) {
+        html += `<div style="margin-bottom:14px">
+          <div class="detail-label">Artifacts</div>
+          <div style="display:flex;flex-direction:column;gap:4px;margin-top:6px">
+            ${ep.mustHaves.artifacts.map(a => `<div style="font-size:11px;color:var(--text-dim)">
+              <span style="font-family:monospace;color:var(--act-color)">${escHtml(a.path || '')}</span>
+              ${a.provides ? ` — ${escHtml(a.provides)}` : ''}
+            </div>`).join('')}
+          </div>
+        </div>`;
+      }
+    }
+
+    // Success criteria
+    if (ep.successCriteria) {
+      html += `<div style="margin-bottom:8px">
+        <div class="detail-label">Success criteria</div>
+        <div class="detail-value" style="margin-top:5px;white-space:pre-wrap">${escHtml(ep.successCriteria)}</div>
+      </div>`;
+    }
+
+    container.innerHTML = html || `<div class="detail-label" style="opacity:0.4">No exec-plan details</div>`;
+
+  } catch (e) {
+    if (container) container.innerHTML = `<div class="detail-label" style="opacity:0.4">Could not load exec-plan</div>`;
+  }
 }
 
 // ─── Focus mode — FLIP technique ──────────────────────────────────────────────

@@ -1329,7 +1329,7 @@ var require_help = __commonJS({
             usage: "/declare:help"
           }
         ],
-        version: "0.4.4"
+        version: "0.4.5"
       };
     }
     module2.exports = { runHelp: runHelp2 };
@@ -3096,6 +3096,167 @@ var require_sync_status = __commonJS({
   }
 });
 
+// src/commands/get-exec-plan.js
+var require_get_exec_plan = __commonJS({
+  "src/commands/get-exec-plan.js"(exports2, module2) {
+    "use strict";
+    var { existsSync, readFileSync, readdirSync } = require("node:fs");
+    var { join } = require("node:path");
+    var { parseFlag } = require_parse_args();
+    var { buildDagFromDisk } = require_build_dag();
+    var { findMilestoneFolder } = require_milestone_folders();
+    function parseFrontmatter(fmText) {
+      const result = {};
+      const lines = fmText.split("\n");
+      let i = 0;
+      while (i < lines.length) {
+        const line = lines[i];
+        const keyMatch = line.match(/^(\w[\w_]*):\s*(.*)/);
+        if (!keyMatch) {
+          i++;
+          continue;
+        }
+        const [, key, rest] = keyMatch;
+        if (rest.trim() === "") {
+          const children = [];
+          i++;
+          while (i < lines.length && (lines[i].startsWith("  ") || lines[i].trim() === "")) {
+            const child = lines[i];
+            const listItem = child.match(/^\s+-\s+(.*)/);
+            const nestedKey = child.match(/^\s+(\w[\w_]*):\s*(.*)/);
+            if (listItem) {
+              children.push({ type: "item", value: listItem[1].replace(/^["']|["']$/g, "") });
+            } else if (nestedKey) {
+              children.push({ type: "key", key: nestedKey[1], value: nestedKey[2] });
+            }
+            i++;
+          }
+          if (children.length > 0 && children[0].type === "item") {
+            result[key] = children.map((c) => c.value);
+          } else if (children.length > 0 && children[0].type === "key") {
+            result[key] = {};
+            let subKey = null;
+            let subItems = [];
+            for (const c of children) {
+              if (c.type === "key") {
+                if (subKey) result[key][subKey] = subItems;
+                subKey = c.key;
+                subItems = c.value.trim() ? [c.value.replace(/^["']|["']$/g, "")] : [];
+              } else if (c.type === "item") {
+                subItems.push(c.value);
+              }
+            }
+            if (subKey) result[key][subKey] = subItems;
+          }
+        } else {
+          result[key] = rest.trim().replace(/^["']|["']$/g, "");
+          i++;
+        }
+      }
+      return result;
+    }
+    function extractTag(content, tag) {
+      const re = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, "i");
+      const m = content.match(re);
+      return m ? m[1].trim() : null;
+    }
+    function parseTasks(tasksContent) {
+      const tasks = [];
+      const taskRe = /<task([^>]*)>([\s\S]*?)<\/task>/gi;
+      let m;
+      while ((m = taskRe.exec(tasksContent)) !== null) {
+        const attrs = m[1];
+        const body = m[2];
+        const typeMatch = attrs.match(/type="([^"]+)"/);
+        const taskType = typeMatch ? typeMatch[1] : "auto";
+        tasks.push({
+          type: taskType,
+          name: extractTag(body, "name") || "",
+          action: extractTag(body, "action"),
+          verify: extractTag(body, "verify"),
+          done: extractTag(body, "done"),
+          howToVerify: extractTag(body, "how-to-verify"),
+          resumeSignal: extractTag(body, "resume-signal"),
+          whatBuilt: extractTag(body, "what-built")
+        });
+      }
+      return tasks;
+    }
+    function findExecPlan(milestoneFolder, actionId) {
+      if (!existsSync(milestoneFolder)) return null;
+      const entries = readdirSync(milestoneFolder);
+      const match = entries.find(
+        (f) => f.toUpperCase().startsWith(actionId.toUpperCase() + "-EXEC-PLAN") || f.toUpperCase().startsWith("EXEC-PLAN-" + actionId.replace(/^A-/, ""))
+      );
+      return match ? join(milestoneFolder, match) : null;
+    }
+    function runGetExecPlan2(cwd, args) {
+      const actionId = parseFlag(args, "action");
+      if (!actionId) {
+        return { error: "Missing --action flag. Usage: get-exec-plan --action A-XX" };
+      }
+      const graphResult = buildDagFromDisk(cwd);
+      if ("error" in graphResult) return graphResult;
+      const { dag } = graphResult;
+      const action = dag.getNode(actionId);
+      if (!action) return { error: `Action not found: ${actionId}` };
+      const upstreamMilestones = dag.getUpstream(actionId).filter((n) => n.type === "milestone");
+      if (upstreamMilestones.length === 0) return { error: `No milestone found for action ${actionId}` };
+      const milestone = upstreamMilestones[0];
+      const planningDir = join(cwd, ".planning");
+      const milestoneFolder = findMilestoneFolder(planningDir, milestone.id);
+      if (!milestoneFolder) {
+        return { error: `Milestone folder not found for ${milestone.id}` };
+      }
+      const execPlanPath = findExecPlan(milestoneFolder, actionId);
+      if (!execPlanPath) {
+        return {
+          actionId,
+          actionTitle: action.title,
+          status: action.status,
+          milestoneId: milestone.id,
+          milestoneTitle: milestone.title,
+          execPlan: null,
+          summaryExists: false
+        };
+      }
+      const raw = readFileSync(execPlanPath, "utf-8");
+      const fmMatch = raw.match(/^---\n([\s\S]*?)\n---/);
+      const frontmatter = fmMatch ? parseFrontmatter(fmMatch[1]) : {};
+      const objective = extractTag(raw, "objective");
+      const tasksRaw = extractTag(raw, "tasks");
+      const tasks = tasksRaw ? parseTasks(tasksRaw) : [];
+      const successCriteria = extractTag(raw, "success_criteria");
+      const verification = extractTag(raw, "verification");
+      const summaryPath = join(milestoneFolder, `${actionId}-SUMMARY.md`);
+      const summaryExists = existsSync(summaryPath);
+      const summaryContent = summaryExists ? readFileSync(summaryPath, "utf-8") : null;
+      return {
+        actionId,
+        actionTitle: action.title,
+        status: action.status,
+        milestoneId: milestone.id,
+        milestoneTitle: milestone.title,
+        execPlan: {
+          wave: frontmatter.wave ? Number(frontmatter.wave) : null,
+          autonomous: frontmatter.autonomous === "true" || frontmatter.autonomous === true,
+          dependsOn: Array.isArray(frontmatter.depends_on) ? frontmatter.depends_on : [],
+          filesModified: Array.isArray(frontmatter.files_modified) ? frontmatter.files_modified : [],
+          declarations: Array.isArray(frontmatter.declarations) ? frontmatter.declarations : [],
+          mustHaves: frontmatter.must_haves || null,
+          objective,
+          tasks,
+          successCriteria,
+          verification
+        },
+        summaryExists,
+        summaryContent
+      };
+    }
+    module2.exports = { runGetExecPlan: runGetExecPlan2 };
+  }
+});
+
 // src/commands/quick-task.js
 var require_quick_task = __commonJS({
   "src/commands/quick-task.js"(exports2, module2) {
@@ -3666,6 +3827,7 @@ var require_server = __commonJS({
     var path = require("node:path");
     var { runLoadGraph: runLoadGraph2 } = require_load_graph();
     var { runStatus: runStatus2 } = require_status();
+    var { runGetExecPlan: runGetExecPlan2 } = require_get_exec_plan();
     var MIME_TYPES = {
       ".html": "text/html; charset=utf-8",
       ".js": "application/javascript; charset=utf-8",
@@ -3829,6 +3991,12 @@ var require_server = __commonJS({
         handleMilestone(res, cwd, milestoneMatch[1]);
         return;
       }
+      const actionMatch = urlPath.match(/^\/api\/action\/([^/]+)$/);
+      if (actionMatch) {
+        const result = runGetExecPlan2(cwd, ["--action", actionMatch[1]]);
+        sendJson(res, result.error ? 404 : 200, result);
+        return;
+      }
       const publicDir = getPublicDir(cwd);
       if (urlPath === "/") {
         const indexPath = path.join(publicDir, "index.html");
@@ -3918,6 +4086,7 @@ var { runComputePerformance } = require_compute_performance();
 var { runRenegotiate } = require_renegotiate();
 var { runCompleteMilestone } = require_complete_milestone();
 var { runSyncStatus } = require_sync_status();
+var { runGetExecPlan } = require_get_exec_plan();
 var { runQuickTask } = require_quick_task();
 var { runAddTodo, runCheckTodos, runCompleteTodo } = require_todo();
 var { runConfigGet } = require_config_get();
@@ -4090,6 +4259,13 @@ function main() {
       case "sync-status": {
         const cwdSync = parseCwdFlag(args) || process.cwd();
         const result = runSyncStatus(cwdSync);
+        console.log(JSON.stringify(result));
+        if (result.error) process.exit(1);
+        break;
+      }
+      case "get-exec-plan": {
+        const cwdGep = parseCwdFlag(args) || process.cwd();
+        const result = runGetExecPlan(cwdGep, args.slice(1));
         console.log(JSON.stringify(result));
         if (result.error) process.exit(1);
         break;
