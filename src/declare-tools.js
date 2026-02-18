@@ -18,6 +18,7 @@
  *   add-milestone --title "..." --realizes D-01   - Add milestone to MILESTONES.md
  *   add-action --title "..." --causes M-01        - Add action to MILESTONES.md
  *   load-graph                                    - Load full graph as JSON
+ *   serve [--port 3847]                           - Start local web server with graph API
  *   quick-task --description "..." [--slug "..."] - Create quick task folder
  *   add-todo --description "..."                  - Capture a todo
  *   check-todos                                   - List pending todos
@@ -57,6 +58,7 @@ const { runAddTodo, runCheckTodos, runCompleteTodo } = require('./commands/todo'
 const { runConfigGet } = require('./commands/config-get');
 const { runConfigSet } = require('./commands/config-set');
 const { runHealthCheck, runHealthCheckRepair } = require('./commands/health-check');
+const { runServe } = require('./commands/serve');
 
 /**
  * Parse --cwd flag from argv.
@@ -132,7 +134,7 @@ function main() {
   const command = args[0];
 
   if (!command) {
-    console.log(JSON.stringify({ error: 'No command specified. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, record-session, get-state, quick-task, add-todo, check-todos, complete-todo, config-get, config-set, health-check, help' }));
+    console.log(JSON.stringify({ error: 'No command specified. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, serve, record-session, get-state, quick-task, add-todo, check-todos, complete-todo, config-get, config-set, health-check, help' }));
     process.exit(1);
   }
 
@@ -326,6 +328,14 @@ function main() {
         break;
       }
 
+      case 'serve': {
+        const cwdServe = parseCwdFlag(args) || process.cwd();
+        const result = runServe(cwdServe, args.slice(1));
+        console.log(JSON.stringify(result));
+        // Keep the process alive — server blocks via event loop
+        break;
+      }
+
       case 'record-session': {
         const cwdRecordSession = parseCwdFlag(args) || process.cwd();
         const stoppedAt = parseNamedFlag(args, '--stopped-at');
@@ -412,7 +422,7 @@ function main() {
       }
 
       default:
-        console.log(JSON.stringify({ error: `Unknown command: ${command}. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, record-session, get-state, quick-task, add-todo, check-todos, complete-todo, config-get, config-set, health-check, help` }));
+        console.log(JSON.stringify({ error: `Unknown command: ${command}. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, serve, record-session, get-state, quick-task, add-todo, check-todos, complete-todo, config-get, config-set, health-check, help` }));
         process.exit(1);
     }
   } catch (err) {
