@@ -75,6 +75,122 @@ var require_commit = __commonJS({
   }
 });
 
+// src/artifacts/state.js
+var require_state = __commonJS({
+  "src/artifacts/state.js"(exports2, module2) {
+    "use strict";
+    var fs = require("fs");
+    var path = require("path");
+    function statePath(cwd) {
+      return path.join(cwd, ".planning", "STATE.md");
+    }
+    function readState2(cwd) {
+      const filePath = statePath(cwd);
+      if (!fs.existsSync(filePath)) return null;
+      const raw = fs.readFileSync(filePath, "utf8");
+      function extractSection(text, heading) {
+        const pattern = new RegExp(`## ${heading}\\s*\\n([\\s\\S]*?)(?=## |$)`, "i");
+        const match = text.match(pattern);
+        return match ? match[1].trim() : "";
+      }
+      return {
+        raw,
+        currentPosition: extractSection(raw, "Current Position"),
+        recentWork: extractSection(raw, "Recent Work"),
+        decisions: extractSection(raw, "Decisions Made"),
+        blockers: extractSection(raw, "Blockers"),
+        sessionHistory: extractSection(raw, "Session History")
+      };
+    }
+    function writeState(cwd, data) {
+      const planningDir = path.join(cwd, ".planning");
+      if (!fs.existsSync(planningDir)) {
+        fs.mkdirSync(planningDir, { recursive: true });
+      }
+      const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+      const content = buildStateContent(today, data);
+      fs.writeFileSync(statePath(cwd), content, "utf8");
+    }
+    function buildStateContent(date, data) {
+      const {
+        currentPosition = "Project initialized",
+        recentWork = "(none yet)",
+        decisions = "| Decision | Rationale | Date |\n|----------|-----------|------|\n",
+        blockers = "(none)",
+        sessionHistory = "| Date | Stopped At | Resume File |\n|------|------------|-------------|"
+      } = data;
+      return [
+        "# Project State",
+        "",
+        `**Last Updated:** ${date}`,
+        `**Current Position:** ${currentPosition}`,
+        "",
+        "## Recent Work",
+        "",
+        recentWork,
+        "",
+        "## Decisions Made",
+        "",
+        decisions,
+        "",
+        "## Blockers",
+        "",
+        blockers,
+        "",
+        "## Session History",
+        "",
+        sessionHistory,
+        ""
+      ].join("\n");
+    }
+    function recordSession2(cwd, stoppedAt, resumeFile) {
+      const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+      const resumeValue = resumeFile || "\u2014";
+      const newRow = `| ${today} | ${stoppedAt} | ${resumeValue} |`;
+      const filePath = statePath(cwd);
+      if (!fs.existsSync(filePath)) {
+        writeState(cwd, {
+          currentPosition: stoppedAt,
+          sessionHistory: `| Date | Stopped At | Resume File |
+|------|------------|-------------|
+${newRow}`
+        });
+        return { ok: true, path: filePath };
+      }
+      let content = fs.readFileSync(filePath, "utf8");
+      content = content.replace(
+        /\*\*Last Updated:\*\*[^\n]*/,
+        `**Last Updated:** ${today}`
+      );
+      content = content.replace(
+        /\*\*Current Position:\*\*[^\n]*/,
+        `**Current Position:** ${stoppedAt}`
+      );
+      const sessionTablePattern = /## Session History\s*\n([\s\S]*?)(?=## |$)/i;
+      const match = content.match(sessionTablePattern);
+      if (match) {
+        const existingSection = match[1];
+        const updatedSection = existingSection.trimEnd() + "\n" + newRow + "\n";
+        content = content.replace(sessionTablePattern, `## Session History
+
+${updatedSection}
+`);
+      } else {
+        content += `
+## Session History
+
+| Date | Stopped At | Resume File |
+|------|------------|-------------|
+${newRow}
+`;
+      }
+      fs.writeFileSync(filePath, content, "utf8");
+      return { ok: true, path: filePath };
+    }
+    module2.exports = { readState: readState2, writeState, recordSession: recordSession2 };
+  }
+});
+
 // src/artifacts/future.js
 var require_future = __commonJS({
   "src/artifacts/future.js"(exports2, module2) {
@@ -2729,6 +2845,7 @@ var require_renegotiate = __commonJS({
 
 // src/declare-tools.js
 var { commitPlanningDocs } = require_commit();
+var { readState, recordSession } = require_state();
 var { runInit } = require_init();
 var { runStatus } = require_status();
 var { runHelp } = require_help();
@@ -2783,11 +2900,16 @@ function parseFilesFlag(argv) {
   }
   return files;
 }
+function parseNamedFlag(argv, flag) {
+  const idx = argv.indexOf(flag);
+  if (idx === -1 || idx + 1 >= argv.length) return null;
+  return argv[idx + 1];
+}
 function main() {
   const args = process.argv.slice(2);
   const command = args[0];
   if (!command) {
-    console.log(JSON.stringify({ error: "No command specified. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, help" }));
+    console.log(JSON.stringify({ error: "No command specified. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, record-session, get-state, help" }));
     process.exit(1);
   }
   try {
@@ -2950,8 +3072,31 @@ function main() {
         if (result.error) process.exit(1);
         break;
       }
+      case "record-session": {
+        const cwdRecordSession = parseCwdFlag(args) || process.cwd();
+        const stoppedAt = parseNamedFlag(args, "--stopped-at");
+        const resumeFile = parseNamedFlag(args, "--resume-file");
+        if (!stoppedAt) {
+          console.log(JSON.stringify({ error: "record-session requires --stopped-at argument" }));
+          process.exit(1);
+        }
+        const result = recordSession(cwdRecordSession, stoppedAt, resumeFile || void 0);
+        console.log(JSON.stringify(result));
+        if (!result.ok) process.exit(1);
+        break;
+      }
+      case "get-state": {
+        const cwdGetState = parseCwdFlag(args) || process.cwd();
+        const result = readState(cwdGetState);
+        if (result === null) {
+          console.log(JSON.stringify({ error: "STATE.md not found. Run /declare:new-project to initialize." }));
+          process.exit(1);
+        }
+        console.log(JSON.stringify(result));
+        break;
+      }
       default:
-        console.log(JSON.stringify({ error: `Unknown command: ${command}. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, help` }));
+        console.log(JSON.stringify({ error: `Unknown command: ${command}. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, record-session, get-state, help` }));
         process.exit(1);
     }
   } catch (err) {
