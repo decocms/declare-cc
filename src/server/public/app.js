@@ -388,8 +388,15 @@ function selectNode(nodeId, type) {
   const el = document.querySelector(`[data-node-id="${nodeId}"]`);
   if (el) el.classList.add('selected');
 
-  // Enter focus mode for all node types
-  enterFocusMode(nodeId, type);
+  // If clicking a node already visible in the current focused subtree, skip re-animation
+  const alreadyInFocus = focusNodeId && getFocusSubtree(
+    focusNodeId,
+    document.querySelector(`[data-node-id="${focusNodeId}"]`)?.dataset.nodeType || 'declaration'
+  ).has(nodeId);
+
+  if (!alreadyInFocus) {
+    enterFocusMode(nodeId, type);
+  }
 
   // Populate panel
   let item = null;
@@ -885,7 +892,14 @@ function enterFocusMode(nodeId, type) {
 }
 
 /**
- * Exit focus mode — reverse FLIP: exiting nodes slide back in, subtree nodes FLIP back.
+ * Exit focus mode — proper reverse FLIP:
+ * 1. Snapshot current visual positions of subtree nodes (may be centered)
+ * 2. Restore ALL nodes to normal flow (clear all inline styles)
+ * 3. Force layout → nodes at natural positions
+ * 4. Snapshot natural positions (LAST)
+ * 5. INVERT: push subtree nodes back to where they were + push returned nodes off-screen
+ * 6. Force reflow
+ * 7. PLAY: animate everything to natural (transform:'')
  */
 function exitFocusMode() {
   if (!focusNodeId) return;
@@ -898,64 +912,80 @@ function exitFocusMode() {
 
   const dur = FOCUS_DUR + 'ms';
   const easeIn = 'cubic-bezier(0,0,0.2,1)';
-  const easeOut = 'cubic-bezier(0.4,0,1,1)';
 
-  // FIRST: snapshot current (centered) positions of subtree nodes
+  // FIRST: snapshot current visual positions of subtree nodes (before any style changes)
   const firstRects = snapshotRects(prevSubtree);
 
-  // Restore exiting nodes to flow (still display:none → make visible but opacity 0)
-  exitedNodes.forEach(({ el, rect, dirLeft }) => {
-    el.style.display = '';
-    // No transition yet — position fixed at final (offscreen) state for entry
-    el.style.position = 'fixed';
-    el.style.left = rect.left + 'px';
-    el.style.top = rect.top + 'px';
-    el.style.width = rect.width + 'px';
-    el.style.height = rect.height + 'px';
-    el.style.margin = '0';
-    el.style.zIndex = '15';
-    el.style.opacity = '0';
-    el.style.transform = `translateX(${dirLeft ? -130 : 130}%)`;
+  // Capture dirLeft for each exited node, then clear all inline styles on every node
+  const capturedExits = exitedNodes.map(({ el, dirLeft }) => ({ el, dirLeft }));
+  exitedNodes = [];
+
+  document.querySelectorAll('.node').forEach(el => {
+    el.style.cssText = '';
+    el.classList.remove('focus-exiting', 'focus-active');
   });
 
+  // Force layout: all nodes now at their natural flex positions
   void document.body.offsetWidth;
 
-  // Clear edges immediately (no transition lag) — redraw only after animation settles
+  // LAST: snapshot natural positions of subtree nodes
+  const lastRects = snapshotRects(prevSubtree);
+
+  // Build subtree element map
+  const subtreeEls = new Map();
+  prevSubtree.forEach(id => {
+    const el = document.querySelector(`[data-node-id="${id}"]`);
+    if (el) subtreeEls.set(id, el);
+  });
+
+  // INVERT subtree: push nodes back to where they appeared (centered)
+  subtreeEls.forEach((el, id) => {
+    const first = firstRects.get(id);
+    const last  = lastRects.get(id);
+    if (!first || !last) return;
+    const dx = first.left - last.left;
+    const dy = first.top  - last.top;
+    if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
+      el.style.transition = 'none';
+      el.style.transform  = `translate(${dx}px, ${dy}px)`;
+    }
+  });
+
+  // INVERT returned nodes: push off-screen so they slide in
+  capturedExits.forEach(({ el, dirLeft }) => {
+    el.style.transition = 'none';
+    el.style.opacity    = '0';
+    el.style.transform  = `translateX(${dirLeft ? -130 : 130}%)`;
+  });
+
+  // Force reflow to paint inverted state before PLAY
+  void document.body.offsetWidth;
+
+  // Clear edges immediately
   $edgesSvg.innerHTML = '';
   $edgesSvg.style.opacity = '0';
 
-  // Slide exiting nodes back to original positions
+  // PLAY: animate all nodes to natural positions (transform:'')
   requestAnimationFrame(() => {
-    exitedNodes.forEach(({ el }) => {
-      el.style.transition = `opacity ${Math.round(FOCUS_DUR * 0.8)}ms ease ${Math.round(FOCUS_DUR * 0.1)}ms, transform ${dur} ${easeIn}`;
-      el.style.opacity = '1';
-      el.style.transform = 'none';
-    });
-
-    // Clean up subtree node transforms
-    const subtreeEls = new Map();
-    prevSubtree.forEach(id => {
-      const el = document.querySelector(`[data-node-id="${id}"]`);
-      if (el) subtreeEls.set(id, el);
-    });
-    subtreeEls.forEach((el) => {
+    subtreeEls.forEach(el => {
       el.style.transition = `transform ${dur} ${easeIn}`;
-      el.style.transform = '';
-      el.classList.remove('focus-active');
+      el.style.transform  = '';
+    });
+    capturedExits.forEach(({ el }) => {
+      el.style.transition = `opacity ${Math.round(FOCUS_DUR * 0.8)}ms ease ${Math.round(FOCUS_DUR * 0.1)}ms, transform ${dur} ${easeIn}`;
+      el.style.opacity    = '1';
+      el.style.transform  = '';
     });
   });
 
-  // After animation: fully restore + redraw edges at final positions, fade back in
-  const nodesToClean = [...exitedNodes];
-  exitedNodes = [];
+  // Cleanup: remove inline styles, redraw edges at settled positions
   focusCleanupTimer = setTimeout(() => {
-    nodesToClean.forEach(({ el }) => { el.style.cssText = ''; });
     document.querySelectorAll('.node').forEach(el => {
       el.style.transition = '';
-      el.style.transform = '';
+      el.style.transform  = '';
+      el.style.opacity    = '';
     });
-    // rAF: let browser complete layout with restored node positions before
-    // reading getBoundingClientRect() inside drawEdges()
+    void document.body.offsetWidth;
     requestAnimationFrame(() => {
       drawEdges();
       $edgesSvg.style.opacity = '1';
