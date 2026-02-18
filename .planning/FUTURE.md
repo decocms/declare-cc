@@ -23,4 +23,4 @@
 ## D-05: Full Declare Namespace
 **Statement:** Every GSD utility exists in Declare's namespace — quick tasks, todos, session pause/resume, settings, health checks — so the full workflow runs without ever touching a /gsd:* command.
 **Status:** PENDING
-**Milestones:** 
+**Milestones:** M-14, M-15, M-16, M-17
