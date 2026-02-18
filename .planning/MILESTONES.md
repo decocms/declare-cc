@@ -12,7 +12,7 @@
 | M-06 | Milestone completion and archiving      | PENDING | D-02     | YES  |
 | M-07 | New milestone cycle                     | PENDING | D-02     | YES  |
 | M-08 | Conversational UAT                      | PENDING | D-03     | YES  |
-| M-09 | Systematic debugger                     | PENDING | D-03     | NO   |
+| M-09 | Systematic debugger                     | PENDING | D-03     | YES  |
 | M-10 | Milestone audit                         | PENDING | D-03     | NO   |
 | M-11 | DAG web server                          | PENDING | D-04     | NO   |
 | M-12 | Interactive DAG visualizer              | PENDING | D-04     | NO   |
