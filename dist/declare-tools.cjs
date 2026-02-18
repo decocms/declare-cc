@@ -3507,7 +3507,10 @@ var require_server = __commonJS({
       ".png": "image/png",
       ".ico": "image/x-icon"
     };
-    var PUBLIC_DIR = path.join(__dirname, "public");
+    var PUBLIC_DIR_RELATIVE = path.join("src", "server", "public");
+    function getPublicDir(cwd) {
+      return path.join(cwd, PUBLIC_DIR_RELATIVE);
+    }
     function sendJson(res, statusCode, data) {
       const body = JSON.stringify(data, null, 2);
       res.writeHead(statusCode, {
@@ -3618,15 +3621,16 @@ var require_server = __commonJS({
         handleMilestone(res, cwd, milestoneMatch[1]);
         return;
       }
+      const publicDir = getPublicDir(cwd);
       if (urlPath === "/") {
-        const indexPath = path.join(PUBLIC_DIR, "index.html");
+        const indexPath = path.join(publicDir, "index.html");
         sendFile(res, indexPath);
         return;
       }
       if (urlPath.startsWith("/public/")) {
         const relative = urlPath.replace(/^\/public\//, "");
-        const resolved = path.resolve(PUBLIC_DIR, relative);
-        if (!resolved.startsWith(PUBLIC_DIR + path.sep) && resolved !== PUBLIC_DIR) {
+        const resolved = path.resolve(publicDir, relative);
+        if (!resolved.startsWith(publicDir + path.sep) && resolved !== publicDir) {
           sendJson(res, 403, { error: "Forbidden" });
           return;
         }
