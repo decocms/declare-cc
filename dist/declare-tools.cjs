@@ -75,6 +75,122 @@ var require_commit = __commonJS({
   }
 });
 
+// src/artifacts/state.js
+var require_state = __commonJS({
+  "src/artifacts/state.js"(exports2, module2) {
+    "use strict";
+    var fs = require("fs");
+    var path = require("path");
+    function statePath(cwd) {
+      return path.join(cwd, ".planning", "STATE.md");
+    }
+    function readState2(cwd) {
+      const filePath = statePath(cwd);
+      if (!fs.existsSync(filePath)) return null;
+      const raw = fs.readFileSync(filePath, "utf8");
+      function extractSection(text, heading) {
+        const pattern = new RegExp(`## ${heading}\\s*\\n([\\s\\S]*?)(?=## |$)`, "i");
+        const match = text.match(pattern);
+        return match ? match[1].trim() : "";
+      }
+      return {
+        raw,
+        currentPosition: extractSection(raw, "Current Position"),
+        recentWork: extractSection(raw, "Recent Work"),
+        decisions: extractSection(raw, "Decisions Made"),
+        blockers: extractSection(raw, "Blockers"),
+        sessionHistory: extractSection(raw, "Session History")
+      };
+    }
+    function writeState(cwd, data) {
+      const planningDir = path.join(cwd, ".planning");
+      if (!fs.existsSync(planningDir)) {
+        fs.mkdirSync(planningDir, { recursive: true });
+      }
+      const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+      const content = buildStateContent(today, data);
+      fs.writeFileSync(statePath(cwd), content, "utf8");
+    }
+    function buildStateContent(date, data) {
+      const {
+        currentPosition = "Project initialized",
+        recentWork = "(none yet)",
+        decisions = "| Decision | Rationale | Date |\n|----------|-----------|------|\n",
+        blockers = "(none)",
+        sessionHistory = "| Date | Stopped At | Resume File |\n|------|------------|-------------|"
+      } = data;
+      return [
+        "# Project State",
+        "",
+        `**Last Updated:** ${date}`,
+        `**Current Position:** ${currentPosition}`,
+        "",
+        "## Recent Work",
+        "",
+        recentWork,
+        "",
+        "## Decisions Made",
+        "",
+        decisions,
+        "",
+        "## Blockers",
+        "",
+        blockers,
+        "",
+        "## Session History",
+        "",
+        sessionHistory,
+        ""
+      ].join("\n");
+    }
+    function recordSession2(cwd, stoppedAt, resumeFile) {
+      const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+      const resumeValue = resumeFile || "\u2014";
+      const newRow = `| ${today} | ${stoppedAt} | ${resumeValue} |`;
+      const filePath = statePath(cwd);
+      if (!fs.existsSync(filePath)) {
+        writeState(cwd, {
+          currentPosition: stoppedAt,
+          sessionHistory: `| Date | Stopped At | Resume File |
+|------|------------|-------------|
+${newRow}`
+        });
+        return { ok: true, path: filePath };
+      }
+      let content = fs.readFileSync(filePath, "utf8");
+      content = content.replace(
+        /\*\*Last Updated:\*\*[^\n]*/,
+        `**Last Updated:** ${today}`
+      );
+      content = content.replace(
+        /\*\*Current Position:\*\*[^\n]*/,
+        `**Current Position:** ${stoppedAt}`
+      );
+      const sessionTablePattern = /## Session History\s*\n([\s\S]*?)(?=## |$)/i;
+      const match = content.match(sessionTablePattern);
+      if (match) {
+        const existingSection = match[1];
+        const updatedSection = existingSection.trimEnd() + "\n" + newRow + "\n";
+        content = content.replace(sessionTablePattern, `## Session History
+
+${updatedSection}
+`);
+      } else {
+        content += `
+## Session History
+
+| Date | Stopped At | Resume File |
+|------|------------|-------------|
+${newRow}
+`;
+      }
+      fs.writeFileSync(filePath, content, "utf8");
+      return { ok: true, path: filePath };
+    }
+    module2.exports = { readState: readState2, writeState, recordSession: recordSession2 };
+  }
+});
+
 // src/artifacts/future.js
 var require_future = __commonJS({
   "src/artifacts/future.js"(exports2, module2) {
@@ -363,7 +479,24 @@ var require_plan = __commonJS({
       }
       return lines.join("\n");
     }
-    module2.exports = { parsePlanFile, writePlanFile };
+    function updateActionStatus(content, actionId, newStatus) {
+      const lines = content.split("\n");
+      let inSection = false;
+      let patched = false;
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (line.startsWith("### ")) {
+          inSection = line.startsWith(`### ${actionId}:`);
+          if (!inSection) patched = false;
+        }
+        if (inSection && !patched && /^\*\*Status:\*\*/i.test(line.trim())) {
+          lines[i] = `**Status:** ${newStatus}`;
+          patched = true;
+        }
+      }
+      return lines.join("\n");
+    }
+    module2.exports = { parsePlanFile, writePlanFile, updateActionStatus };
   }
 });
 
@@ -2727,8 +2860,999 @@ var require_renegotiate = __commonJS({
   }
 });
 
+// src/commands/complete-milestone.js
+var require_complete_milestone = __commonJS({
+  "src/commands/complete-milestone.js"(exports2, module2) {
+    "use strict";
+    var { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, copyFileSync } = require("node:fs");
+    var { join, basename } = require("node:path");
+    var { parseFlag } = require_parse_args();
+    function normalizeVersion(raw) {
+      return raw.startsWith("v") ? raw : `v${raw}`;
+    }
+    function copyDir(src, dest) {
+      mkdirSync(dest, { recursive: true });
+      const copied = [];
+      for (const entry of readdirSync(src)) {
+        const srcPath = join(src, entry);
+        const destPath = join(dest, entry);
+        const stat = statSync(srcPath);
+        if (stat.isDirectory()) {
+          const subCopied = copyDir(srcPath, destPath);
+          for (const f of subCopied) copied.push(join(entry, f));
+        } else {
+          copyFileSync(srcPath, destPath);
+          copied.push(entry);
+        }
+      }
+      return copied;
+    }
+    function runCompleteMilestone2(cwd, args) {
+      const versionRaw = parseFlag(args, "version");
+      if (!versionRaw) {
+        return { error: "Missing required flag: --version (e.g., --version v1.0)" };
+      }
+      const version = normalizeVersion(versionRaw);
+      const planningDir = join(cwd, ".planning");
+      const milestonesDir = join(planningDir, "milestones");
+      const archiveDir = join(milestonesDir, version);
+      if (!existsSync(planningDir)) {
+        return { error: ".planning/ directory not found. Run /declare:init first." };
+      }
+      if (existsSync(archiveDir)) {
+        return { error: `Archive already exists for ${version} at .planning/milestones/${version}/. Delete it first to re-archive.` };
+      }
+      const futurePath = join(planningDir, "FUTURE.md");
+      const milestonesFilePath = join(planningDir, "MILESTONES.md");
+      if (!existsSync(futurePath)) {
+        return { error: "FUTURE.md not found in .planning/. Cannot archive." };
+      }
+      if (!existsSync(milestonesFilePath)) {
+        return { error: "MILESTONES.md not found in .planning/. Cannot archive." };
+      }
+      mkdirSync(archiveDir, { recursive: true });
+      const archivedFiles = [];
+      const archiveFuture = join(archiveDir, "FUTURE.md");
+      copyFileSync(futurePath, archiveFuture);
+      archivedFiles.push(`milestones/${version}/FUTURE.md`);
+      const archiveMilestones = join(archiveDir, "MILESTONES.md");
+      copyFileSync(milestonesFilePath, archiveMilestones);
+      archivedFiles.push(`milestones/${version}/MILESTONES.md`);
+      const milestonesFolderBase = milestonesDir;
+      if (existsSync(milestonesFolderBase)) {
+        const entries = readdirSync(milestonesFolderBase);
+        for (const entry of entries) {
+          if (/^M-\d+/.test(entry)) {
+            const srcFolder = join(milestonesFolderBase, entry);
+            const stat = statSync(srcFolder);
+            if (stat.isDirectory()) {
+              const destFolder = join(archiveDir, entry);
+              const copied = copyDir(srcFolder, destFolder);
+              for (const f of copied) {
+                archivedFiles.push(`milestones/${version}/${entry}/${f}`);
+              }
+            }
+          }
+        }
+      }
+      return {
+        version,
+        archivedFiles,
+        gitTagReady: true
+      };
+    }
+    module2.exports = { runCompleteMilestone: runCompleteMilestone2 };
+  }
+});
+
+// src/commands/sync-status.js
+var require_sync_status = __commonJS({
+  "src/commands/sync-status.js"(exports2, module2) {
+    "use strict";
+    var { existsSync, readFileSync, writeFileSync } = require("node:fs");
+    var { join, resolve } = require("node:path");
+    var { buildDagFromDisk, loadActionsFromFolders } = require_build_dag();
+    var { parseMilestonesFile, writeMilestonesFile } = require_milestones();
+    var { parseFutureFile, writeFutureFile } = require_future();
+    var { parsePlanFile, updateActionStatus } = require_plan();
+    var { findMilestoneFolder } = require_milestone_folders();
+    var { isCompleted } = require_engine();
+    function looksLikeFilePath(produces) {
+      if (!produces || !produces.trim()) return false;
+      return /[/\\]/.test(produces) || /\.\w{1,10}$/.test(produces);
+    }
+    function runSyncStatus2(cwd) {
+      const planningDir = join(cwd, ".planning");
+      if (!existsSync(planningDir)) {
+        return { error: "No Declare project found. Run /declare:init first." };
+      }
+      const graphResult = buildDagFromDisk(cwd);
+      if ("error" in graphResult) return graphResult;
+      const { dag, milestones, declarations } = graphResult;
+      const actionResults = [];
+      const milestoneResults = [];
+      const declarationResults = [];
+      for (const m of milestones) {
+        const folderPath = findMilestoneFolder(planningDir, m.id);
+        if (!folderPath) continue;
+        const planPath = join(folderPath, "PLAN.md");
+        if (!existsSync(planPath)) continue;
+        let planContent = readFileSync(planPath, "utf-8");
+        const { actions } = parsePlanFile(planContent);
+        let planDirty = false;
+        const milestoneAlreadyDone = isCompleted(m.status);
+        for (const action of actions) {
+          if (isCompleted(action.status)) {
+            actionResults.push({ id: action.id, milestone: m.id, changed: false, reason: "already DONE" });
+            continue;
+          }
+          if (milestoneAlreadyDone) {
+            planContent = updateActionStatus(planContent, action.id, "DONE");
+            planDirty = true;
+            actionResults.push({ id: action.id, milestone: m.id, changed: true, reason: `milestone ${m.id} is DONE` });
+            continue;
+          }
+          const produces = action.produces || "";
+          if (looksLikeFilePath(produces)) {
+            const filePath = resolve(cwd, produces);
+            if (existsSync(filePath)) {
+              planContent = updateActionStatus(planContent, action.id, "DONE");
+              planDirty = true;
+              actionResults.push({ id: action.id, milestone: m.id, changed: true, reason: `produces exists: ${produces}` });
+            } else {
+              actionResults.push({ id: action.id, milestone: m.id, changed: false, reason: `produces missing: ${produces}` });
+            }
+          } else {
+            actionResults.push({ id: action.id, milestone: m.id, changed: false, reason: "no verifiable produces path" });
+          }
+        }
+        if (planDirty) {
+          writeFileSync(planPath, planContent, "utf-8");
+        }
+      }
+      const freshActions = loadActionsFromFolders(planningDir);
+      const milestoneActionIds = /* @__PURE__ */ new Map();
+      const actionStatusMap = /* @__PURE__ */ new Map();
+      for (const a of freshActions) {
+        actionStatusMap.set(a.id, a.status);
+        for (const mid of a.causes) {
+          if (!milestoneActionIds.has(mid)) milestoneActionIds.set(mid, []);
+          milestoneActionIds.get(mid).push(a.id);
+        }
+      }
+      const milestonesPath = join(planningDir, "MILESTONES.md");
+      const milestonesContent = existsSync(milestonesPath) ? readFileSync(milestonesPath, "utf-8") : "";
+      const { milestones: parsedMilestones } = parseMilestonesFile(milestonesContent);
+      let milestonesDirty = false;
+      const updatedMilestones = parsedMilestones.map((m) => {
+        if (isCompleted(m.status)) {
+          milestoneResults.push({ id: m.id, changed: false, reason: "already DONE" });
+          return m;
+        }
+        const actionIds = milestoneActionIds.get(m.id) || [];
+        if (actionIds.length === 0) {
+          milestoneResults.push({ id: m.id, changed: false, reason: "no actions found" });
+          return m;
+        }
+        const allDone = actionIds.every((aid) => isCompleted(actionStatusMap.get(aid) || "PENDING"));
+        if (allDone) {
+          milestonesDirty = true;
+          milestoneResults.push({ id: m.id, changed: true, reason: `all ${actionIds.length} actions DONE` });
+          return { ...m, status: "DONE" };
+        } else {
+          const doneCount = actionIds.filter((aid) => isCompleted(actionStatusMap.get(aid) || "PENDING")).length;
+          milestoneResults.push({ id: m.id, changed: false, reason: `${doneCount}/${actionIds.length} actions DONE` });
+          return m;
+        }
+      });
+      if (milestonesDirty) {
+        const projectNameMatch = milestonesContent.match(/^# Milestones:\s*(.+)/m);
+        const projectName = projectNameMatch ? projectNameMatch[1].trim() : "Project";
+        writeFileSync(milestonesPath, writeMilestonesFile(updatedMilestones, projectName), "utf-8");
+      }
+      const futurePath = join(planningDir, "FUTURE.md");
+      const futureContent = existsSync(futurePath) ? readFileSync(futurePath, "utf-8") : "";
+      const parsedDeclarations = parseFutureFile(futureContent);
+      const milestoneStatusMap = new Map(updatedMilestones.map((m) => [m.id, m.status]));
+      let futureDirty = false;
+      const updatedDeclarations = parsedDeclarations.map((d) => {
+        if (isCompleted(d.status)) {
+          declarationResults.push({ id: d.id, changed: false, reason: "already DONE" });
+          return d;
+        }
+        const realizingMilestones = updatedMilestones.filter((m) => m.realizes.includes(d.id));
+        if (realizingMilestones.length === 0) {
+          declarationResults.push({ id: d.id, changed: false, reason: "no milestones realize this declaration" });
+          return d;
+        }
+        const allDone = realizingMilestones.every((m) => isCompleted(milestoneStatusMap.get(m.id) || "PENDING"));
+        if (allDone) {
+          futureDirty = true;
+          declarationResults.push({ id: d.id, changed: true, reason: `all ${realizingMilestones.length} milestones DONE` });
+          return { ...d, status: "DONE" };
+        } else {
+          const doneCount = realizingMilestones.filter((m) => isCompleted(milestoneStatusMap.get(m.id) || "PENDING")).length;
+          declarationResults.push({ id: d.id, changed: false, reason: `${doneCount}/${realizingMilestones.length} milestones DONE` });
+          return d;
+        }
+      });
+      if (futureDirty) {
+        const projectNameMatch = futureContent.match(/^# Future:\s*(.+)/m);
+        const projectName = projectNameMatch ? projectNameMatch[1].trim() : "Project";
+        writeFileSync(futurePath, writeFutureFile(updatedDeclarations, projectName), "utf-8");
+      }
+      const actionsDone = actionResults.filter((r) => r.changed).length;
+      const msDone = milestoneResults.filter((r) => r.changed).length;
+      const declsDone = declarationResults.filter((r) => r.changed).length;
+      const summary = [
+        `Actions marked DONE: ${actionsDone}/${actionResults.length}`,
+        `Milestones marked DONE: ${msDone}/${milestoneResults.length}`,
+        `Declarations marked DONE: ${declsDone}/${declarationResults.length}`
+      ].join(" | ");
+      return { actions: actionResults, milestones: milestoneResults, declarations: declarationResults, summary };
+    }
+    module2.exports = { runSyncStatus: runSyncStatus2 };
+  }
+});
+
+// src/commands/quick-task.js
+var require_quick_task = __commonJS({
+  "src/commands/quick-task.js"(exports2, module2) {
+    "use strict";
+    var { existsSync, mkdirSync, writeFileSync, readdirSync } = require("node:fs");
+    var { join } = require("node:path");
+    var { commitPlanningDocs: commitPlanningDocs2, loadConfig } = require_commit();
+    var { parseFlag } = require_parse_args();
+    function slugify(text) {
+      return text.toLowerCase().replace(/[^a-z0-9\s-]/g, "").trim().replace(/\s+/g, "-").replace(/-+/g, "-").slice(0, 40);
+    }
+    function nextQuickNumber(quickDir) {
+      if (!existsSync(quickDir)) return "001";
+      const entries = readdirSync(quickDir, { withFileTypes: true });
+      let max = 0;
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const match = entry.name.match(/^(\d{3})-/);
+        if (match) {
+          const n = parseInt(match[1], 10);
+          if (n > max) max = n;
+        }
+      }
+      return String(max + 1).padStart(3, "0");
+    }
+    function runQuickTask2(cwd, args) {
+      const description = parseFlag(args, "description");
+      const slugOverride = parseFlag(args, "slug");
+      if (!description) {
+        return { error: "Missing required flag: --description" };
+      }
+      const quickDir = join(cwd, ".planning", "quick");
+      if (!existsSync(quickDir)) {
+        mkdirSync(quickDir, { recursive: true });
+      }
+      const num = nextQuickNumber(quickDir);
+      const slug = slugOverride ? slugify(slugOverride) : slugify(description);
+      const folderName = `${num}-${slug}`;
+      const folderPath = join(quickDir, folderName);
+      const planPath = join(folderPath, "QUICK-PLAN.md");
+      const relFolderPath = `.planning/quick/${folderName}`;
+      const relPlanPath = `${relFolderPath}/QUICK-PLAN.md`;
+      mkdirSync(folderPath, { recursive: true });
+      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const content = [
+        `# Quick Task ${num}: ${description}`,
+        "",
+        `**ID:** ${num}`,
+        `**Created:** ${today}`,
+        `**Status:** PENDING`,
+        "",
+        "## Description",
+        "",
+        description,
+        "",
+        "## Tasks",
+        "",
+        "- [ ] <!-- Add tasks here -->",
+        "",
+        "## Notes",
+        "",
+        "<!-- Add notes as you work -->",
+        ""
+      ].join("\n");
+      writeFileSync(planPath, content, "utf-8");
+      const config = loadConfig(cwd);
+      let committed = false;
+      let hash;
+      if (config.commit_docs !== false) {
+        const result = commitPlanningDocs2(
+          cwd,
+          `declare: add quick task ${num} "${description}"`,
+          [relPlanPath]
+        );
+        committed = result.committed;
+        hash = result.hash;
+      }
+      return {
+        id: num,
+        folder: relFolderPath,
+        planPath: relPlanPath,
+        committed,
+        hash
+      };
+    }
+    module2.exports = { runQuickTask: runQuickTask2 };
+  }
+});
+
+// src/commands/todo.js
+var require_todo = __commonJS({
+  "src/commands/todo.js"(exports2, module2) {
+    "use strict";
+    var {
+      existsSync,
+      mkdirSync,
+      writeFileSync,
+      readFileSync,
+      readdirSync,
+      renameSync
+    } = require("node:fs");
+    var { join, basename } = require("node:path");
+    var { commitPlanningDocs: commitPlanningDocs2, loadConfig } = require_commit();
+    var { parseFlag } = require_parse_args();
+    function slugify(text) {
+      return text.toLowerCase().replace(/[^a-z0-9\s-]/g, "").trim().replace(/\s+/g, "-").replace(/-+/g, "-").slice(0, 40);
+    }
+    function nextTodoNumber(todosDir) {
+      if (!existsSync(todosDir)) return "001";
+      const entries = readdirSync(todosDir, { withFileTypes: true });
+      let max = 0;
+      for (const entry of entries) {
+        if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+        const match = entry.name.match(/^(\d{3})-/);
+        if (match) {
+          const n = parseInt(match[1], 10);
+          if (n > max) max = n;
+        }
+      }
+      const completedDir = join(todosDir, "completed");
+      if (existsSync(completedDir)) {
+        const completed = readdirSync(completedDir, { withFileTypes: true });
+        for (const entry of completed) {
+          if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+          const match = entry.name.match(/^(\d{3})-/);
+          if (match) {
+            const n = parseInt(match[1], 10);
+            if (n > max) max = n;
+          }
+        }
+      }
+      return String(max + 1).padStart(3, "0");
+    }
+    function parseTodoFile(content) {
+      const lines = content.split("\n");
+      let description = "";
+      let created = "";
+      if (lines[0] === "---") {
+        let i = 1;
+        while (i < lines.length && lines[i] !== "---") {
+          const createdMatch = lines[i].match(/^created:\s*(.+)$/);
+          if (createdMatch) created = createdMatch[1].trim();
+          i++;
+        }
+      }
+      for (const line of lines) {
+        const h1Match = line.match(/^#\s+(.+)$/);
+        if (h1Match) {
+          description = h1Match[1].trim();
+          break;
+        }
+      }
+      return { description, created };
+    }
+    function runAddTodo2(cwd, args) {
+      const description = parseFlag(args, "description");
+      if (!description) {
+        return { error: "Missing required flag: --description" };
+      }
+      const todosDir = join(cwd, ".planning", "todos");
+      if (!existsSync(todosDir)) {
+        mkdirSync(todosDir, { recursive: true });
+      }
+      const num = nextTodoNumber(todosDir);
+      const slug = slugify(description);
+      const fileName = `${num}-${slug}.md`;
+      const filePath = join(todosDir, fileName);
+      const relPath = `.planning/todos/${fileName}`;
+      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const content = [
+        "---",
+        `created: ${today}`,
+        "status: pending",
+        "---",
+        "",
+        `# ${description}`,
+        "",
+        "## Notes",
+        "",
+        "<!-- Add context and notes here -->",
+        ""
+      ].join("\n");
+      writeFileSync(filePath, content, "utf-8");
+      const config = loadConfig(cwd);
+      let committed = false;
+      let hash;
+      if (config.commit_docs !== false) {
+        const result = commitPlanningDocs2(
+          cwd,
+          `declare: add todo ${num} "${description}"`,
+          [relPath]
+        );
+        committed = result.committed;
+        hash = result.hash;
+      }
+      return {
+        id: num,
+        path: relPath,
+        committed,
+        hash
+      };
+    }
+    function runCheckTodos2(cwd) {
+      const todosDir = join(cwd, ".planning", "todos");
+      if (!existsSync(todosDir)) {
+        return { todos: [] };
+      }
+      const entries = readdirSync(todosDir, { withFileTypes: true });
+      const todos = [];
+      for (const entry of entries) {
+        if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+        const match = entry.name.match(/^(\d{3})-/);
+        if (!match) continue;
+        const id = match[1];
+        const filePath = join(todosDir, entry.name);
+        const relPath = `.planning/todos/${entry.name}`;
+        let content = "";
+        try {
+          content = readFileSync(filePath, "utf-8");
+        } catch {
+          continue;
+        }
+        const { description, created } = parseTodoFile(content);
+        todos.push({
+          id,
+          description: description || entry.name.replace(/^\d{3}-/, "").replace(/\.md$/, "").replace(/-/g, " "),
+          created: created || "",
+          path: relPath
+        });
+      }
+      todos.sort((a, b) => a.id.localeCompare(b.id));
+      return { todos };
+    }
+    function runCompleteTodo2(cwd, args) {
+      const id = parseFlag(args, "id");
+      if (!id) {
+        return { error: "Missing required flag: --id" };
+      }
+      const todosDir = join(cwd, ".planning", "todos");
+      if (!existsSync(todosDir)) {
+        return { error: `No todos directory found at .planning/todos/` };
+      }
+      const entries = readdirSync(todosDir, { withFileTypes: true });
+      let todoFile = null;
+      for (const entry of entries) {
+        if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+        if (entry.name.startsWith(`${id}-`) || entry.name === `${id}.md`) {
+          todoFile = entry.name;
+          break;
+        }
+      }
+      if (!todoFile) {
+        return { error: `Todo with ID ${id} not found in .planning/todos/` };
+      }
+      const completedDir = join(todosDir, "completed");
+      if (!existsSync(completedDir)) {
+        mkdirSync(completedDir, { recursive: true });
+      }
+      const fromPath = join(todosDir, todoFile);
+      const toPath = join(completedDir, todoFile);
+      const relFrom = `.planning/todos/${todoFile}`;
+      const relTo = `.planning/todos/completed/${todoFile}`;
+      renameSync(fromPath, toPath);
+      const config = loadConfig(cwd);
+      let committed = false;
+      let hash;
+      if (config.commit_docs !== false) {
+        const result = commitPlanningDocs2(
+          cwd,
+          `declare: complete todo ${id}`,
+          [relTo]
+        );
+        committed = result.committed;
+        hash = result.hash;
+      }
+      return {
+        id,
+        from: relFrom,
+        to: relTo,
+        committed,
+        hash
+      };
+    }
+    module2.exports = { runAddTodo: runAddTodo2, runCheckTodos: runCheckTodos2, runCompleteTodo: runCompleteTodo2 };
+  }
+});
+
+// src/commands/config-get.js
+var require_config_get = __commonJS({
+  "src/commands/config-get.js"(exports2, module2) {
+    "use strict";
+    var { existsSync, readFileSync } = require("node:fs");
+    var { join } = require("node:path");
+    function getAtPath(obj, path) {
+      const parts = path.split(".");
+      let current = obj;
+      for (const part of parts) {
+        if (current === null || typeof current !== "object") {
+          return { found: false, value: void 0 };
+        }
+        const record = (
+          /** @type {Record<string, unknown>} */
+          current
+        );
+        if (!(part in record)) {
+          return { found: false, value: void 0 };
+        }
+        current = record[part];
+      }
+      return { found: true, value: current };
+    }
+    function runConfigGet2(cwd, args) {
+      const keyPath = args && args[0];
+      if (!keyPath) {
+        return { error: 'config-get requires a key path argument (e.g., "workflow.research")' };
+      }
+      const configPath = join(cwd, ".planning", "config.json");
+      if (!existsSync(configPath)) {
+        return { error: "No config.json found. Run /declare:init to initialize the project." };
+      }
+      let config;
+      try {
+        config = JSON.parse(readFileSync(configPath, "utf-8"));
+      } catch (err) {
+        return { error: `Failed to parse config.json: ${err.message}` };
+      }
+      const { found, value } = getAtPath(config, keyPath);
+      if (!found) {
+        return { error: `Key not found: ${keyPath}` };
+      }
+      return { key: keyPath, value };
+    }
+    module2.exports = { runConfigGet: runConfigGet2 };
+  }
+});
+
+// src/commands/config-set.js
+var require_config_set = __commonJS({
+  "src/commands/config-set.js"(exports2, module2) {
+    "use strict";
+    var { existsSync, readFileSync, writeFileSync } = require("node:fs");
+    var { join } = require("node:path");
+    function parseValue(raw) {
+      if (raw === "true") return true;
+      if (raw === "false") return false;
+      const num = Number(raw);
+      if (!Number.isNaN(num) && raw.trim() !== "") return num;
+      return raw;
+    }
+    function setAtPath(obj, path, value) {
+      const parts = path.split(".");
+      let current = obj;
+      for (let i = 0; i < parts.length - 1; i++) {
+        const part = parts[i];
+        if (current[part] === null || typeof current[part] !== "object") {
+          current[part] = {};
+        }
+        current = /** @type {Record<string, unknown>} */
+        current[part];
+      }
+      current[parts[parts.length - 1]] = value;
+    }
+    function parseKeyValueFlags(argv) {
+      let key = null;
+      let value = null;
+      for (let i = 0; i < argv.length; i++) {
+        if (argv[i] === "--key" && i + 1 < argv.length) {
+          key = argv[i + 1];
+          i++;
+        } else if (argv[i] === "--value" && i + 1 < argv.length) {
+          value = argv[i + 1];
+          i++;
+        }
+      }
+      return { key, value };
+    }
+    function runConfigSet2(cwd, args) {
+      const { key: keyPath, value: rawValue } = parseKeyValueFlags(args);
+      if (!keyPath) {
+        return { error: "config-set requires --key <path.to.key>" };
+      }
+      if (rawValue === null) {
+        return { error: "config-set requires --value <value>" };
+      }
+      const configPath = join(cwd, ".planning", "config.json");
+      if (!existsSync(configPath)) {
+        return { error: "No config.json found. Run /declare:init to initialize the project." };
+      }
+      let config;
+      try {
+        config = JSON.parse(readFileSync(configPath, "utf-8"));
+      } catch (err) {
+        return { error: `Failed to parse config.json: ${err.message}` };
+      }
+      const parsedValue = parseValue(rawValue);
+      setAtPath(config, keyPath, parsedValue);
+      try {
+        writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n", "utf-8");
+      } catch (err) {
+        return { error: `Failed to write config.json: ${err.message}` };
+      }
+      return { key: keyPath, value: parsedValue, updated: true };
+    }
+    module2.exports = { runConfigSet: runConfigSet2 };
+  }
+});
+
+// src/commands/health-check.js
+var require_health_check = __commonJS({
+  "src/commands/health-check.js"(exports2, module2) {
+    "use strict";
+    var { existsSync, readFileSync, readdirSync, mkdirSync } = require("node:fs");
+    var { join } = require("node:path");
+    var { parseFutureFile } = require_future();
+    var { parseMilestonesFile } = require_milestones();
+    var { findMilestoneFolder, ensureMilestoneFolder } = require_milestone_folders();
+    function runHealthCheck2(cwd) {
+      const planningDir = join(cwd, ".planning");
+      const milestonesDir = join(planningDir, "milestones");
+      if (!existsSync(planningDir)) {
+        return { error: "No .planning/ directory found. Run /declare:init to initialize the project." };
+      }
+      const issues = [];
+      const futurePath = join(planningDir, "FUTURE.md");
+      let declarations = [];
+      if (!existsSync(futurePath)) {
+        issues.push({
+          type: "missing_file",
+          message: "FUTURE.md is missing",
+          path: ".planning/FUTURE.md",
+          fixable: false
+        });
+      } else {
+        try {
+          const content = readFileSync(futurePath, "utf-8");
+          declarations = parseFutureFile(content);
+        } catch (err) {
+          issues.push({
+            type: "parse_error",
+            message: `FUTURE.md could not be parsed: ${err.message}`,
+            path: ".planning/FUTURE.md",
+            fixable: false
+          });
+        }
+      }
+      const milestonesPath = join(planningDir, "MILESTONES.md");
+      let milestones = [];
+      if (!existsSync(milestonesPath)) {
+        issues.push({
+          type: "missing_file",
+          message: "MILESTONES.md is missing",
+          path: ".planning/MILESTONES.md",
+          fixable: false
+        });
+      } else {
+        try {
+          const content = readFileSync(milestonesPath, "utf-8");
+          const parsed = parseMilestonesFile(content);
+          milestones = parsed.milestones;
+        } catch (err) {
+          issues.push({
+            type: "parse_error",
+            message: `MILESTONES.md could not be parsed: ${err.message}`,
+            path: ".planning/MILESTONES.md",
+            fixable: false
+          });
+        }
+      }
+      const configPath = join(planningDir, "config.json");
+      if (!existsSync(configPath)) {
+        issues.push({
+          type: "missing_file",
+          message: "config.json is missing",
+          path: ".planning/config.json",
+          fixable: false
+        });
+      } else {
+        try {
+          JSON.parse(readFileSync(configPath, "utf-8"));
+        } catch (err) {
+          issues.push({
+            type: "parse_error",
+            message: `config.json could not be parsed: ${err.message}`,
+            path: ".planning/config.json",
+            fixable: false
+          });
+        }
+      }
+      if (milestones.length > 0) {
+        for (const milestone of milestones) {
+          const folder = findMilestoneFolder(planningDir, milestone.id);
+          if (!folder) {
+            issues.push({
+              type: "missing_folder",
+              message: `Milestone ${milestone.id} ("${milestone.title}") has no folder in .planning/milestones/`,
+              path: `.planning/milestones/${milestone.id}-*`,
+              fixable: true,
+              // Store data needed for repair
+              _milestoneId: milestone.id,
+              _milestoneTitle: milestone.title
+            });
+          }
+        }
+      }
+      if (existsSync(milestonesDir)) {
+        let entries;
+        try {
+          entries = readdirSync(milestonesDir, { withFileTypes: true });
+        } catch {
+          entries = [];
+        }
+        const referencedIds = new Set(milestones.map((m) => m.id));
+        const milestoneIdPattern = /^(M-\d+)/;
+        for (const entry of entries) {
+          if (!entry.isDirectory()) continue;
+          if (entry.name.startsWith("_")) continue;
+          const match = entry.name.match(milestoneIdPattern);
+          if (!match) continue;
+          const folderId = match[1];
+          if (!referencedIds.has(folderId)) {
+            issues.push({
+              type: "orphaned_folder",
+              message: `Folder "${entry.name}" has no corresponding milestone in MILESTONES.md`,
+              path: `.planning/milestones/${entry.name}`,
+              fixable: false
+            });
+          }
+        }
+      }
+      return {
+        healthy: issues.length === 0,
+        issues
+      };
+    }
+    function runHealthCheckRepair2(cwd) {
+      const planningDir = join(cwd, ".planning");
+      const result = runHealthCheck2(cwd);
+      if (result.error) return result;
+      const repaired = [];
+      for (const issue of result.issues) {
+        if (!issue.fixable) continue;
+        if (issue.type === "missing_folder" && issue._milestoneId && issue._milestoneTitle) {
+          try {
+            ensureMilestoneFolder(planningDir, issue._milestoneId, issue._milestoneTitle);
+            repaired.push(`Created folder for ${issue._milestoneId}: ${issue._milestoneTitle}`);
+          } catch (err) {
+          }
+        }
+      }
+      const recheck = runHealthCheck2(cwd);
+      if (recheck.error) return recheck;
+      return {
+        healthy: recheck.healthy,
+        issues: recheck.issues,
+        repaired
+      };
+    }
+    module2.exports = { runHealthCheck: runHealthCheck2, runHealthCheckRepair: runHealthCheckRepair2 };
+  }
+});
+
+// src/server/index.js
+var require_server = __commonJS({
+  "src/server/index.js"(exports2, module2) {
+    "use strict";
+    var http = require("node:http");
+    var fs = require("node:fs");
+    var path = require("node:path");
+    var { runLoadGraph: runLoadGraph2 } = require_load_graph();
+    var { runStatus: runStatus2 } = require_status();
+    var MIME_TYPES = {
+      ".html": "text/html; charset=utf-8",
+      ".js": "application/javascript; charset=utf-8",
+      ".css": "text/css; charset=utf-8",
+      ".json": "application/json; charset=utf-8",
+      ".svg": "image/svg+xml",
+      ".png": "image/png",
+      ".ico": "image/x-icon"
+    };
+    var PUBLIC_DIR_RELATIVE = path.join("src", "server", "public");
+    function getPublicDir(cwd) {
+      return path.join(cwd, PUBLIC_DIR_RELATIVE);
+    }
+    function sendJson(res, statusCode, data) {
+      const body = JSON.stringify(data, null, 2);
+      res.writeHead(statusCode, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Content-Length": Buffer.byteLength(body),
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type"
+      });
+      res.end(body);
+    }
+    function sendFile(res, filePath) {
+      const ext = path.extname(filePath).toLowerCase();
+      const contentType = MIME_TYPES[ext] || "application/octet-stream";
+      fs.readFile(filePath, (err, data) => {
+        if (err) {
+          res.writeHead(404, { "Content-Type": "text/plain" });
+          res.end("Not Found");
+          return;
+        }
+        res.writeHead(200, {
+          "Content-Type": contentType,
+          "Content-Length": data.length
+        });
+        res.end(data);
+      });
+    }
+    function handleGraph(res, cwd) {
+      try {
+        const graph = runLoadGraph2(cwd);
+        if ("error" in graph) {
+          sendJson(res, 500, { error: graph.error });
+          return;
+        }
+        sendJson(res, 200, graph);
+      } catch (err) {
+        sendJson(res, 500, { error: String(err) });
+      }
+    }
+    function handleStatus(res, cwd) {
+      try {
+        const status = runStatus2(cwd);
+        if ("error" in status) {
+          sendJson(res, 500, { error: status.error });
+          return;
+        }
+        sendJson(res, 200, status);
+      } catch (err) {
+        sendJson(res, 500, { error: String(err) });
+      }
+    }
+    function handleMilestone(res, cwd, milestoneId) {
+      try {
+        const graph = runLoadGraph2(cwd);
+        if ("error" in graph) {
+          sendJson(res, 500, { error: graph.error });
+          return;
+        }
+        const normalizedId = milestoneId.toUpperCase();
+        const milestone = graph.milestones.find(
+          (m) => m.id.toUpperCase() === normalizedId
+        );
+        if (!milestone) {
+          sendJson(res, 404, { error: `Milestone '${milestoneId}' not found` });
+          return;
+        }
+        const milestoneActions = graph.actions.filter((a) => {
+          if (Array.isArray(a.causes)) {
+            return a.causes.some((c) => c.toUpperCase() === normalizedId);
+          }
+          return false;
+        });
+        sendJson(res, 200, {
+          milestone,
+          actions: milestoneActions
+        });
+      } catch (err) {
+        sendJson(res, 500, { error: String(err) });
+      }
+    }
+    function route(req, res, cwd) {
+      const method = req.method || "GET";
+      const url = req.url || "/";
+      const urlPath = url.split("?")[0];
+      if (method === "OPTIONS") {
+        res.writeHead(204, {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "GET, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type"
+        });
+        res.end();
+        return;
+      }
+      if (method !== "GET") {
+        sendJson(res, 405, { error: "Method Not Allowed" });
+        return;
+      }
+      if (urlPath === "/api/graph") {
+        handleGraph(res, cwd);
+        return;
+      }
+      if (urlPath === "/api/status") {
+        handleStatus(res, cwd);
+        return;
+      }
+      const milestoneMatch = urlPath.match(/^\/api\/milestone\/([^/]+)$/);
+      if (milestoneMatch) {
+        handleMilestone(res, cwd, milestoneMatch[1]);
+        return;
+      }
+      const publicDir = getPublicDir(cwd);
+      if (urlPath === "/") {
+        const indexPath = path.join(publicDir, "index.html");
+        sendFile(res, indexPath);
+        return;
+      }
+      if (urlPath.startsWith("/public/")) {
+        const relative = urlPath.replace(/^\/public\//, "");
+        const resolved = path.resolve(publicDir, relative);
+        if (!resolved.startsWith(publicDir + path.sep) && resolved !== publicDir) {
+          sendJson(res, 403, { error: "Forbidden" });
+          return;
+        }
+        sendFile(res, resolved);
+        return;
+      }
+      sendJson(res, 404, { error: `Route not found: ${urlPath}` });
+    }
+    function createServer(cwd, port) {
+      const server = http.createServer((req, res) => {
+        route(req, res, cwd);
+      });
+      return server;
+    }
+    function startServer(cwd, port) {
+      const resolvedPort = port || parseInt(process.env.PORT || "", 10) || 3847;
+      const server = createServer(cwd, resolvedPort);
+      server.listen(resolvedPort, "127.0.0.1", () => {
+      });
+      const url = `http://localhost:${resolvedPort}`;
+      return { server, port: resolvedPort, url };
+    }
+    module2.exports = { createServer, startServer };
+  }
+});
+
+// src/commands/serve.js
+var require_serve = __commonJS({
+  "src/commands/serve.js"(exports2, module2) {
+    "use strict";
+    var { startServer } = require_server();
+    function parsePortFlag(args) {
+      const idx = args.indexOf("--port");
+      if (idx === -1 || idx + 1 >= args.length) return void 0;
+      const value = parseInt(args[idx + 1], 10);
+      return Number.isNaN(value) ? void 0 : value;
+    }
+    function runServe2(cwd, args) {
+      const port = parsePortFlag(args) || parseInt(process.env.PORT || "", 10) || 3847;
+      const { server, port: resolvedPort, url } = startServer(cwd, port);
+      process.on("SIGINT", () => {
+        server.close(() => process.exit(0));
+      });
+      process.on("SIGTERM", () => {
+        server.close(() => process.exit(0));
+      });
+      return { url, port: resolvedPort, pid: process.pid };
+    }
+    module2.exports = { runServe: runServe2 };
+  }
+});
+
 // src/declare-tools.js
 var { commitPlanningDocs } = require_commit();
+var { readState, recordSession } = require_state();
 var { runInit } = require_init();
 var { runStatus } = require_status();
 var { runHelp } = require_help();
@@ -2750,6 +3874,14 @@ var { runCheckDrift } = require_check_drift();
 var { runCheckOccurrence } = require_check_occurrence();
 var { runComputePerformance } = require_compute_performance();
 var { runRenegotiate } = require_renegotiate();
+var { runCompleteMilestone } = require_complete_milestone();
+var { runSyncStatus } = require_sync_status();
+var { runQuickTask } = require_quick_task();
+var { runAddTodo, runCheckTodos, runCompleteTodo } = require_todo();
+var { runConfigGet } = require_config_get();
+var { runConfigSet } = require_config_set();
+var { runHealthCheck, runHealthCheckRepair } = require_health_check();
+var { runServe } = require_serve();
 function parseCwdFlag(argv) {
   const idx = argv.indexOf("--cwd");
   if (idx === -1 || idx + 1 >= argv.length) return null;
@@ -2783,11 +3915,16 @@ function parseFilesFlag(argv) {
   }
   return files;
 }
+function parseNamedFlag(argv, flag) {
+  const idx = argv.indexOf(flag);
+  if (idx === -1 || idx + 1 >= argv.length) return null;
+  return argv[idx + 1];
+}
 function main() {
   const args = process.argv.slice(2);
   const command = args[0];
   if (!command) {
-    console.log(JSON.stringify({ error: "No command specified. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, help" }));
+    console.log(JSON.stringify({ error: "No command specified. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, sync-status, serve, record-session, get-state, quick-task, add-todo, check-todos, complete-todo, config-get, config-set, health-check, help" }));
     process.exit(1);
   }
   try {
@@ -2908,6 +4045,13 @@ function main() {
         if (result.error) process.exit(1);
         break;
       }
+      case "sync-status": {
+        const cwdSync = parseCwdFlag(args) || process.cwd();
+        const result = runSyncStatus(cwdSync);
+        console.log(JSON.stringify(result));
+        if (result.error) process.exit(1);
+        break;
+      }
       case "execute": {
         const cwdExecute = parseCwdFlag(args) || process.cwd();
         const result = runExecute(cwdExecute, args.slice(1));
@@ -2950,8 +4094,95 @@ function main() {
         if (result.error) process.exit(1);
         break;
       }
+      case "complete-milestone": {
+        const cwdCompMs = parseCwdFlag(args) || process.cwd();
+        const result = runCompleteMilestone(cwdCompMs, args.slice(1));
+        console.log(JSON.stringify(result));
+        if (result.error) process.exit(1);
+        break;
+      }
+      case "serve": {
+        const cwdServe = parseCwdFlag(args) || process.cwd();
+        const result = runServe(cwdServe, args.slice(1));
+        console.log(JSON.stringify(result));
+        break;
+      }
+      case "record-session": {
+        const cwdRecordSession = parseCwdFlag(args) || process.cwd();
+        const stoppedAt = parseNamedFlag(args, "--stopped-at");
+        const resumeFile = parseNamedFlag(args, "--resume-file");
+        if (!stoppedAt) {
+          console.log(JSON.stringify({ error: "record-session requires --stopped-at argument" }));
+          process.exit(1);
+        }
+        const result = recordSession(cwdRecordSession, stoppedAt, resumeFile || void 0);
+        console.log(JSON.stringify(result));
+        if (!result.ok) process.exit(1);
+        break;
+      }
+      case "get-state": {
+        const cwdGetState = parseCwdFlag(args) || process.cwd();
+        const result = readState(cwdGetState);
+        if (result === null) {
+          console.log(JSON.stringify({ error: "STATE.md not found. Run /declare:new-project to initialize." }));
+          process.exit(1);
+        }
+        console.log(JSON.stringify(result));
+        break;
+      }
+      case "quick-task": {
+        const cwdQuickTask = parseCwdFlag(args) || process.cwd();
+        const result = runQuickTask(cwdQuickTask, args.slice(1));
+        console.log(JSON.stringify(result));
+        if (result.error) process.exit(1);
+        break;
+      }
+      case "add-todo": {
+        const cwdAddTodo = parseCwdFlag(args) || process.cwd();
+        const result = runAddTodo(cwdAddTodo, args.slice(1));
+        console.log(JSON.stringify(result));
+        if (result.error) process.exit(1);
+        break;
+      }
+      case "check-todos": {
+        const cwdCheckTodos = parseCwdFlag(args) || process.cwd();
+        const result = runCheckTodos(cwdCheckTodos);
+        console.log(JSON.stringify(result));
+        if (result.error) process.exit(1);
+        break;
+      }
+      case "complete-todo": {
+        const cwdCompleteTodo = parseCwdFlag(args) || process.cwd();
+        const result = runCompleteTodo(cwdCompleteTodo, args.slice(1));
+        console.log(JSON.stringify(result));
+        if (result.error) process.exit(1);
+        break;
+      }
+      case "config-get": {
+        const cwdConfigGet = parseCwdFlag(args) || process.cwd();
+        const configGetArgs = parsePositionalArgs(args.slice(1));
+        const result = runConfigGet(cwdConfigGet, configGetArgs);
+        console.log(JSON.stringify(result));
+        if (result.error) process.exit(1);
+        break;
+      }
+      case "config-set": {
+        const cwdConfigSet = parseCwdFlag(args) || process.cwd();
+        const result = runConfigSet(cwdConfigSet, args.slice(1));
+        console.log(JSON.stringify(result));
+        if (result.error) process.exit(1);
+        break;
+      }
+      case "health-check": {
+        const cwdHealthCheck = parseCwdFlag(args) || process.cwd();
+        const repair = args.includes("--repair");
+        const result = repair ? runHealthCheckRepair(cwdHealthCheck) : runHealthCheck(cwdHealthCheck);
+        console.log(JSON.stringify(result));
+        if (result.error) process.exit(1);
+        break;
+      }
       default:
-        console.log(JSON.stringify({ error: `Unknown command: ${command}. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, help` }));
+        console.log(JSON.stringify({ error: `Unknown command: ${command}. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, sync-status, serve, record-session, get-state, quick-task, add-todo, check-todos, complete-todo, config-get, config-set, health-check, help` }));
         process.exit(1);
     }
   } catch (err) {

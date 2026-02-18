@@ -1,0 +1,285 @@
+// @ts-check
+'use strict';
+
+/**
+ * Declare local web server.
+ *
+ * Serves the Declare graph as a JSON API and static files for the dashboard.
+ * Zero runtime dependencies — uses Node's built-in http and fs modules only.
+ *
+ * Routes:
+ *   GET /api/graph          - full graph (declarations, milestones, actions, stats)
+ *   GET /api/status         - graph health and performance metrics
+ *   GET /api/milestone/:id  - single milestone with full action details
+ *   GET /                   - serve src/server/public/index.html
+ *   GET /public/*           - serve static files from src/server/public/
+ *
+ * Default port: 3847 (or PORT env var)
+ *
+ * Usage:
+ *   const { createServer, startServer } = require('./src/server/index');
+ *   const { server, port, url } = startServer(process.cwd(), 3847);
+ */
+
+const http = require('node:http');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const { runLoadGraph } = require('../commands/load-graph');
+const { runStatus } = require('../commands/status');
+
+/** @type {Record<string, string>} */
+const MIME_TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.ico': 'image/x-icon',
+};
+
+// PUBLIC_DIR is resolved at request time from cwd so the bundle works correctly
+// when dist/declare-tools.cjs is run from the project root.
+const PUBLIC_DIR_RELATIVE = path.join('src', 'server', 'public');
+
+/**
+ * Resolve the public directory for a given project root.
+ * @param {string} cwd
+ * @returns {string}
+ */
+function getPublicDir(cwd) {
+  return path.join(cwd, PUBLIC_DIR_RELATIVE);
+}
+
+/**
+ * Send a JSON response.
+ *
+ * @param {http.ServerResponse} res
+ * @param {number} statusCode
+ * @param {unknown} data
+ */
+function sendJson(res, statusCode, data) {
+  const body = JSON.stringify(data, null, 2);
+  res.writeHead(statusCode, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Content-Length': Buffer.byteLength(body),
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+  });
+  res.end(body);
+}
+
+/**
+ * Send a static file response.
+ *
+ * @param {http.ServerResponse} res
+ * @param {string} filePath
+ */
+function sendFile(res, filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+
+  fs.readFile(filePath, (err, data) => {
+    if (err) {
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      res.end('Not Found');
+      return;
+    }
+    res.writeHead(200, {
+      'Content-Type': contentType,
+      'Content-Length': data.length,
+    });
+    res.end(data);
+  });
+}
+
+/**
+ * Handle GET /api/graph
+ * Returns the full graph: declarations, milestones, actions, and stats.
+ *
+ * @param {http.ServerResponse} res
+ * @param {string} cwd
+ */
+function handleGraph(res, cwd) {
+  try {
+    const graph = runLoadGraph(cwd);
+    if ('error' in graph) {
+      sendJson(res, 500, { error: graph.error });
+      return;
+    }
+    sendJson(res, 200, graph);
+  } catch (err) {
+    sendJson(res, 500, { error: String(err) });
+  }
+}
+
+/**
+ * Handle GET /api/status
+ * Returns graph health and performance metrics.
+ *
+ * @param {http.ServerResponse} res
+ * @param {string} cwd
+ */
+function handleStatus(res, cwd) {
+  try {
+    const status = runStatus(cwd);
+    if ('error' in status) {
+      sendJson(res, 500, { error: status.error });
+      return;
+    }
+    sendJson(res, 200, status);
+  } catch (err) {
+    sendJson(res, 500, { error: String(err) });
+  }
+}
+
+/**
+ * Handle GET /api/milestone/:id
+ * Returns a single milestone with full action details.
+ *
+ * @param {http.ServerResponse} res
+ * @param {string} cwd
+ * @param {string} milestoneId
+ */
+function handleMilestone(res, cwd, milestoneId) {
+  try {
+    const graph = runLoadGraph(cwd);
+    if ('error' in graph) {
+      sendJson(res, 500, { error: graph.error });
+      return;
+    }
+
+    const normalizedId = milestoneId.toUpperCase();
+    const milestone = graph.milestones.find(
+      m => m.id.toUpperCase() === normalizedId
+    );
+
+    if (!milestone) {
+      sendJson(res, 404, { error: `Milestone '${milestoneId}' not found` });
+      return;
+    }
+
+    // Collect actions that cause this milestone
+    const milestoneActions = graph.actions.filter(a => {
+      if (Array.isArray(a.causes)) {
+        return a.causes.some(c => c.toUpperCase() === normalizedId);
+      }
+      return false;
+    });
+
+    sendJson(res, 200, {
+      milestone,
+      actions: milestoneActions,
+    });
+  } catch (err) {
+    sendJson(res, 500, { error: String(err) });
+  }
+}
+
+/**
+ * Route an incoming request to the appropriate handler.
+ *
+ * @param {http.IncomingMessage} req
+ * @param {http.ServerResponse} res
+ * @param {string} cwd
+ */
+function route(req, res, cwd) {
+  const method = req.method || 'GET';
+  const url = req.url || '/';
+
+  // Strip query string for routing
+  const urlPath = url.split('?')[0];
+
+  // CORS preflight
+  if (method === 'OPTIONS') {
+    res.writeHead(204, {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+    });
+    res.end();
+    return;
+  }
+
+  if (method !== 'GET') {
+    sendJson(res, 405, { error: 'Method Not Allowed' });
+    return;
+  }
+
+  // API routes
+  if (urlPath === '/api/graph') {
+    handleGraph(res, cwd);
+    return;
+  }
+
+  if (urlPath === '/api/status') {
+    handleStatus(res, cwd);
+    return;
+  }
+
+  const milestoneMatch = urlPath.match(/^\/api\/milestone\/([^/]+)$/);
+  if (milestoneMatch) {
+    handleMilestone(res, cwd, milestoneMatch[1]);
+    return;
+  }
+
+  // Static file routes
+  const publicDir = getPublicDir(cwd);
+
+  if (urlPath === '/') {
+    const indexPath = path.join(publicDir, 'index.html');
+    sendFile(res, indexPath);
+    return;
+  }
+
+  if (urlPath.startsWith('/public/')) {
+    // Prevent path traversal: resolve and verify it stays within publicDir
+    const relative = urlPath.replace(/^\/public\//, '');
+    const resolved = path.resolve(publicDir, relative);
+    if (!resolved.startsWith(publicDir + path.sep) && resolved !== publicDir) {
+      sendJson(res, 403, { error: 'Forbidden' });
+      return;
+    }
+    sendFile(res, resolved);
+    return;
+  }
+
+  sendJson(res, 404, { error: `Route not found: ${urlPath}` });
+}
+
+/**
+ * Create a Declare HTTP server for a given project directory.
+ *
+ * @param {string} cwd - Project root (working directory)
+ * @param {number} [port] - Port to listen on (default: 3847 or PORT env var)
+ * @returns {http.Server}
+ */
+function createServer(cwd, port) {
+  const server = http.createServer((req, res) => {
+    route(req, res, cwd);
+  });
+  return server;
+}
+
+/**
+ * Start the Declare server and begin listening.
+ *
+ * @param {string} cwd - Project root (working directory)
+ * @param {number} [port] - Port to listen on (default: 3847 or PORT env var)
+ * @returns {{ server: http.Server, port: number, url: string }}
+ */
+function startServer(cwd, port) {
+  const resolvedPort = port || parseInt(process.env.PORT || '', 10) || 3847;
+  const server = createServer(cwd, resolvedPort);
+
+  server.listen(resolvedPort, '127.0.0.1', () => {
+    // Server started — listening on resolvedPort
+  });
+
+  const url = `http://localhost:${resolvedPort}`;
+  return { server, port: resolvedPort, url };
+}
+
+module.exports = { createServer, startServer };

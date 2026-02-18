@@ -1,21 +1,23 @@
-# Milestones
+# Milestones: get-shit-done
 
-## v1.0 Declare v1.0 (Shipped: 2026-02-17)
+## Milestones
 
-**Phases completed:** 7 phases, 17 plans
-**Timeline:** 2026-02-15 → 2026-02-17 (3 days)
-**Codebase:** 4,646 LOC (JavaScript) + 1,729 LOC tests
-
-**Key accomplishments:**
-1. Custom graph engine (DeclareDag) with three-layer DAG, dual adjacency lists, Kahn's topological sort, zero runtime dependencies
-2. Future declaration system with Socratic past-detection, backward derivation (declarations → milestones → actions), and NSR validation
-3. Traceability engine: why-chain tracing, ASCII tree visualization, dependency-weight prioritization
-4. Wave-based execution pipeline with parallel agent spawning, exec plan generation, and two-layer upward verification
-5. Honor protocol integrity system: ACTIVE/KEPT/HONORED/BROKEN/RENEGOTIATED state machine, auto-remediation, escalation
-6. Alignment monitoring: drift detection, occurrence checks, performance scoring (alignment x integrity), declaration renegotiation with archive
-
-**Tech debt carried forward:**
-- verification.js artifact module created but unused (execute.md writes VERIFICATION.md manually)
-
----
-
+| ID   | Title                                   | Status  | Realizes | Plan |
+|------|-----------------------------------------|---------|----------|------|
+| M-01 | Context capture per milestone           | DONE    | D-01     | YES  |
+| M-02 | Milestone research pipeline             | DONE    | D-01     | YES  |
+| M-03 | Planner + plan-checker loop             | DONE    | D-01     | YES  |
+| M-04 | Codebase mapper                         | DONE    | D-02     | YES  |
+| M-05 | Project initialization flow             | DONE    | D-02     | YES  |
+| M-06 | Milestone completion and archiving      | DONE    | D-02     | YES  |
+| M-07 | New milestone cycle                     | DONE    | D-02     | YES  |
+| M-08 | Conversational UAT                      | DONE    | D-03     | YES  |
+| M-09 | Systematic debugger                     | DONE    | D-03     | YES  |
+| M-10 | Milestone audit                         | DONE    | D-03     | YES  |
+| M-11 | DAG web server                          | DONE    | D-04     | YES  |
+| M-12 | Interactive DAG visualizer              | DONE    | D-04     | YES  |
+| M-13 | Dashboard served via /declare:dashboard | DONE    | D-04     | YES  |
+| M-14 | Quick tasks and todos                   | DONE    | D-05     | YES  |
+| M-15 | Session management                      | DONE    | D-05     | YES  |
+| M-16 | Configuration and health                | DONE    | D-05     | YES  |
+| M-17 | Self-update system                      | DONE    | D-05     | YES  |
