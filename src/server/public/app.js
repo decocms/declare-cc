@@ -405,7 +405,7 @@ function selectNode(nodeId, type) {
   if (!item) return;
 
   if ($panelEmpty) $panelEmpty.style.display = 'none';
-  renderPanelContent(item, type);
+  renderPanelChain(item, type);
 }
 
 /**
@@ -559,6 +559,124 @@ function escHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
+// ─── Chain panel renderer ─────────────────────────────────────────────────────
+
+/**
+ * Render the sidebar with the full chain from declarations down to the clicked node.
+ * Clicking a milestone shows: parent declaration(s) → the milestone.
+ * Clicking an action shows: declaration(s) → parent milestone(s) → the action.
+ */
+function renderPanelChain(item, type) {
+  if (!graphData) return;
+  const { declarations, milestones, actions } = graphData;
+  const sections = [];
+
+  if (type === 'action') {
+    // Parent milestones
+    const parentMilestones = milestones.filter(m => (item.causes || []).includes(m.id));
+    parentMilestones.forEach(m => {
+      // Parent declarations of the milestone
+      const parentDecls = declarations.filter(d => (m.realizes || []).includes(d.id));
+      parentDecls.forEach(d => sections.push({ item: d, type: 'declaration', role: 'context' }));
+      sections.push({ item: m, type: 'milestone', role: 'context' });
+    });
+    sections.push({ item, type: 'action', role: 'focus' });
+  } else if (type === 'milestone') {
+    const parentDecls = declarations.filter(d => (item.realizes || []).includes(d.id));
+    parentDecls.forEach(d => sections.push({ item: d, type: 'declaration', role: 'context' }));
+    sections.push({ item, type: 'milestone', role: 'focus' });
+  } else {
+    sections.push({ item, type: 'declaration', role: 'focus' });
+  }
+
+  const colorMap = { declaration: 'var(--decl-color)', milestone: 'var(--mile-color)', action: 'var(--act-color)' };
+  const bgMap = { declaration: 'var(--decl-bg)', milestone: 'var(--mile-bg)', action: 'var(--act-bg)' };
+  const borderMap = { declaration: 'var(--decl-border)', milestone: 'var(--mile-border)', action: 'var(--act-border)' };
+
+  let html = '';
+  sections.forEach((s, idx) => {
+    const isFocus = s.role === 'focus';
+    const title = s.item.title || s.item.statement || s.item.id;
+    const status = s.item.status || 'PENDING';
+    const isDone = ['DONE','KEPT','HONORED'].includes(status);
+    const isBroken = status === 'BROKEN';
+
+    const cardBg = isFocus ? bgMap[s.type] : 'var(--surface2)';
+    const cardBorder = isFocus ? borderMap[s.type] : 'var(--border)';
+    const cardOpacity = isFocus ? '1' : '0.7';
+
+    const badgeStyle = isDone
+      ? 'background:var(--done-bg);color:var(--done-color);border:1px solid var(--done-border)'
+      : isBroken
+        ? 'background:var(--broken-bg);color:var(--broken-color);border:1px solid var(--broken-border)'
+        : `background:${bgMap[s.type]};color:${colorMap[s.type]};border:1px solid ${borderMap[s.type]}`;
+
+    // Connector line between sections
+    if (idx > 0) {
+      html += `<div style="display:flex;justify-content:center;margin:2px 0">
+        <div style="width:1px;height:20px;background:var(--border)"></div>
+      </div>`;
+    }
+
+    html += `<div style="
+      background:${cardBg};
+      border:1px solid ${cardBorder};
+      border-radius:8px;
+      padding:12px 14px;
+      opacity:${cardOpacity};
+      cursor:${isFocus ? 'default' : 'pointer'};
+    " ${!isFocus ? `onclick="selectNode('${s.item.id}','${s.type}')"` : ''}>
+      <div style="font-size:10px;font-weight:700;letter-spacing:0.08em;opacity:0.6;margin-bottom:3px;color:${colorMap[s.type]}">${s.type.toUpperCase()} · ${s.item.id}</div>
+      <div style="font-size:13px;font-weight:${isFocus ? '600' : '500'};color:var(--text-bright);line-height:1.35;margin-bottom:8px">${escHtml(title)}</div>
+      <span style="${badgeStyle};display:inline-block;padding:2px 9px;border-radius:8px;font-size:10px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase">${status}</span>
+    </div>`;
+
+    // If this is the focus node, show its type-specific details below
+    if (isFocus) {
+      if (s.type === 'declaration' && s.item.statement) {
+        html += `<div style="margin-top:14px">
+          <div class="detail-label">Statement</div>
+          <div class="detail-value" style="margin-top:5px">${escHtml(s.item.statement)}</div>
+        </div>`;
+        const realizedBy = milestones.filter(m => (m.realizes || []).includes(s.item.id));
+        if (realizedBy.length) {
+          html += chainTagSection('Milestones', realizedBy, 'milestone');
+        }
+      }
+      if (s.type === 'milestone') {
+        const causedBy = actions.filter(a => (a.causes || []).includes(s.item.id));
+        if (causedBy.length) html += chainTagSection('Actions', causedBy, 'action');
+      }
+      if (s.type === 'action' && s.item.produces) {
+        html += `<div style="margin-top:14px">
+          <div class="detail-label">Produces</div>
+          <div class="detail-value" style="margin-top:5px">${escHtml(s.item.produces)}</div>
+        </div>`;
+      }
+    }
+  });
+
+  $panelBody.innerHTML = html;
+
+  // Wire tag clicks
+  $panelBody.querySelectorAll('[data-chain-id]').forEach(tag => {
+    tag.addEventListener('click', () => {
+      selectNode(tag.dataset.chainId, tag.dataset.chainType);
+    });
+  });
+}
+
+function chainTagSection(label, items, type) {
+  const tags = items.map(item => {
+    const name = item.title || item.id;
+    return `<span class="detail-tag" data-chain-id="${item.id}" data-chain-type="${type}" style="cursor:pointer">${item.id}: ${truncate(name, 28)}</span>`;
+  }).join('');
+  return `<div style="margin-top:14px">
+    <div class="detail-label">${label}</div>
+    <div class="detail-tag-list" style="margin-top:6px">${tags}</div>
+  </div>`;
+}
+
 // ─── Focus mode ───────────────────────────────────────────────────────────────
 
 const $focusHint = document.getElementById('focus-hint');
@@ -620,21 +738,26 @@ function applyExitStyles(el, dirLeft, origWidth, origMargin) {
   const EASING_OUT = 'cubic-bezier(0.4,0,1,1)';
   const EASING_WIDTH = 'cubic-bezier(0.4,0,0.6,1)';
   const dur = FOCUS_DUR + 'ms';
+  const origHeight = el.offsetHeight;
 
-  // Fix current flex-basis and margin so transition has a start value
   el.style.flexBasis = origWidth + 'px';
   el.style.marginLeft = origMargin + 'px';
   el.style.marginRight = origMargin + 'px';
+  el.style.height = origHeight + 'px';
+  el.style.paddingTop = '12px';
+  el.style.paddingBottom = '12px';
   el.style.minWidth = '0';
   el.style.overflow = 'hidden';
 
-  // Force reflow
   void el.offsetWidth;
 
   el.style.transition = [
     `flex-basis ${dur} ${EASING_WIDTH}`,
     `margin-left ${dur} ${EASING_WIDTH}`,
     `margin-right ${dur} ${EASING_WIDTH}`,
+    `height ${dur} ${EASING_WIDTH}`,
+    `padding-top ${dur} ${EASING_WIDTH}`,
+    `padding-bottom ${dur} ${EASING_WIDTH}`,
     `opacity ${FOCUS_DUR * 0.75}ms ease`,
     `transform ${dur} ${EASING_OUT}`,
   ].join(',');
@@ -642,6 +765,9 @@ function applyExitStyles(el, dirLeft, origWidth, origMargin) {
   el.style.flexBasis = '0px';
   el.style.marginLeft = '0px';
   el.style.marginRight = '0px';
+  el.style.height = '0px';
+  el.style.paddingTop = '0px';
+  el.style.paddingBottom = '0px';
   el.style.opacity = '0';
   el.style.transform = `translateX(${dirLeft ? -160 : 160}%)`;
   el.classList.add('focus-exiting');
@@ -650,28 +776,32 @@ function applyExitStyles(el, dirLeft, origWidth, origMargin) {
 /**
  * Apply inline styles for the enter-back animation (expand + slide in + fade).
  */
-function applyEnterStyles(el, dirLeft, origWidth, origMargin) {
+function applyEnterStyles(el, dirLeft, origWidth, origMargin, origHeight) {
   const EASING_IN = 'cubic-bezier(0,0,0.2,1)';
   const EASING_WIDTH = 'cubic-bezier(0.4,0,0.6,1)';
   const dur = FOCUS_DUR + 'ms';
 
-  // Start collapsed and offscreen (no transition)
   el.style.transition = 'none';
   el.style.flexBasis = '0px';
   el.style.marginLeft = '0px';
   el.style.marginRight = '0px';
+  el.style.height = '0px';
+  el.style.paddingTop = '0px';
+  el.style.paddingBottom = '0px';
   el.style.minWidth = '0';
   el.style.overflow = 'hidden';
   el.style.opacity = '0';
   el.style.transform = `translateX(${dirLeft ? -160 : 160}%)`;
 
-  // Force reflow
   void el.offsetWidth;
 
   el.style.transition = [
     `flex-basis ${dur} ${EASING_WIDTH}`,
     `margin-left ${dur} ${EASING_WIDTH}`,
     `margin-right ${dur} ${EASING_WIDTH}`,
+    `height ${dur} ${EASING_WIDTH}`,
+    `padding-top ${dur} ${EASING_WIDTH}`,
+    `padding-bottom ${dur} ${EASING_WIDTH}`,
     `opacity ${FOCUS_DUR * 0.8}ms ease ${FOCUS_DUR * 0.1}ms`,
     `transform ${dur} ${EASING_IN}`,
   ].join(',');
@@ -679,6 +809,9 @@ function applyEnterStyles(el, dirLeft, origWidth, origMargin) {
   el.style.flexBasis = origWidth + 'px';
   el.style.marginLeft = origMargin + 'px';
   el.style.marginRight = origMargin + 'px';
+  el.style.height = origHeight + 'px';
+  el.style.paddingTop = '12px';
+  el.style.paddingBottom = '12px';
   el.style.opacity = '1';
   el.style.transform = 'translateX(0)';
 }
@@ -689,6 +822,9 @@ function clearNodeFocusStyles(el) {
   el.style.flexBasis = '';
   el.style.marginLeft = '';
   el.style.marginRight = '';
+  el.style.height = '';
+  el.style.paddingTop = '';
+  el.style.paddingBottom = '';
   el.style.minWidth = '';
   el.style.overflow = '';
   el.style.opacity = '';
@@ -697,7 +833,7 @@ function clearNodeFocusStyles(el) {
   el.dataset.focusDir = '';
 }
 
-/** @type {Array<{el: HTMLElement, origWidth: number, origMargin: number, dirLeft: boolean}>} */
+/** @type {Array<{el: HTMLElement, origWidth: number, origHeight: number, origMargin: number, dirLeft: boolean}>} */
 let exitedNodes = [];
 /** @type {ReturnType<typeof setTimeout> | null} */
 let focusCleanupTimer = null;
@@ -735,8 +871,9 @@ function enterFocusMode(nodeId, type) {
       const rect = el.getBoundingClientRect();
       const dirLeft = (rect.left + rect.width / 2) < focusCenterX;
       const origWidth = el.offsetWidth;
-      const origMargin = 8; // matches margin: 0 8px on .node
-      exitedNodes.push({ el, origWidth, origMargin, dirLeft });
+      const origHeight = el.offsetHeight;
+      const origMargin = 8;
+      exitedNodes.push({ el, origWidth, origHeight, origMargin, dirLeft });
       el.dataset.focusDir = dirLeft ? 'left' : 'right';
       applyExitStyles(el, dirLeft, origWidth, origMargin);
     }
@@ -760,8 +897,8 @@ function exitFocusMode() {
   });
 
   // Animate exited nodes back in
-  exitedNodes.forEach(({ el, origWidth, origMargin, dirLeft }) => {
-    applyEnterStyles(el, dirLeft, origWidth, origMargin);
+  exitedNodes.forEach(({ el, origWidth, origHeight, origMargin, dirLeft }) => {
+    applyEnterStyles(el, dirLeft, origWidth, origMargin, origHeight);
   });
 
   $focusHint.classList.remove('visible');
