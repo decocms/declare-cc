@@ -1636,11 +1636,13 @@ function install(isGlobal, runtime = 'claude') {
 function finishInstall(settingsPath, settings, statuslineCommand, shouldInstallStatusline, runtime = 'claude', isGlobal = true) {
   const isOpencode = runtime === 'opencode';
 
-  if (shouldInstallStatusline && !isOpencode) {
-    settings.statusLine = {
-      type: 'command',
-      command: statuslineCommand
-    };
+  // Statusline is a global UI element — only configure it for global installs.
+  // Local installs must not write statusLine: it would point to a project-specific
+  // path that breaks when the project moves or is deleted.
+  // Users who only do local installs should run `npx declare-cc --claude --global`
+  // once to get the statusline, or configure it manually.
+  if (shouldInstallStatusline && !isOpencode && isGlobal) {
+    settings.statusLine = { type: 'command', command: statuslineCommand };
     console.log(`  ${green}✓${reset} Configured statusline`);
   }
 
@@ -1657,9 +1659,12 @@ function finishInstall(settingsPath, settings, statuslineCommand, shouldInstallS
   if (runtime === 'gemini') program = 'Gemini';
 
   const command = isOpencode ? '/declare-help' : '/declare:help';
+  const statuslineNote = (!isGlobal && !isOpencode)
+    ? `\n  ${yellow}Tip:${reset} For the context-window statusline, run once globally:\n  ${dim}npx declare-cc --claude --global${reset}\n`
+    : '';
   console.log(`
   ${green}Done!${reset} Launch ${program} and run ${cyan}${command}${reset}.
-
+${statuslineNote}
   ${cyan}Docs & source:${reset} https://github.com/decocms/declare-cc
 `);
 }
