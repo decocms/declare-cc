@@ -8,9 +8,9 @@
 ## Actions
 
 ### A-20: Add audit-milestone CJS command
-**Status:** PENDING
+**Status:** DONE
 **Produces:** src/commands/audit-milestone.js cross-referencing completed actions against declarations, identifying gaps, rebuilt bundle
 
 ### A-21: Write commands/declare/audit.md
-**Status:** PENDING
+**Status:** DONE
 **Produces:** /declare:audit [M-XX] slash command with 3-source cross-reference, gap identification, closure action creation

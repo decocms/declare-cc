@@ -8,9 +8,9 @@
 ## Actions
 
 ### A-24: Build frontend DAG visualization
-**Status:** PENDING
+**Status:** DONE
 **Produces:** src/server/public/index.html + JS rendering D→M→A hierarchy with status markers, integrity badges, performance scores
 
 ### A-25: Wire frontend to API
-**Status:** PENDING
+**Status:** DONE
 **Produces:** Complete browser UI with live refresh and node detail views

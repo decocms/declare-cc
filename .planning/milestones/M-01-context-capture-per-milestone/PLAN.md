@@ -8,9 +8,9 @@
 ## Actions
 
 ### A-01: Write workflows/discuss.md
-**Status:** PENDING
+**Status:** DONE
 **Produces:** Discussion workflow (gray area identification, 4-question deep-dives, scope guardrails, CONTEXT.md format)
 
 ### A-02: Write commands/declare/discuss.md
-**Status:** PENDING
+**Status:** DONE
 **Produces:** /declare:discuss [M-XX] slash command that runs the workflow and commits CONTEXT.md

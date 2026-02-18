@@ -8,5 +8,5 @@
 ## Actions
 
 ### A-15: Write commands/declare/new-milestone.md
-**Status:** PENDING
+**Status:** DONE
 **Produces:** /declare:new-milestone slash command that archives current declarations, resets FUTURE.md and MILESTONES.md for next cycle while preserving PROJECT.md and STATE.md

@@ -8,13 +8,13 @@
 ## Actions
 
 ### A-03: Fork gsd-phase-researcher as agents/declare-researcher.md
-**Status:** PENDING
+**Status:** DONE
 **Produces:** Domain research agent adapted for Declare milestone model
 
 ### A-04: Fork gsd-research-synthesizer as agents/declare-research-synthesizer.md
-**Status:** PENDING
+**Status:** DONE
 **Produces:** Research aggregation agent for Declare
 
 ### A-05: Write commands/declare/research.md
-**Status:** PENDING
+**Status:** DONE
 **Produces:** /declare:research [M-XX] slash command spawning 4 parallel researchers and synthesizer, committing RESEARCH.md

@@ -8,9 +8,9 @@
 ## Actions
 
 ### A-31: Add config-get, config-set, health-check CJS commands
-**Status:** PENDING
+**Status:** DONE
 **Produces:** Config management + health validation (missing files, orphaned plans, invalid config) in declare-tools, rebuilt bundle
 
 ### A-32: Write commands/declare/settings.md, set-profile.md, health.md
-**Status:** PENDING
+**Status:** DONE
 **Produces:** 3 configuration slash commands

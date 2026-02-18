@@ -8,5 +8,5 @@
 ## Actions
 
 ### A-26: Write commands/declare/dashboard.md
-**Status:** PENDING
+**Status:** DONE
 **Produces:** /declare:dashboard slash command that starts the server, opens the browser, and tails server logs

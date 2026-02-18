@@ -8,9 +8,9 @@
 ## Actions
 
 ### A-09: Fork gsd-codebase-mapper as agents/declare-codebase-mapper.md
-**Status:** PENDING
+**Status:** DONE
 **Produces:** Codebase mapping agent for Declare
 
 ### A-10: Write commands/declare/map-codebase.md
-**Status:** PENDING
+**Status:** DONE
 **Produces:** /declare:map-codebase slash command spawning 4 parallel mappers, producing .planning/codebase/ docs
