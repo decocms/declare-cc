@@ -30,7 +30,10 @@ If the `existing` array is non-empty, present the existing files to the user and
 
 **Step 3: Report results.**
 
-Show the user a summary of what was created:
-- List each created file with a brief description of its purpose
-- If a commit was made, mention the commit hash
-- Suggest next steps: "Add your first future declaration to `.planning/FUTURE.md`" and "Run `/declare:status` to see graph state"
+Show the user a brief summary of what was created (file name + one-line purpose). If a commit was made, mention the hash.
+
+Then immediately prompt the user to start declaring:
+
+> **Ready. Run `/declare:future` to declare what's true when this project succeeds.**
+
+Do not suggest editing files manually or running `/declare:status`. The next step is always `/declare:future`.
