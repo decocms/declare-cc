@@ -228,32 +228,42 @@ After displaying the summary, reload the graph and check for milestones that sti
   Plan all milestones before executing. Run /declare:execute only when all are planned.
   ```
 
-- If **this was the last milestone to plan**, spawn all milestone executors in parallel using the Task tool — this is the core value of the system:
+- If **this was the last milestone to plan**, compute dependency waves before spawning anything — do not blindly parallelize all milestones.
 
-  Group milestones by their declaration dependencies. Milestones that realize different declarations are independent and can run simultaneously.
+  **Step A: Compute milestone dependency waves.**
 
-  For each independent milestone, spawn a Task agent (subagent_type: `gsd-executor`) with a prompt like:
+  Load the graph, then read each milestone's PLAN.md. For each action, check its `dependsOn` field. If an action in M-02 lists `dependsOn: ["A-01"]` and A-01 belongs to M-01, then M-02 depends on M-01.
+
+  Build a milestone-level dependency graph from these cross-milestone action references. Run a topological sort (Kahn's algorithm) to group milestones into waves:
+  - Wave 1: milestones with no dependencies on other pending milestones
+  - Wave 2: milestones whose dependencies are all in wave 1
+  - …and so on
+
+  If no cross-milestone `dependsOn` edges exist, all milestones go into wave 1 (full parallelism). Show the wave plan before executing:
 
   ```
-  Execute milestone [M-XX] "[title]" for the Declare project at [cwd].
+  ## Milestone Execution Waves
 
+  Wave 1 (parallel): M-01 [title], M-03 [title]
+  Wave 2 (after wave 1): M-02 [title]
+  ```
+
+  **Step B: Execute wave by wave using the Task tool.**
+
+  For each wave, spawn one Task agent per milestone **in the same response** so they execute in parallel:
+
+  Subagent type: `gsd-executor`
+  Prompt per milestone:
+  ```
+  Execute milestone [M-XX] "[title]" for the Declare project.
+  Working directory: [absolute path to cwd]
   Run: /declare:execute [M-XX]
-
-  Working directory: [cwd]
-  EXEC-PLANs are at: .planning/milestones/[M-XX-slug]/
+  EXEC-PLANs are in: [absolute path to milestone folder]
   ```
 
-  Spawn all independent milestones in a single message so they execute in parallel. Milestones that depend on others (e.g., their declaration depends on another milestone's output) should wait for their dependencies first.
+  Wait for the entire wave to complete before spawning the next wave.
 
-  While agents run, display:
-  ```
-  Spawning [N] executor agents in parallel...
-    ⟳ M-01: [title]
-    ⟳ M-02: [title]
-    ⟳ M-03: [title]
-  ```
-
-  After all agents complete, run sync-status and report results:
+  After all waves finish, propagate statuses:
   ```bash
   node dist/declare-tools.cjs sync-status
   ```
