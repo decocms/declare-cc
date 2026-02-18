@@ -470,6 +470,51 @@
     #canvas-wrap::-webkit-scrollbar { width: 6px; height: 6px; }
     #canvas-wrap::-webkit-scrollbar-track { background: transparent; }
     #canvas-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    /* ── Focus mode ── */
+    .node {
+      will-change: transform, opacity;
+    }
+
+    .node.focus-exit {
+      transition: transform 0.38s cubic-bezier(0.4, 0, 1, 1), opacity 0.3s ease;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .node.focus-exit-left  { transform: translateX(-140%) !important; }
+    .node.focus-exit-right { transform: translateX(140%) !important; }
+
+    .node.focus-active {
+      transition: box-shadow 0.25s ease;
+      box-shadow: 0 0 0 2px currentColor, 0 8px 32px rgba(0,0,0,0.6) !important;
+      opacity: 1 !important;
+    }
+
+    .node.focus-dimmed {
+      opacity: 0.25;
+      transition: opacity 0.3s ease;
+      pointer-events: none;
+    }
+
+    /* ESC hint shown during focus */
+    #focus-hint {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      padding: 7px 18px;
+      border-radius: 20px;
+      font-size: 12px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.25s ease;
+      z-index: 50;
+    }
+    #focus-hint.visible { opacity: 1; }
   </style>
 </head>
 <body>
@@ -525,6 +570,7 @@
   <button id="overlay-retry">Retry</button>
 </div>
 
+<div id="focus-hint">Press Esc or click outside to exit focus</div>
 <script src="/public/app.js"></script>
 </body>
 </html>

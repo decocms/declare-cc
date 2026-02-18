@@ -26,6 +26,9 @@ let statusData = null;
 /** @type {string | null} */
 let selectedNodeId = null;
 
+/** @type {string | null} Focus node ID — the declaration or milestone being focused */
+let focusNodeId = null;
+
 /** @type {number | null} */
 let pollTimer = null;
 
@@ -375,8 +378,9 @@ function selectNode(nodeId, type) {
   document.querySelectorAll('.node.selected').forEach(el => el.classList.remove('selected'));
 
   if (selectedNodeId === nodeId) {
-    // Toggle off
+    // Toggle off — also exit focus mode
     selectedNodeId = null;
+    exitFocusMode();
     $sidePanel.classList.add('hidden');
     drawEdges();
     return;
@@ -388,8 +392,14 @@ function selectNode(nodeId, type) {
   const el = document.querySelector(`[data-node-id="${nodeId}"]`);
   if (el) el.classList.add('selected');
 
-  // Redraw edges with highlights
-  drawEdges();
+  // Enter focus mode for declarations and milestones
+  if (type === 'declaration' || type === 'milestone') {
+    enterFocusMode(nodeId, type);
+  } else {
+    // For actions, exit focus mode if active and redraw normally
+    if (focusNodeId) exitFocusMode();
+    else drawEdges();
+  }
 
   // Populate panel
   let item = null;
@@ -555,6 +565,159 @@ function escHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
+// ─── Focus mode ───────────────────────────────────────────────────────────────
+
+const $focusHint = document.getElementById('focus-hint');
+
+/**
+ * Compute the set of node IDs that belong to a focused subtree.
+ * @param {string} nodeId  - declaration or milestone ID
+ * @param {string} type    - 'declaration' | 'milestone'
+ * @returns {Set<string>}
+ */
+function getFocusSubtree(nodeId, type) {
+  if (!graphData) return new Set();
+  const { declarations, milestones, actions } = graphData;
+  const visible = new Set();
+
+  if (type === 'declaration') {
+    visible.add(nodeId);
+    // milestones that realize this declaration
+    const relatedMilestones = milestones.filter(m => (m.realizes || []).includes(nodeId));
+    relatedMilestones.forEach(m => {
+      visible.add(m.id);
+      // actions that cause those milestones
+      actions.forEach(a => {
+        if ((a.causes || []).includes(m.id)) visible.add(a.id);
+      });
+    });
+  } else if (type === 'milestone') {
+    visible.add(nodeId);
+    const m = milestones.find(x => x.id === nodeId);
+    if (m) {
+      // declarations this milestone realizes
+      (m.realizes || []).forEach(dId => visible.add(dId));
+      // actions that cause this milestone
+      actions.forEach(a => {
+        if ((a.causes || []).includes(nodeId)) visible.add(a.id);
+      });
+    }
+  }
+
+  return visible;
+}
+
+/**
+ * Enter focus mode for a declaration or milestone.
+ * Nodes outside the subtree slide out directionally based on their X position
+ * relative to the focused node.
+ * @param {string} nodeId
+ * @param {string} type
+ */
+function enterFocusMode(nodeId, type) {
+  if (!graphData) return;
+
+  focusNodeId = nodeId;
+  const subtree = getFocusSubtree(nodeId, type);
+
+  const focusEl = document.querySelector(`[data-node-id="${nodeId}"]`);
+  if (!focusEl) return;
+  const focusRect = focusEl.getBoundingClientRect();
+  const focusCenterX = focusRect.left + focusRect.width / 2;
+
+  document.querySelectorAll('.node').forEach(el => {
+    const id = el.dataset.nodeId;
+    if (!id) return;
+
+    // Remove any previous focus classes
+    el.classList.remove('focus-exit', 'focus-exit-left', 'focus-exit-right', 'focus-active', 'focus-dimmed');
+
+    if (subtree.has(id)) {
+      el.classList.add('focus-active');
+    } else {
+      const rect = el.getBoundingClientRect();
+      const centerX = rect.left + rect.width / 2;
+      el.classList.add('focus-exit');
+      el.classList.add(centerX < focusCenterX ? 'focus-exit-left' : 'focus-exit-right');
+    }
+  });
+
+  $focusHint.classList.add('visible');
+  // Redraw edges — only show edges within subtree
+  requestAnimationFrame(() => drawEdgesForSubtree(subtree));
+}
+
+/**
+ * Exit focus mode, reversing all animations.
+ */
+function exitFocusMode() {
+  if (!focusNodeId) return;
+  focusNodeId = null;
+
+  document.querySelectorAll('.node').forEach(el => {
+    // Remove directional exit classes first so browser sees the transition
+    el.classList.remove('focus-exit-left', 'focus-exit-right', 'focus-active', 'focus-dimmed');
+
+    // Trigger re-paint then remove the exit class so transition plays in reverse
+    requestAnimationFrame(() => {
+      el.classList.remove('focus-exit');
+    });
+  });
+
+  $focusHint.classList.remove('visible');
+  requestAnimationFrame(() => drawEdges());
+}
+
+/**
+ * Draw edges but dim those outside the given subtree.
+ * @param {Set<string>} subtree
+ */
+function drawEdgesForSubtree(subtree) {
+  if (!graphData) return;
+  const { milestones, actions } = graphData;
+  const container = document.getElementById('canvas-container');
+
+  $edgesSvg.setAttribute('width',  String(container.scrollWidth));
+  $edgesSvg.setAttribute('height', String(container.scrollHeight));
+  $edgesSvg.innerHTML = '';
+
+  const fragment = document.createDocumentFragment();
+
+  (milestones || []).forEach(m => {
+    const mEl = document.querySelector(`[data-node-id="${m.id}"]`);
+    if (!mEl) return;
+    const mTop = getTopCenter(mEl);
+
+    (m.realizes || []).forEach(dId => {
+      const dEl = document.querySelector(`[data-node-id="${dId}"]`);
+      if (!dEl) return;
+      const dBot = getBottomCenter(dEl);
+      const inSubtree = subtree.has(m.id) && subtree.has(dId);
+      const path = makePath(curvePath(dBot.x, dBot.y, mTop.x, mTop.y), inSubtree);
+      if (!inSubtree) path.style.opacity = '0.05';
+      fragment.appendChild(path);
+    });
+  });
+
+  (actions || []).forEach(a => {
+    const aEl = document.querySelector(`[data-node-id="${a.id}"]`);
+    if (!aEl) return;
+    const aTop = getTopCenter(aEl);
+
+    (a.causes || []).forEach(mId => {
+      const mEl = document.querySelector(`[data-node-id="${mId}"]`);
+      if (!mEl) return;
+      const mBot = getBottomCenter(mEl);
+      const inSubtree = subtree.has(a.id) && subtree.has(mId);
+      const path = makePath(curvePath(mBot.x, mBot.y, aTop.x, aTop.y), inSubtree);
+      if (!inSubtree) path.style.opacity = '0.05';
+      fragment.appendChild(path);
+    });
+  });
+
+  $edgesSvg.appendChild(fragment);
+}
+
 // ─── Event wiring ─────────────────────────────────────────────────────────────
 
 $refreshBtn.addEventListener('click', () => {
@@ -565,8 +728,31 @@ $refreshBtn.addEventListener('click', () => {
 $panelClose.addEventListener('click', () => {
   document.querySelectorAll('.node.selected').forEach(el => el.classList.remove('selected'));
   selectedNodeId = null;
+  exitFocusMode();
   $sidePanel.classList.add('hidden');
   drawEdges();
+});
+
+// ESC to exit focus mode
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && focusNodeId) {
+    document.querySelectorAll('.node.selected').forEach(el => el.classList.remove('selected'));
+    selectedNodeId = null;
+    exitFocusMode();
+    $sidePanel.classList.add('hidden');
+  }
+});
+
+// Click outside nodes to exit focus mode
+document.getElementById('canvas-wrap').addEventListener('click', (e) => {
+  if (!focusNodeId) return;
+  // Only exit if the click wasn't on a node
+  if (!e.target.closest('.node')) {
+    document.querySelectorAll('.node.selected').forEach(el => el.classList.remove('selected'));
+    selectedNodeId = null;
+    exitFocusMode();
+    $sidePanel.classList.add('hidden');
+  }
 });
 
 $overlayRetry.addEventListener('click', () => {

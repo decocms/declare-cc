@@ -39,7 +39,18 @@ const MIME_TYPES = {
   '.ico': 'image/x-icon',
 };
 
-const PUBLIC_DIR = path.join(__dirname, 'public');
+// PUBLIC_DIR is resolved at request time from cwd so the bundle works correctly
+// when dist/declare-tools.cjs is run from the project root.
+const PUBLIC_DIR_RELATIVE = path.join('src', 'server', 'public');
+
+/**
+ * Resolve the public directory for a given project root.
+ * @param {string} cwd
+ * @returns {string}
+ */
+function getPublicDir(cwd) {
+  return path.join(cwd, PUBLIC_DIR_RELATIVE);
+}
 
 /**
  * Send a JSON response.
@@ -215,17 +226,19 @@ function route(req, res, cwd) {
   }
 
   // Static file routes
+  const publicDir = getPublicDir(cwd);
+
   if (urlPath === '/') {
-    const indexPath = path.join(PUBLIC_DIR, 'index.html');
+    const indexPath = path.join(publicDir, 'index.html');
     sendFile(res, indexPath);
     return;
   }
 
   if (urlPath.startsWith('/public/')) {
-    // Prevent path traversal: resolve and verify it stays within PUBLIC_DIR
+    // Prevent path traversal: resolve and verify it stays within publicDir
     const relative = urlPath.replace(/^\/public\//, '');
-    const resolved = path.resolve(PUBLIC_DIR, relative);
-    if (!resolved.startsWith(PUBLIC_DIR + path.sep) && resolved !== PUBLIC_DIR) {
+    const resolved = path.resolve(publicDir, relative);
+    if (!resolved.startsWith(publicDir + path.sep) && resolved !== publicDir) {
       sendJson(res, 403, { error: 'Forbidden' });
       return;
     }
