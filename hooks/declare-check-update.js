@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Check for GSD updates in background, write result to cache
+// Check for Declare updates in background, write result to cache
 // Called by SessionStart hook - runs once per session
 
 const fs = require('fs');
@@ -10,11 +10,11 @@ const { spawn } = require('child_process');
 const homeDir = os.homedir();
 const cwd = process.cwd();
 const cacheDir = path.join(homeDir, '.claude', 'cache');
-const cacheFile = path.join(cacheDir, 'gsd-update-check.json');
+const cacheFile = path.join(cacheDir, 'declare-update-check.json');
 
 // VERSION file locations (check project first, then global)
-const projectVersionFile = path.join(cwd, '.claude', 'get-shit-done', 'VERSION');
-const globalVersionFile = path.join(homeDir, '.claude', 'get-shit-done', 'VERSION');
+const projectVersionFile = path.join(cwd, '.claude', 'declare', 'VERSION');
+const globalVersionFile = path.join(homeDir, '.claude', 'declare', 'VERSION');
 
 // Ensure cache directory exists
 if (!fs.existsSync(cacheDir)) {
@@ -42,7 +42,7 @@ const child = spawn(process.execPath, ['-e', `
 
   let latest = null;
   try {
-    latest = execSync('npm view get-shit-done-cc version', { encoding: 'utf8', timeout: 10000, windowsHide: true }).trim();
+    latest = execSync('npm view declare-cc version', { encoding: 'utf8', timeout: 10000, windowsHide: true }).trim();
   } catch (e) {}
 
   const result = {
