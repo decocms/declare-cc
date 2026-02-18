@@ -22,6 +22,9 @@
  *   add-todo --description "..."                  - Capture a todo
  *   check-todos                                   - List pending todos
  *   complete-todo --id NNN                        - Move todo to completed/
+ *   config-get <path.to.key>                      - Read value from .planning/config.json
+ *   config-set --key <path> --value <value>       - Write value to .planning/config.json
+ *   health-check [--repair]                       - Validate .planning/ directory structure
  *   help                                          - Show available commands
  */
 
@@ -129,7 +132,7 @@ function main() {
   const command = args[0];
 
   if (!command) {
-    console.log(JSON.stringify({ error: 'No command specified. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, record-session, get-state, quick-task, add-todo, check-todos, complete-todo, help' }));
+    console.log(JSON.stringify({ error: 'No command specified. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, record-session, get-state, quick-task, add-todo, check-todos, complete-todo, config-get, config-set, health-check, help' }));
     process.exit(1);
   }
 
@@ -380,8 +383,36 @@ function main() {
         break;
       }
 
+      case 'config-get': {
+        const cwdConfigGet = parseCwdFlag(args) || process.cwd();
+        const configGetArgs = parsePositionalArgs(args.slice(1));
+        const result = runConfigGet(cwdConfigGet, configGetArgs);
+        console.log(JSON.stringify(result));
+        if (result.error) process.exit(1);
+        break;
+      }
+
+      case 'config-set': {
+        const cwdConfigSet = parseCwdFlag(args) || process.cwd();
+        const result = runConfigSet(cwdConfigSet, args.slice(1));
+        console.log(JSON.stringify(result));
+        if (result.error) process.exit(1);
+        break;
+      }
+
+      case 'health-check': {
+        const cwdHealthCheck = parseCwdFlag(args) || process.cwd();
+        const repair = args.includes('--repair');
+        const result = repair
+          ? runHealthCheckRepair(cwdHealthCheck)
+          : runHealthCheck(cwdHealthCheck);
+        console.log(JSON.stringify(result));
+        if (result.error) process.exit(1);
+        break;
+      }
+
       default:
-        console.log(JSON.stringify({ error: `Unknown command: ${command}. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, record-session, get-state, quick-task, add-todo, check-todos, complete-todo, help` }));
+        console.log(JSON.stringify({ error: `Unknown command: ${command}. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, record-session, get-state, quick-task, add-todo, check-todos, complete-todo, config-get, config-set, health-check, help` }));
         process.exit(1);
     }
   } catch (err) {

@@ -3215,6 +3215,280 @@ var require_todo = __commonJS({
   }
 });
 
+// src/commands/config-get.js
+var require_config_get = __commonJS({
+  "src/commands/config-get.js"(exports2, module2) {
+    "use strict";
+    var { existsSync, readFileSync } = require("node:fs");
+    var { join } = require("node:path");
+    function getAtPath(obj, path) {
+      const parts = path.split(".");
+      let current = obj;
+      for (const part of parts) {
+        if (current === null || typeof current !== "object") {
+          return { found: false, value: void 0 };
+        }
+        const record = (
+          /** @type {Record<string, unknown>} */
+          current
+        );
+        if (!(part in record)) {
+          return { found: false, value: void 0 };
+        }
+        current = record[part];
+      }
+      return { found: true, value: current };
+    }
+    function runConfigGet2(cwd, args) {
+      const keyPath = args && args[0];
+      if (!keyPath) {
+        return { error: 'config-get requires a key path argument (e.g., "workflow.research")' };
+      }
+      const configPath = join(cwd, ".planning", "config.json");
+      if (!existsSync(configPath)) {
+        return { error: "No config.json found. Run /declare:init to initialize the project." };
+      }
+      let config;
+      try {
+        config = JSON.parse(readFileSync(configPath, "utf-8"));
+      } catch (err) {
+        return { error: `Failed to parse config.json: ${err.message}` };
+      }
+      const { found, value } = getAtPath(config, keyPath);
+      if (!found) {
+        return { error: `Key not found: ${keyPath}` };
+      }
+      return { key: keyPath, value };
+    }
+    module2.exports = { runConfigGet: runConfigGet2 };
+  }
+});
+
+// src/commands/config-set.js
+var require_config_set = __commonJS({
+  "src/commands/config-set.js"(exports2, module2) {
+    "use strict";
+    var { existsSync, readFileSync, writeFileSync } = require("node:fs");
+    var { join } = require("node:path");
+    function parseValue(raw) {
+      if (raw === "true") return true;
+      if (raw === "false") return false;
+      const num = Number(raw);
+      if (!Number.isNaN(num) && raw.trim() !== "") return num;
+      return raw;
+    }
+    function setAtPath(obj, path, value) {
+      const parts = path.split(".");
+      let current = obj;
+      for (let i = 0; i < parts.length - 1; i++) {
+        const part = parts[i];
+        if (current[part] === null || typeof current[part] !== "object") {
+          current[part] = {};
+        }
+        current = /** @type {Record<string, unknown>} */
+        current[part];
+      }
+      current[parts[parts.length - 1]] = value;
+    }
+    function parseKeyValueFlags(argv) {
+      let key = null;
+      let value = null;
+      for (let i = 0; i < argv.length; i++) {
+        if (argv[i] === "--key" && i + 1 < argv.length) {
+          key = argv[i + 1];
+          i++;
+        } else if (argv[i] === "--value" && i + 1 < argv.length) {
+          value = argv[i + 1];
+          i++;
+        }
+      }
+      return { key, value };
+    }
+    function runConfigSet2(cwd, args) {
+      const { key: keyPath, value: rawValue } = parseKeyValueFlags(args);
+      if (!keyPath) {
+        return { error: "config-set requires --key <path.to.key>" };
+      }
+      if (rawValue === null) {
+        return { error: "config-set requires --value <value>" };
+      }
+      const configPath = join(cwd, ".planning", "config.json");
+      if (!existsSync(configPath)) {
+        return { error: "No config.json found. Run /declare:init to initialize the project." };
+      }
+      let config;
+      try {
+        config = JSON.parse(readFileSync(configPath, "utf-8"));
+      } catch (err) {
+        return { error: `Failed to parse config.json: ${err.message}` };
+      }
+      const parsedValue = parseValue(rawValue);
+      setAtPath(config, keyPath, parsedValue);
+      try {
+        writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n", "utf-8");
+      } catch (err) {
+        return { error: `Failed to write config.json: ${err.message}` };
+      }
+      return { key: keyPath, value: parsedValue, updated: true };
+    }
+    module2.exports = { runConfigSet: runConfigSet2 };
+  }
+});
+
+// src/commands/health-check.js
+var require_health_check = __commonJS({
+  "src/commands/health-check.js"(exports2, module2) {
+    "use strict";
+    var { existsSync, readFileSync, readdirSync, mkdirSync } = require("node:fs");
+    var { join } = require("node:path");
+    var { parseFutureFile } = require_future();
+    var { parseMilestonesFile } = require_milestones();
+    var { findMilestoneFolder, ensureMilestoneFolder } = require_milestone_folders();
+    function runHealthCheck2(cwd) {
+      const planningDir = join(cwd, ".planning");
+      const milestonesDir = join(planningDir, "milestones");
+      if (!existsSync(planningDir)) {
+        return { error: "No .planning/ directory found. Run /declare:init to initialize the project." };
+      }
+      const issues = [];
+      const futurePath = join(planningDir, "FUTURE.md");
+      let declarations = [];
+      if (!existsSync(futurePath)) {
+        issues.push({
+          type: "missing_file",
+          message: "FUTURE.md is missing",
+          path: ".planning/FUTURE.md",
+          fixable: false
+        });
+      } else {
+        try {
+          const content = readFileSync(futurePath, "utf-8");
+          declarations = parseFutureFile(content);
+        } catch (err) {
+          issues.push({
+            type: "parse_error",
+            message: `FUTURE.md could not be parsed: ${err.message}`,
+            path: ".planning/FUTURE.md",
+            fixable: false
+          });
+        }
+      }
+      const milestonesPath = join(planningDir, "MILESTONES.md");
+      let milestones = [];
+      if (!existsSync(milestonesPath)) {
+        issues.push({
+          type: "missing_file",
+          message: "MILESTONES.md is missing",
+          path: ".planning/MILESTONES.md",
+          fixable: false
+        });
+      } else {
+        try {
+          const content = readFileSync(milestonesPath, "utf-8");
+          const parsed = parseMilestonesFile(content);
+          milestones = parsed.milestones;
+        } catch (err) {
+          issues.push({
+            type: "parse_error",
+            message: `MILESTONES.md could not be parsed: ${err.message}`,
+            path: ".planning/MILESTONES.md",
+            fixable: false
+          });
+        }
+      }
+      const configPath = join(planningDir, "config.json");
+      if (!existsSync(configPath)) {
+        issues.push({
+          type: "missing_file",
+          message: "config.json is missing",
+          path: ".planning/config.json",
+          fixable: false
+        });
+      } else {
+        try {
+          JSON.parse(readFileSync(configPath, "utf-8"));
+        } catch (err) {
+          issues.push({
+            type: "parse_error",
+            message: `config.json could not be parsed: ${err.message}`,
+            path: ".planning/config.json",
+            fixable: false
+          });
+        }
+      }
+      if (milestones.length > 0) {
+        for (const milestone of milestones) {
+          const folder = findMilestoneFolder(planningDir, milestone.id);
+          if (!folder) {
+            issues.push({
+              type: "missing_folder",
+              message: `Milestone ${milestone.id} ("${milestone.title}") has no folder in .planning/milestones/`,
+              path: `.planning/milestones/${milestone.id}-*`,
+              fixable: true,
+              // Store data needed for repair
+              _milestoneId: milestone.id,
+              _milestoneTitle: milestone.title
+            });
+          }
+        }
+      }
+      if (existsSync(milestonesDir)) {
+        let entries;
+        try {
+          entries = readdirSync(milestonesDir, { withFileTypes: true });
+        } catch {
+          entries = [];
+        }
+        const referencedIds = new Set(milestones.map((m) => m.id));
+        const milestoneIdPattern = /^(M-\d+)/;
+        for (const entry of entries) {
+          if (!entry.isDirectory()) continue;
+          if (entry.name.startsWith("_")) continue;
+          const match = entry.name.match(milestoneIdPattern);
+          if (!match) continue;
+          const folderId = match[1];
+          if (!referencedIds.has(folderId)) {
+            issues.push({
+              type: "orphaned_folder",
+              message: `Folder "${entry.name}" has no corresponding milestone in MILESTONES.md`,
+              path: `.planning/milestones/${entry.name}`,
+              fixable: false
+            });
+          }
+        }
+      }
+      return {
+        healthy: issues.length === 0,
+        issues
+      };
+    }
+    function runHealthCheckRepair2(cwd) {
+      const planningDir = join(cwd, ".planning");
+      const result = runHealthCheck2(cwd);
+      if (result.error) return result;
+      const repaired = [];
+      for (const issue of result.issues) {
+        if (!issue.fixable) continue;
+        if (issue.type === "missing_folder" && issue._milestoneId && issue._milestoneTitle) {
+          try {
+            ensureMilestoneFolder(planningDir, issue._milestoneId, issue._milestoneTitle);
+            repaired.push(`Created folder for ${issue._milestoneId}: ${issue._milestoneTitle}`);
+          } catch (err) {
+          }
+        }
+      }
+      const recheck = runHealthCheck2(cwd);
+      if (recheck.error) return recheck;
+      return {
+        healthy: recheck.healthy,
+        issues: recheck.issues,
+        repaired
+      };
+    }
+    module2.exports = { runHealthCheck: runHealthCheck2, runHealthCheckRepair: runHealthCheckRepair2 };
+  }
+});
+
 // src/declare-tools.js
 var { commitPlanningDocs } = require_commit();
 var { readState, recordSession } = require_state();
@@ -3242,6 +3516,9 @@ var { runRenegotiate } = require_renegotiate();
 var { runCompleteMilestone } = require_complete_milestone();
 var { runQuickTask } = require_quick_task();
 var { runAddTodo, runCheckTodos, runCompleteTodo } = require_todo();
+var { runConfigGet } = require_config_get();
+var { runConfigSet } = require_config_set();
+var { runHealthCheck, runHealthCheckRepair } = require_health_check();
 function parseCwdFlag(argv) {
   const idx = argv.indexOf("--cwd");
   if (idx === -1 || idx + 1 >= argv.length) return null;
@@ -3284,7 +3561,7 @@ function main() {
   const args = process.argv.slice(2);
   const command = args[0];
   if (!command) {
-    console.log(JSON.stringify({ error: "No command specified. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, record-session, get-state, quick-task, add-todo, check-todos, complete-todo, help" }));
+    console.log(JSON.stringify({ error: "No command specified. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, record-session, get-state, quick-task, add-todo, check-todos, complete-todo, config-get, config-set, health-check, help" }));
     process.exit(1);
   }
   try {
@@ -3505,8 +3782,31 @@ function main() {
         if (result.error) process.exit(1);
         break;
       }
+      case "config-get": {
+        const cwdConfigGet = parseCwdFlag(args) || process.cwd();
+        const configGetArgs = parsePositionalArgs(args.slice(1));
+        const result = runConfigGet(cwdConfigGet, configGetArgs);
+        console.log(JSON.stringify(result));
+        if (result.error) process.exit(1);
+        break;
+      }
+      case "config-set": {
+        const cwdConfigSet = parseCwdFlag(args) || process.cwd();
+        const result = runConfigSet(cwdConfigSet, args.slice(1));
+        console.log(JSON.stringify(result));
+        if (result.error) process.exit(1);
+        break;
+      }
+      case "health-check": {
+        const cwdHealthCheck = parseCwdFlag(args) || process.cwd();
+        const repair = args.includes("--repair");
+        const result = repair ? runHealthCheckRepair(cwdHealthCheck) : runHealthCheck(cwdHealthCheck);
+        console.log(JSON.stringify(result));
+        if (result.error) process.exit(1);
+        break;
+      }
       default:
-        console.log(JSON.stringify({ error: `Unknown command: ${command}. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, record-session, get-state, quick-task, add-todo, check-todos, complete-todo, help` }));
+        console.log(JSON.stringify({ error: `Unknown command: ${command}. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, record-session, get-state, quick-task, add-todo, check-todos, complete-todo, config-get, config-set, health-check, help` }));
         process.exit(1);
     }
   } catch (err) {
