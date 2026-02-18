@@ -1567,6 +1567,9 @@ function install(isGlobal, runtime = 'claude') {
   const activityCommand = isGlobal
     ? buildHookCommand(targetDir, 'declare-activity.js')
     : 'node ' + dirName + '/hooks/declare-activity.js';
+  const serverCommand = isGlobal
+    ? buildHookCommand(targetDir, 'declare-server.js')
+    : 'node ' + dirName + '/hooks/declare-server.js';
 
   // Enable experimental agents for Gemini CLI (required for custom sub-agents)
   if (isGemini) {
@@ -1594,14 +1597,20 @@ function install(isGlobal, runtime = 'claude') {
 
     if (!hasGsdUpdateHook) {
       settings.hooks.SessionStart.push({
-        hooks: [
-          {
-            type: 'command',
-            command: updateCheckCommand
-          }
-        ]
+        hooks: [{ type: 'command', command: updateCheckCommand }]
       });
       console.log(`  ${green}✓${reset} Configured update check hook`);
+    }
+
+    // Dashboard server hook — starts/restarts server for this project on SessionStart
+    const hasServerHook = settings.hooks.SessionStart.some(entry =>
+      entry.hooks && entry.hooks.some(h => h.command && h.command.includes('declare-server'))
+    );
+    if (!hasServerHook) {
+      settings.hooks.SessionStart.push({
+        hooks: [{ type: 'command', command: serverCommand }]
+      });
+      console.log(`  ${green}✓${reset} Configured dashboard server hook`);
     }
 
     // Configure PreToolUse + PostToolUse hooks for activity feed (Claude Code only)

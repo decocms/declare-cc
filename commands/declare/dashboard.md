@@ -6,71 +6,60 @@ allowed-tools:
 
 Open the Declare interactive DAG dashboard — a live web UI showing declarations, milestones, and actions as a navigable graph.
 
-**Step 1: Check if the server is already running.**
+**Step 1: Resolve the port for this project.**
+
+Each project gets its own stable port derived from the project path. Check if it's already been assigned:
 
 ```bash
-curl -sf http://localhost:3847/api/graph -o /dev/null && echo "RUNNING" || echo "NOT_RUNNING"
+cat .planning/server.port 2>/dev/null || echo "NOT_SET"
 ```
 
-**Step 2: Start the server if it is not running.**
-
-If the output from Step 1 is `NOT_RUNNING`:
-
-Start the server in the background, capturing its PID:
+If a port file exists, use that port. If not, the SessionStart hook hasn't fired yet — use the default port 3847 and set PORT to it.
 
 ```bash
-nohup node dist/declare-tools.cjs serve --port 3847 > /tmp/declare-dashboard.log 2>&1 &
-echo $!
+PORT=$(cat .planning/server.port 2>/dev/null || echo "3847")
+echo "PORT=$PORT"
 ```
 
-Then wait briefly and confirm it started:
+**Step 2: Check if the server is already running on that port.**
 
 ```bash
-sleep 1 && curl -sf http://localhost:3847/api/graph -o /dev/null && echo "STARTED" || echo "FAILED"
+curl -sf http://localhost:${PORT}/api/graph -o /dev/null && echo "RUNNING" || echo "NOT_RUNNING"
 ```
 
-If the result is `FAILED`, report the error and show the last lines of the log:
+**Step 3: Start the server if it is not running.**
 
+If `NOT_RUNNING`:
+
+```bash
+nohup node dist/declare-tools.cjs serve --port ${PORT} > /tmp/declare-dashboard.log 2>&1 &
+sleep 1 && curl -sf http://localhost:${PORT}/api/graph -o /dev/null && echo "STARTED" || echo "FAILED"
+```
+
+If `FAILED`:
 ```bash
 tail -20 /tmp/declare-dashboard.log
 ```
 
-**Step 3: Open the dashboard in the browser.**
-
-Detect the OS and open the URL:
+**Step 4: Open the dashboard in the browser.**
 
 ```bash
 if [[ "$OSTYPE" == "darwin"* ]]; then
-  open http://localhost:3847
+  open http://localhost:${PORT}
 else
-  xdg-open http://localhost:3847 2>/dev/null || echo "Visit http://localhost:3847 in your browser"
+  xdg-open http://localhost:${PORT} 2>/dev/null || echo "Visit http://localhost:${PORT} in your browser"
 fi
 ```
 
-**Step 4: Confirm to the user.**
-
-Show the user:
+**Step 5: Confirm to the user.**
 
 ```
-Dashboard running at http://localhost:3847
+Dashboard running at http://localhost:[PORT]
 
-The graph auto-refreshes every 5 seconds.
-Click any node to inspect its details.
+The graph updates live as agents run and files change.
+Click any node to inspect details and exec-plan.
 
-Server log: /tmp/declare-dashboard.log
-To stop:    kill <PID>
+To stop: kill $(lsof -ti :[PORT])
 ```
 
-Where `<PID>` is the process ID captured in Step 2 (or a reminder to find it with `lsof -ti :3847`).
-
-If the server was already running (Step 1 returned `RUNNING`), say "Server was already running."
-
-**Step 5: Tail server output (optional).**
-
-If `$ARGUMENTS` contains `--tail` or `--log`:
-
-```bash
-tail -f /tmp/declare-dashboard.log
-```
-
-Otherwise, skip this step.
+If the server was already running (Step 2 returned `RUNNING`), say "Server was already running."
