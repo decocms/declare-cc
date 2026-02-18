@@ -662,10 +662,12 @@ function copyFlattenedCommands(srcDir, destDir, prefix, pathPrefix, runtime) {
       const localClaudeRegex = /\.\/\.claude\//g;
       const opencodeDirRegex = /~\/\.opencode\//g;
       const distToolsRegex = /dist\/declare-tools\.cjs/g;
+      const workflowsRegex = /@workflows\//g;
       content = content.replace(globalClaudeRegex, pathPrefix);
       content = content.replace(localClaudeRegex, `./${getDirName(runtime)}/`);
       content = content.replace(opencodeDirRegex, pathPrefix);
       content = content.replace(distToolsRegex, `${pathPrefix}declare-tools.cjs`);
+      content = content.replace(workflowsRegex, `@${pathPrefix}workflows/`);
       content = processAttribution(content, getCommitAttribution(runtime));
       content = convertClaudeToOpencodeFrontmatter(content);
 
@@ -706,9 +708,11 @@ function copyWithPathReplacement(srcDir, destDir, pathPrefix, runtime) {
       const globalClaudeRegex = /~\/\.claude\//g;
       const localClaudeRegex = /\.\/\.claude\//g;
       const distToolsRegex = /dist\/declare-tools\.cjs/g;
+      const workflowsRegex = /@workflows\//g;
       content = content.replace(globalClaudeRegex, pathPrefix);
       content = content.replace(localClaudeRegex, `./${dirName}/`);
       content = content.replace(distToolsRegex, `${pathPrefix}declare-tools.cjs`);
+      content = content.replace(workflowsRegex, `@${pathPrefix}workflows/`);
       content = processAttribution(content, getCommitAttribution(runtime));
 
       // Convert frontmatter for opencode compatibility
@@ -1446,6 +1450,19 @@ function install(isGlobal, runtime = 'claude') {
     } else {
       failures.push('agents');
     }
+  }
+
+  // Copy workflows/ so @workflows/ references in commands resolve correctly
+  const workflowsSrc = path.join(src, 'workflows');
+  if (fs.existsSync(workflowsSrc)) {
+    const workflowsDest = path.join(targetDir, 'workflows');
+    fs.mkdirSync(workflowsDest, { recursive: true });
+    for (const entry of fs.readdirSync(workflowsSrc, { withFileTypes: true })) {
+      if (entry.isFile()) {
+        fs.copyFileSync(path.join(workflowsSrc, entry.name), path.join(workflowsDest, entry.name));
+      }
+    }
+    console.log(`  ${green}✓${reset} Installed workflows/`);
   }
 
   // Copy declare-tools.cjs bundle so commands can run `node {pathPrefix}declare-tools.cjs`

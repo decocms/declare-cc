@@ -30,7 +30,7 @@ Note the existing declarations from the graph (if any) -- the workflow needs thi
 
 Read and follow the full workflow instructions:
 
-@/Users/guilherme/Projects/get-shit-done/workflows/future.md
+@workflows/future.md
 
 Pass the loaded graph state into the workflow so it knows about existing declarations.
 
