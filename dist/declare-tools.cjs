@@ -3489,6 +3489,196 @@ var require_health_check = __commonJS({
   }
 });
 
+// src/server/index.js
+var require_server = __commonJS({
+  "src/server/index.js"(exports2, module2) {
+    "use strict";
+    var http = require("node:http");
+    var fs = require("node:fs");
+    var path = require("node:path");
+    var { runLoadGraph: runLoadGraph2 } = require_load_graph();
+    var { runStatus: runStatus2 } = require_status();
+    var MIME_TYPES = {
+      ".html": "text/html; charset=utf-8",
+      ".js": "application/javascript; charset=utf-8",
+      ".css": "text/css; charset=utf-8",
+      ".json": "application/json; charset=utf-8",
+      ".svg": "image/svg+xml",
+      ".png": "image/png",
+      ".ico": "image/x-icon"
+    };
+    var PUBLIC_DIR = path.join(__dirname, "public");
+    function sendJson(res, statusCode, data) {
+      const body = JSON.stringify(data, null, 2);
+      res.writeHead(statusCode, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Content-Length": Buffer.byteLength(body),
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type"
+      });
+      res.end(body);
+    }
+    function sendFile(res, filePath) {
+      const ext = path.extname(filePath).toLowerCase();
+      const contentType = MIME_TYPES[ext] || "application/octet-stream";
+      fs.readFile(filePath, (err, data) => {
+        if (err) {
+          res.writeHead(404, { "Content-Type": "text/plain" });
+          res.end("Not Found");
+          return;
+        }
+        res.writeHead(200, {
+          "Content-Type": contentType,
+          "Content-Length": data.length
+        });
+        res.end(data);
+      });
+    }
+    function handleGraph(res, cwd) {
+      try {
+        const graph = runLoadGraph2(cwd);
+        if ("error" in graph) {
+          sendJson(res, 500, { error: graph.error });
+          return;
+        }
+        sendJson(res, 200, graph);
+      } catch (err) {
+        sendJson(res, 500, { error: String(err) });
+      }
+    }
+    function handleStatus(res, cwd) {
+      try {
+        const status = runStatus2(cwd);
+        if ("error" in status) {
+          sendJson(res, 500, { error: status.error });
+          return;
+        }
+        sendJson(res, 200, status);
+      } catch (err) {
+        sendJson(res, 500, { error: String(err) });
+      }
+    }
+    function handleMilestone(res, cwd, milestoneId) {
+      try {
+        const graph = runLoadGraph2(cwd);
+        if ("error" in graph) {
+          sendJson(res, 500, { error: graph.error });
+          return;
+        }
+        const normalizedId = milestoneId.toUpperCase();
+        const milestone = graph.milestones.find(
+          (m) => m.id.toUpperCase() === normalizedId
+        );
+        if (!milestone) {
+          sendJson(res, 404, { error: `Milestone '${milestoneId}' not found` });
+          return;
+        }
+        const milestoneActions = graph.actions.filter((a) => {
+          if (Array.isArray(a.causes)) {
+            return a.causes.some((c) => c.toUpperCase() === normalizedId);
+          }
+          return false;
+        });
+        sendJson(res, 200, {
+          milestone,
+          actions: milestoneActions
+        });
+      } catch (err) {
+        sendJson(res, 500, { error: String(err) });
+      }
+    }
+    function route(req, res, cwd) {
+      const method = req.method || "GET";
+      const url = req.url || "/";
+      const urlPath = url.split("?")[0];
+      if (method === "OPTIONS") {
+        res.writeHead(204, {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "GET, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type"
+        });
+        res.end();
+        return;
+      }
+      if (method !== "GET") {
+        sendJson(res, 405, { error: "Method Not Allowed" });
+        return;
+      }
+      if (urlPath === "/api/graph") {
+        handleGraph(res, cwd);
+        return;
+      }
+      if (urlPath === "/api/status") {
+        handleStatus(res, cwd);
+        return;
+      }
+      const milestoneMatch = urlPath.match(/^\/api\/milestone\/([^/]+)$/);
+      if (milestoneMatch) {
+        handleMilestone(res, cwd, milestoneMatch[1]);
+        return;
+      }
+      if (urlPath === "/") {
+        const indexPath = path.join(PUBLIC_DIR, "index.html");
+        sendFile(res, indexPath);
+        return;
+      }
+      if (urlPath.startsWith("/public/")) {
+        const relative = urlPath.replace(/^\/public\//, "");
+        const resolved = path.resolve(PUBLIC_DIR, relative);
+        if (!resolved.startsWith(PUBLIC_DIR + path.sep) && resolved !== PUBLIC_DIR) {
+          sendJson(res, 403, { error: "Forbidden" });
+          return;
+        }
+        sendFile(res, resolved);
+        return;
+      }
+      sendJson(res, 404, { error: `Route not found: ${urlPath}` });
+    }
+    function createServer(cwd, port) {
+      const server = http.createServer((req, res) => {
+        route(req, res, cwd);
+      });
+      return server;
+    }
+    function startServer(cwd, port) {
+      const resolvedPort = port || parseInt(process.env.PORT || "", 10) || 3847;
+      const server = createServer(cwd, resolvedPort);
+      server.listen(resolvedPort, "127.0.0.1", () => {
+      });
+      const url = `http://localhost:${resolvedPort}`;
+      return { server, port: resolvedPort, url };
+    }
+    module2.exports = { createServer, startServer };
+  }
+});
+
+// src/commands/serve.js
+var require_serve = __commonJS({
+  "src/commands/serve.js"(exports2, module2) {
+    "use strict";
+    var { startServer } = require_server();
+    function parsePortFlag(args) {
+      const idx = args.indexOf("--port");
+      if (idx === -1 || idx + 1 >= args.length) return void 0;
+      const value = parseInt(args[idx + 1], 10);
+      return Number.isNaN(value) ? void 0 : value;
+    }
+    function runServe2(cwd, args) {
+      const port = parsePortFlag(args) || parseInt(process.env.PORT || "", 10) || 3847;
+      const { server, port: resolvedPort, url } = startServer(cwd, port);
+      process.on("SIGINT", () => {
+        server.close(() => process.exit(0));
+      });
+      process.on("SIGTERM", () => {
+        server.close(() => process.exit(0));
+      });
+      return { url, port: resolvedPort, pid: process.pid };
+    }
+    module2.exports = { runServe: runServe2 };
+  }
+});
+
 // src/declare-tools.js
 var { commitPlanningDocs } = require_commit();
 var { readState, recordSession } = require_state();
@@ -3519,6 +3709,7 @@ var { runAddTodo, runCheckTodos, runCompleteTodo } = require_todo();
 var { runConfigGet } = require_config_get();
 var { runConfigSet } = require_config_set();
 var { runHealthCheck, runHealthCheckRepair } = require_health_check();
+var { runServe } = require_serve();
 function parseCwdFlag(argv) {
   const idx = argv.indexOf("--cwd");
   if (idx === -1 || idx + 1 >= argv.length) return null;
@@ -3561,7 +3752,7 @@ function main() {
   const args = process.argv.slice(2);
   const command = args[0];
   if (!command) {
-    console.log(JSON.stringify({ error: "No command specified. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, record-session, get-state, quick-task, add-todo, check-todos, complete-todo, config-get, config-set, health-check, help" }));
+    console.log(JSON.stringify({ error: "No command specified. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, serve, record-session, get-state, quick-task, add-todo, check-todos, complete-todo, config-get, config-set, health-check, help" }));
     process.exit(1);
   }
   try {
@@ -3731,6 +3922,12 @@ function main() {
         if (result.error) process.exit(1);
         break;
       }
+      case "serve": {
+        const cwdServe = parseCwdFlag(args) || process.cwd();
+        const result = runServe(cwdServe, args.slice(1));
+        console.log(JSON.stringify(result));
+        break;
+      }
       case "record-session": {
         const cwdRecordSession = parseCwdFlag(args) || process.cwd();
         const stoppedAt = parseNamedFlag(args, "--stopped-at");
@@ -3806,7 +4003,7 @@ function main() {
         break;
       }
       default:
-        console.log(JSON.stringify({ error: `Unknown command: ${command}. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, record-session, get-state, quick-task, add-todo, check-todos, complete-todo, config-get, config-set, health-check, help` }));
+        console.log(JSON.stringify({ error: `Unknown command: ${command}. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, serve, record-session, get-state, quick-task, add-todo, check-todos, complete-todo, config-get, config-set, health-check, help` }));
         process.exit(1);
     }
   } catch (err) {
