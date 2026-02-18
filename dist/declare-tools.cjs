@@ -1329,7 +1329,7 @@ var require_help = __commonJS({
             usage: "/declare:help"
           }
         ],
-        version: "0.4.3"
+        version: "0.4.4"
       };
     }
     module2.exports = { runHelp: runHelp2 };
@@ -3677,7 +3677,9 @@ var require_server = __commonJS({
     };
     function getPublicDir(cwd) {
       const installed = path.join(cwd, ".claude", "server", "public");
-      if (require("fs").existsSync(installed)) return installed;
+      if (fs.existsSync(installed)) return installed;
+      const bundled = path.join(__dirname, "public");
+      if (fs.existsSync(bundled)) return bundled;
       return path.join(cwd, "src", "server", "public");
     }
     function sendJson(res, statusCode, data) {

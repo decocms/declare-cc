@@ -6,6 +6,7 @@
 
 const esbuild = require('esbuild');
 const path = require('path');
+const fs = require('fs');
 const { version } = require('./package.json');
 
 esbuild.buildSync({
@@ -21,5 +22,14 @@ esbuild.buildSync({
   // Zero runtime dependencies -- bundle everything
   external: [],
 });
+
+// Copy dashboard static files into dist/public/ so they ship in the npm package
+// (src/ is not included in the package files array)
+const publicSrc  = path.join(__dirname, 'src', 'server', 'public');
+const publicDist = path.join(__dirname, 'dist', 'public');
+fs.mkdirSync(publicDist, { recursive: true });
+for (const file of fs.readdirSync(publicSrc)) {
+  fs.copyFileSync(path.join(publicSrc, file), path.join(publicDist, file));
+}
 
 console.log('Built dist/declare-tools.cjs');

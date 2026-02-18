@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Declare — Project DAG</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0e0e12;
+      --surface: #16161e;
+      --surface2: #1e1e2a;
+      --border: #2a2a38;
+      --text: #c8c8d8;
+      --text-dim: #6e6e88;
+      --text-bright: #e8e8f0;
+
+      --decl-color: #4a9eff;
+      --decl-bg: #0d2240;
+      --decl-border: #1a4880;
+
+      --mile-color: #a66bff;
+      --mile-bg: #1a0d33;
+      --mile-border: #3d1f6e;
+
+      --act-color: #34d399;
+      --act-bg: #0a2018;
+      --act-border: #1a4d34;
+
+      /* done tones — dimmed hue-specific variants, not grey */
+      --decl-done-color: #4a7ab8;
+      --decl-done-bg: #0a1c2e;
+      --decl-done-border: #163454;
+
+      --mile-done-color: #7050b8;
+      --mile-done-bg: #130c28;
+      --mile-done-border: #251848;
+
+      --act-done-color: #26906a;
+      --act-done-bg: #08180f;
+      --act-done-border: #123428;
+
+      --broken-color: #ff4d6d;
+      --broken-bg: #2a0a10;
+      --broken-border: #5a1520;
+
+      --renegotiated-color: #ffa040;
+      --renegotiated-bg: #251400;
+      --renegotiated-border: #5a3000;
+
+      --panel-width: 360px;
+      --status-bar-height: 52px;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      font-size: 13px;
+      line-height: 1.5;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── Status bar ── */
+    #status-bar {
+      height: var(--status-bar-height);
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      padding: 0 20px;
+      flex-shrink: 0;
+      position: relative;
+      z-index: 10;
+    }
+
+    #status-bar .project-name {
+      font-weight: 600;
+      font-size: 14px;
+      color: var(--text-bright);
+      margin-right: 8px;
+    }
+
+    .stat-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--text-dim);
+      font-size: 12px;
+    }
+
+    .stat-group .value {
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .health-badge {
+      padding: 2px 10px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .health-healthy { background: #0a2018; color: #34d399; border: 1px solid #1a4d34; }
+    .health-warnings { background: #251400; color: #ffa040; border: 1px solid #5a3000; }
+    .health-errors   { background: #2a0a10; color: #ff4d6d; border: 1px solid #5a1520; }
+    .health-unknown  { background: var(--surface2); color: var(--text-dim); border: 1px solid var(--border); }
+
+    .spacer { flex: 1; }
+
+    #last-updated {
+      color: var(--text-dim);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    #refresh-btn {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 5px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    #refresh-btn:hover { background: #252535; border-color: #3a3a50; }
+    #refresh-btn:active { transform: scale(0.97); }
+
+    /* ── Main layout ── */
+    #main {
+      flex: 1;
+      overflow: hidden;
+    }
+
+    /* ── Canvas area — reserve space for fixed sidebar ── */
+    #canvas-wrap {
+      width: 100%;
+      height: 100%;
+      overflow: auto;
+      background: var(--bg);
+      padding-right: var(--panel-width);
+    }
+
+    #canvas-container {
+      position: relative;
+      min-width: 100%;
+      min-height: 100%;
+      padding: 40px 40px 80px;
+    }
+
+    #edges-svg {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      overflow: visible;
+    }
+
+    /* ── Layers ── */
+    .layer {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0;
+      justify-content: center;
+      align-items: flex-start;
+      position: relative;
+      margin-bottom: 0;
+    }
+
+    .layer-label {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      text-align: center;
+      margin-bottom: 12px;
+    }
+
+    .layer-section {
+      margin-bottom: 40px;
+    }
+
+    /* ── Nodes ── */
+    .node {
+      border-radius: 10px;
+      padding: 12px 16px;
+      cursor: pointer;
+      transition: transform 0.12s, box-shadow 0.12s, border-color 0.15s;
+      position: relative;
+      min-width: 160px;
+      max-width: 220px;
+      user-select: none;
+      margin: 0 8px 0 8px;
+    }
+
+    .node:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 24px rgba(0,0,0,0.5);
+    }
+
+    .node.selected {
+      box-shadow: 0 0 0 2px currentColor, 0 6px 24px rgba(0,0,0,0.5);
+    }
+
+    /* Declaration nodes */
+    .node-declaration {
+      background: var(--decl-bg);
+      border: 1px solid var(--decl-border);
+      color: var(--decl-color);
+    }
+
+    /* Milestone nodes */
+    .node-milestone {
+      background: var(--mile-bg);
+      border: 1px solid var(--mile-border);
+      color: var(--mile-color);
+    }
+
+    /* Action nodes */
+    .node-action {
+      background: var(--act-bg);
+      border: 1px solid var(--act-border);
+      color: var(--act-color);
+      min-width: 140px;
+      max-width: 190px;
+    }
+
+    /* Status overrides — DONE uses dimmed type-specific hues, not grey */
+    .node-declaration.status-done,
+    .node-declaration.status-honored,
+    .node-declaration.status-kept {
+      background: var(--decl-done-bg);
+      border-color: var(--decl-done-border);
+      color: var(--decl-done-color);
+      opacity: 0.82;
+    }
+
+    .node-milestone.status-done,
+    .node-milestone.status-honored,
+    .node-milestone.status-kept {
+      background: var(--mile-done-bg);
+      border-color: var(--mile-done-border);
+      color: var(--mile-done-color);
+      opacity: 0.82;
+    }
+
+    .node-action.status-done,
+    .node-action.status-honored,
+    .node-action.status-kept {
+      background: var(--act-done-bg);
+      border-color: var(--act-done-border);
+      color: var(--act-done-color);
+      opacity: 0.82;
+    }
+
+    .node.status-broken {
+      background: var(--broken-bg);
+      border-color: var(--broken-border);
+      color: var(--broken-color);
+    }
+
+    .node.status-renegotiated {
+      background: var(--renegotiated-bg);
+      border-color: var(--renegotiated-border);
+      color: var(--renegotiated-color);
+    }
+
+    .node-id {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      opacity: 0.7;
+      margin-bottom: 4px;
+    }
+
+    .node-title {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-bright);
+      line-height: 1.35;
+      word-break: break-word;
+    }
+
+    .node-declaration.status-done .node-title,
+    .node-declaration.status-honored .node-title,
+    .node-declaration.status-kept .node-title { color: var(--decl-done-color); }
+
+    .node-milestone.status-done .node-title,
+    .node-milestone.status-honored .node-title,
+    .node-milestone.status-kept .node-title { color: var(--mile-done-color); }
+
+    .node-action.status-done .node-title,
+    .node-action.status-honored .node-title,
+    .node-action.status-kept .node-title { color: var(--act-done-color); }
+
+    .node.status-broken .node-title   { color: var(--broken-color); }
+    .node.status-renegotiated .node-title { color: var(--renegotiated-color); }
+
+    .status-badge {
+      display: inline-block;
+      margin-top: 8px;
+      padding: 2px 8px;
+      border-radius: 8px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      background: rgba(255,255,255,0.06);
+    }
+
+    /* ── Side panel — always visible, fixed right column ── */
+    #side-panel {
+      position: fixed;
+      top: var(--status-bar-height);
+      right: 0;
+      width: var(--panel-width);
+      height: calc(100vh - var(--status-bar-height));
+      background: var(--surface);
+      border-left: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      z-index: 20;
+    }
+
+    #panel-header {
+      padding: 16px 20px 12px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+    }
+
+    #panel-title {
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+    }
+
+    #panel-close {
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      cursor: pointer;
+      font-size: 18px;
+      line-height: 1;
+      padding: 0 4px;
+      transition: color 0.12s;
+    }
+    #panel-close:hover { color: var(--text-bright); }
+
+    #panel-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+    }
+
+    #panel-body::-webkit-scrollbar { width: 4px; }
+    #panel-body::-webkit-scrollbar-track { background: transparent; }
+    #panel-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    .detail-id {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      opacity: 0.6;
+      margin-bottom: 6px;
+    }
+
+    .detail-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-bright);
+      line-height: 1.4;
+      margin-bottom: 16px;
+    }
+
+    .detail-badge {
+      display: inline-block;
+      padding: 3px 12px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      margin-bottom: 20px;
+    }
+
+    .detail-section {
+      margin-bottom: 20px;
+    }
+
+    .detail-label {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin-bottom: 6px;
+    }
+
+    .detail-value {
+      color: var(--text);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .detail-tag-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .detail-tag {
+      padding: 3px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 500;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      cursor: pointer;
+      transition: border-color 0.12s, color 0.12s;
+    }
+    .detail-tag:hover { border-color: var(--text-dim); color: var(--text); }
+
+    /* ── Loading & error overlays ── */
+    #overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(14, 14, 18, 0.92);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      z-index: 100;
+    }
+    #overlay.hidden { display: none; }
+
+    .spinner {
+      width: 36px;
+      height: 36px;
+      border: 3px solid var(--border);
+      border-top-color: var(--decl-color);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    #overlay-message {
+      color: var(--text-dim);
+      font-size: 14px;
+    }
+
+    #overlay-error {
+      color: var(--broken-color);
+      font-size: 13px;
+      text-align: center;
+      max-width: 400px;
+    }
+
+    #overlay-retry {
+      display: none;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 20px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 13px;
+      margin-top: 4px;
+    }
+    #overlay-retry:hover { border-color: var(--text-dim); }
+
+    #edges-svg { transition: opacity 0.2s ease; }
+
+    /* SVG edges */
+    .edge {
+      fill: none;
+      stroke: var(--border);
+      stroke-width: 1.5;
+      opacity: 0.6;
+      transition: opacity 0.3s ease;
+    }
+    .edge.highlight {
+      stroke: var(--text-dim);
+      opacity: 1;
+    }
+    .edge.focus-dim {
+      opacity: 0.04;
+    }
+    #edges-svg {
+      transition: opacity 0.18s ease;
+    }
+
+    /* Scrollbar */
+    #canvas-wrap::-webkit-scrollbar { width: 6px; height: 6px; }
+    #canvas-wrap::-webkit-scrollbar-track { background: transparent; }
+    #canvas-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    /* ── Focus mode — flex-basis collapse for simultaneous shrink + slide ── */
+
+    /* Nodes being animated out: flex-basis + margin collapse simultaneously with slide */
+    .node.focus-exiting {
+      overflow: hidden;
+      pointer-events: none;
+      /* transition and initial flex-basis set via inline styles in JS */
+    }
+
+    /* Nodes in focus: stay put, get a glow */
+    .node.focus-active {
+      box-shadow: 0 0 0 2px currentColor, 0 8px 32px rgba(0,0,0,0.6) !important;
+    }
+
+    /* ESC hint */
+    #focus-hint {
+      position: fixed;
+      bottom: 24px;
+      left: calc(50% - var(--panel-width) / 2);
+      transform: translateX(-50%);
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      padding: 7px 18px;
+      border-radius: 20px;
+      font-size: 12px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.25s ease;
+      z-index: 50;
+    }
+    #focus-hint.visible { opacity: 1; }
+  </style>
+</head>
+<body>
+
+<!-- Status bar -->
+<div id="status-bar">
+  <span class="project-name" id="project-name">Declare</span>
+  <span class="stat-group"><span class="value" id="stat-decls">–</span> Declarations</span>
+  <span class="stat-group"><span class="value" id="stat-miles">–</span> Milestones</span>
+  <span class="stat-group"><span class="value" id="stat-acts">–</span> Actions</span>
+  <span id="health-badge" class="health-badge health-unknown">–</span>
+  <span class="spacer"></span>
+  <span id="last-updated"></span>
+  <button id="refresh-btn">Refresh</button>
+</div>
+
+<!-- Main -->
+<div id="main">
+  <div id="canvas-wrap">
+    <div id="canvas-container">
+      <svg id="edges-svg"></svg>
+      <div class="layer-section" id="layer-declarations">
+        <div class="layer-label">Declarations</div>
+        <div class="layer" id="nodes-declarations"></div>
+      </div>
+      <div class="layer-section" id="layer-milestones">
+        <div class="layer-label">Milestones</div>
+        <div class="layer" id="nodes-milestones"></div>
+      </div>
+      <div class="layer-section" id="layer-actions">
+        <div class="layer-label">Actions</div>
+        <div class="layer" id="nodes-actions"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Side panel — always visible fixed right column -->
+<div id="side-panel">
+  <div id="panel-header">
+    <span id="panel-title">Details</span>
+  </div>
+  <div id="panel-body">
+    <div id="panel-empty" style="color:var(--text-dim);font-size:12px;padding:8px 0;line-height:1.7">
+      Click any node to see details.<br>
+      Click a declaration or milestone<br>to focus its subtree.
+    </div>
+  </div>
+</div>
+
+<!-- Loading/error overlay -->
+<div id="overlay">
+  <div class="spinner"></div>
+  <div id="overlay-message">Loading graph…</div>
+  <div id="overlay-error"></div>
+  <button id="overlay-retry">Retry</button>
+</div>
+
+<div id="focus-hint">Press Esc or click outside to exit focus</div>
+<script src="/public/app.js"></script>
+</body>
+</html>

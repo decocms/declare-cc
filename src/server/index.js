@@ -41,14 +41,22 @@ const MIME_TYPES = {
 };
 
 /**
- * Resolve the public directory for a given project root.
- * Prefers .claude/server/public/ (installed path) over src/server/public/ (dev path).
- * @param {string} cwd
+ * Resolve the public directory for serving the dashboard.
+ * Resolution order:
+ *  1. .claude/server/public/   — copied there by installer
+ *  2. dist/public/             — copied there at build time, ships in npm package
+ *  3. src/server/public/       — dev fallback (not in npm package)
+ * @param {string} cwd - project root
  * @returns {string}
  */
 function getPublicDir(cwd) {
   const installed = path.join(cwd, '.claude', 'server', 'public');
-  if (require('fs').existsSync(installed)) return installed;
+  if (fs.existsSync(installed)) return installed;
+
+  // __dirname in the CJS bundle points to dist/ — dist/public/ is right next to the bundle
+  const bundled = path.join(__dirname, 'public');
+  if (fs.existsSync(bundled)) return bundled;
+
   return path.join(cwd, 'src', 'server', 'public');
 }
 

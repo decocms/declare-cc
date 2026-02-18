@@ -1465,8 +1465,9 @@ function install(isGlobal, runtime = 'claude') {
     console.log(`  ${green}✓${reset} Installed workflows/`);
   }
 
-  // Copy dashboard static files (src/server/public/) → .claude/server/public/
-  const publicSrc = path.join(src, 'src', 'server', 'public');
+  // Copy dashboard static files (dist/public/) → .claude/server/public/
+  // dist/public/ ships in the npm package (built by esbuild.config.js)
+  const publicSrc = path.join(src, 'dist', 'public');
   if (fs.existsSync(publicSrc)) {
     const publicDest = path.join(targetDir, 'server', 'public');
     fs.mkdirSync(publicDest, { recursive: true });
