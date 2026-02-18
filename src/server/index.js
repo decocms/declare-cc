@@ -39,17 +39,16 @@ const MIME_TYPES = {
   '.ico': 'image/x-icon',
 };
 
-// PUBLIC_DIR is resolved at request time from cwd so the bundle works correctly
-// when dist/declare-tools.cjs is run from the project root.
-const PUBLIC_DIR_RELATIVE = path.join('src', 'server', 'public');
-
 /**
  * Resolve the public directory for a given project root.
+ * Prefers .claude/server/public/ (installed path) over src/server/public/ (dev path).
  * @param {string} cwd
  * @returns {string}
  */
 function getPublicDir(cwd) {
-  return path.join(cwd, PUBLIC_DIR_RELATIVE);
+  const installed = path.join(cwd, '.claude', 'server', 'public');
+  if (require('fs').existsSync(installed)) return installed;
+  return path.join(cwd, 'src', 'server', 'public');
 }
 
 /**

@@ -3674,9 +3674,10 @@ var require_server = __commonJS({
       ".png": "image/png",
       ".ico": "image/x-icon"
     };
-    var PUBLIC_DIR_RELATIVE = path.join("src", "server", "public");
     function getPublicDir(cwd) {
-      return path.join(cwd, PUBLIC_DIR_RELATIVE);
+      const installed = path.join(cwd, ".claude", "server", "public");
+      if (require("fs").existsSync(installed)) return installed;
+      return path.join(cwd, "src", "server", "public");
     }
     function sendJson(res, statusCode, data) {
       const body = JSON.stringify(data, null, 2);

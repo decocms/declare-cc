@@ -1465,6 +1465,19 @@ function install(isGlobal, runtime = 'claude') {
     console.log(`  ${green}✓${reset} Installed workflows/`);
   }
 
+  // Copy dashboard static files (src/server/public/) → .claude/server/public/
+  const publicSrc = path.join(src, 'src', 'server', 'public');
+  if (fs.existsSync(publicSrc)) {
+    const publicDest = path.join(targetDir, 'server', 'public');
+    fs.mkdirSync(publicDest, { recursive: true });
+    for (const entry of fs.readdirSync(publicSrc, { withFileTypes: true })) {
+      if (entry.isFile()) {
+        fs.copyFileSync(path.join(publicSrc, entry.name), path.join(publicDest, entry.name));
+      }
+    }
+    console.log(`  ${green}✓${reset} Installed dashboard (server/public/)`);
+  }
+
   // Copy declare-tools.cjs bundle so commands can run `node {pathPrefix}declare-tools.cjs`
   const bundleSrc = path.join(src, 'dist', 'declare-tools.cjs');
   const bundleDest = path.join(targetDir, 'declare-tools.cjs');
