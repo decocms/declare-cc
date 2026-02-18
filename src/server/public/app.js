@@ -952,8 +952,12 @@ function exitFocusMode() {
       el.style.transition = '';
       el.style.transform = '';
     });
-    drawEdges();
-    $edgesSvg.style.opacity = '1';
+    // rAF: let browser complete layout with restored node positions before
+    // reading getBoundingClientRect() inside drawEdges()
+    requestAnimationFrame(() => {
+      drawEdges();
+      $edgesSvg.style.opacity = '1';
+    });
     focusCleanupTimer = null;
   }, FOCUS_DUR + 80);
 
