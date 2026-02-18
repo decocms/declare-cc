@@ -7,9 +7,9 @@
 | M-01 | Context capture per milestone           | DONE    | D-01     | YES  |
 | M-02 | Milestone research pipeline             | DONE    | D-01     | YES  |
 | M-03 | Planner + plan-checker loop             | DONE    | D-01     | YES  |
-| M-04 | Codebase mapper                         | PENDING | D-02     | YES  |
-| M-05 | Project initialization flow             | PENDING | D-02     | YES  |
-| M-06 | Milestone completion and archiving      | PENDING | D-02     | YES  |
+| M-04 | Codebase mapper                         | DONE    | D-02     | YES  |
+| M-05 | Project initialization flow             | DONE    | D-02     | YES  |
+| M-06 | Milestone completion and archiving      | DONE    | D-02     | YES  |
 | M-07 | New milestone cycle                     | DONE    | D-02     | YES  |
 | M-08 | Conversational UAT                      | DONE    | D-03     | YES  |
 | M-09 | Systematic debugger                     | DONE    | D-03     | YES  |
