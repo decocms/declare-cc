@@ -1329,7 +1329,7 @@ var require_help = __commonJS({
             usage: "/declare:help"
           }
         ],
-        version: "0.5.0"
+        version: "0.5.1"
       };
     }
     module2.exports = { runHelp: runHelp2 };
@@ -2985,6 +2985,13 @@ var require_sync_status = __commonJS({
         for (const action of actions) {
           if (isCompleted(action.status)) {
             actionResults.push({ id: action.id, milestone: m.id, changed: false, reason: "already DONE" });
+            continue;
+          }
+          const summaryPath = join(folderPath, `${action.id}-SUMMARY.md`);
+          if (existsSync(summaryPath)) {
+            planContent = updateActionStatus(planContent, action.id, "DONE");
+            planDirty = true;
+            actionResults.push({ id: action.id, milestone: m.id, changed: true, reason: "SUMMARY.md exists" });
             continue;
           }
           if (milestoneAlreadyDone) {

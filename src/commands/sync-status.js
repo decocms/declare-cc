@@ -66,9 +66,10 @@ function runSyncStatus(cwd) {
   // ── Step 1: Mark actions DONE in PLAN.md files ─────────────────────────────
   // Strategy (in priority order):
   //   a) Already DONE → skip
-  //   b) Milestone is already DONE → mark all its actions DONE (milestone was externally verified)
-  //   c) Produces is a clean file path → check file exists
-  //   d) Otherwise → cannot auto-verify, leave PENDING
+  //   b) A-XX-SUMMARY.md exists in milestone folder → executor completed it → DONE
+  //   c) Milestone is already DONE/KEPT → mark all its actions DONE
+  //   d) Produces is a clean file path → check file exists
+  //   e) Otherwise → cannot auto-verify, leave PENDING
   for (const m of milestones) {
     const folderPath = findMilestoneFolder(planningDir, m.id);
     if (!folderPath) continue;
@@ -87,8 +88,16 @@ function runSyncStatus(cwd) {
         continue;
       }
 
+      // Check for A-XX-SUMMARY.md — executor agents write this on completion
+      const summaryPath = join(folderPath, `${action.id}-SUMMARY.md`);
+      if (existsSync(summaryPath)) {
+        planContent = updateActionStatus(planContent, action.id, 'DONE');
+        planDirty = true;
+        actionResults.push({ id: action.id, milestone: m.id, changed: true, reason: 'SUMMARY.md exists' });
+        continue;
+      }
+
       if (milestoneAlreadyDone) {
-        // Milestone was verified DONE externally — all its actions are implicitly done
         planContent = updateActionStatus(planContent, action.id, 'DONE');
         planDirty = true;
         actionResults.push({ id: action.id, milestone: m.id, changed: true, reason: `milestone ${m.id} is DONE` });

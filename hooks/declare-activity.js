@@ -81,10 +81,22 @@ function buildEvent(data) {
     return null; // skip noisy general bash
   }
 
-  // Write tool — track planning file changes
+  // Write tool — track planning file changes + auto-sync on SUMMARY.md writes
   if (tool === 'Write' && hookEvent === 'PostToolUse') {
     const fp = input.file_path || '';
     if (fp.includes('.planning/')) {
+      // When an executor writes A-XX-SUMMARY.md, auto-run sync-status so
+      // PLAN.md and MILESTONES.md update immediately without manual intervention
+      if (fp.includes('-SUMMARY.md')) {
+        const { execSync } = require('child_process');
+        try {
+          execSync(`node "${path.join(cwd, '.claude', 'declare-tools.cjs')}" sync-status`, {
+            cwd,
+            timeout: 10000,
+            stdio: 'ignore',
+          });
+        } catch (_) { /* silent — never block Claude */ }
+      }
       return { ts, phase: 'done', tool: 'Write', file: fp.replace(cwd, '.') };
     }
     return null;
