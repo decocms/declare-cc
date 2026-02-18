@@ -45,16 +45,16 @@ Check if `--skip-research` is present in `$ARGUMENTS`.
 **Step 2: Load milestone data.**
 
 ```bash
-node dist/declare-tools.cjs load-graph --milestone M-XX
+node dist/declare-tools.cjs load-graph
 ```
 
-Parse the JSON output. Extract:
-- `milestone`: milestone ID and title
-- `declarations`: array of declaration IDs and statements
-- `actions`: array of `{id, title, produces, dependsOn, status}`
-- `milestoneFolderPath`: path to the milestone planning folder
-- `researchPath`: path to RESEARCH.md if it exists
-- `contextPath`: path to CONTEXT.md if it exists
+Parse the JSON output. Find the milestone matching the ID. Extract:
+- `milestone`: milestone ID and title (from `milestones` array)
+- `declarations`: upstream declarations that realize this milestone (trace via `realizes` field)
+- `actions`: all actions whose `causes` array includes this milestone ID
+- `milestoneFolderPath`: derive as `.planning/milestones/M-XX-<slug>/`
+- `researchPath`: `.planning/milestones/M-XX-<slug>/RESEARCH.md` if it exists
+- `contextPath`: `.planning/milestones/M-XX-<slug>/CONTEXT.md` if it exists
 
 If no actions found, display: "No actions found for M-XX. Run `/declare:actions M-XX` first to create the milestone plan." and exit.
 

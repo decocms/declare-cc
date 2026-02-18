@@ -1,5 +1,5 @@
 ---
-description: Derive action plans per milestone
+description: Define actions per milestone — what must be done and what each produces (creates PLAN.md)
 allowed-tools:
   - Read
   - Write
@@ -96,4 +96,13 @@ node dist/declare-tools.cjs load-graph
 ```
 
 2. Show summary: milestones processed, plans created, total actions derived.
-3. Suggest: "Run `/declare:status` to see coverage and health."
+3. Suggest the next step clearly:
+
+```
+Actions defined. Next: create executable plans.
+
+  /declare:plan M-XX    — research + planner + checker loop → EXEC-PLAN files
+  /declare:execute M-XX — once plans exist, execute with wave scheduling
+```
+
+If multiple milestones were planned, list each one with its suggested next command.
