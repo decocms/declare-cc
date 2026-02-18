@@ -39,5 +39,5 @@ Full decision log archived in PROJECT.md Key Decisions table.
 
 ## Session Continuity
 
-Last session: 2026-02-17
-Stopped at: v1.0 milestone completed, starting v2 planning
+Last session: 2026-02-18
+Stopped at: Completed M-06 (complete-milestone CJS + slash command) and M-07 (new-milestone slash command)
