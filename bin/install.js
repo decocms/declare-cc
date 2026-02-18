@@ -661,9 +661,11 @@ function copyFlattenedCommands(srcDir, destDir, prefix, pathPrefix, runtime) {
       const globalClaudeRegex = /~\/\.claude\//g;
       const localClaudeRegex = /\.\/\.claude\//g;
       const opencodeDirRegex = /~\/\.opencode\//g;
+      const distToolsRegex = /dist\/declare-tools\.cjs/g;
       content = content.replace(globalClaudeRegex, pathPrefix);
       content = content.replace(localClaudeRegex, `./${getDirName(runtime)}/`);
       content = content.replace(opencodeDirRegex, pathPrefix);
+      content = content.replace(distToolsRegex, `${pathPrefix}declare-tools.cjs`);
       content = processAttribution(content, getCommitAttribution(runtime));
       content = convertClaudeToOpencodeFrontmatter(content);
 
@@ -699,12 +701,14 @@ function copyWithPathReplacement(srcDir, destDir, pathPrefix, runtime) {
     if (entry.isDirectory()) {
       copyWithPathReplacement(srcPath, destPath, pathPrefix, runtime);
     } else if (entry.name.endsWith('.md')) {
-      // Replace ~/.claude/ and ./.claude/ with runtime-appropriate paths
+      // Replace ~/.claude/, ./.claude/, and dist/declare-tools.cjs with runtime-appropriate paths
       let content = fs.readFileSync(srcPath, 'utf8');
       const globalClaudeRegex = /~\/\.claude\//g;
       const localClaudeRegex = /\.\/\.claude\//g;
+      const distToolsRegex = /dist\/declare-tools\.cjs/g;
       content = content.replace(globalClaudeRegex, pathPrefix);
       content = content.replace(localClaudeRegex, `./${dirName}/`);
+      content = content.replace(distToolsRegex, `${pathPrefix}declare-tools.cjs`);
       content = processAttribution(content, getCommitAttribution(runtime));
 
       // Convert frontmatter for opencode compatibility
@@ -1433,6 +1437,16 @@ function install(isGlobal, runtime = 'claude') {
     } else {
       failures.push('agents');
     }
+  }
+
+  // Copy declare-tools.cjs bundle so commands can run `node {pathPrefix}declare-tools.cjs`
+  const bundleSrc = path.join(src, 'dist', 'declare-tools.cjs');
+  const bundleDest = path.join(targetDir, 'declare-tools.cjs');
+  if (fs.existsSync(bundleSrc)) {
+    fs.copyFileSync(bundleSrc, bundleDest);
+    console.log(`  ${green}✓${reset} Installed declare-tools.cjs`);
+  } else {
+    failures.push('declare-tools.cjs');
   }
 
   // Ensure declare/ metadata dir exists for VERSION and CHANGELOG
