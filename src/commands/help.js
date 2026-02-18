@@ -63,7 +63,7 @@ function runHelp() {
         usage: '/declare:help',
       },
     ],
-    version: '0.1.0',
+    version: DECLARE_VERSION,
   };
 }
 
