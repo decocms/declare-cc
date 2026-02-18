@@ -2843,6 +2843,91 @@ var require_renegotiate = __commonJS({
   }
 });
 
+// src/commands/complete-milestone.js
+var require_complete_milestone = __commonJS({
+  "src/commands/complete-milestone.js"(exports2, module2) {
+    "use strict";
+    var { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, copyFileSync } = require("node:fs");
+    var { join, basename } = require("node:path");
+    var { parseFlag } = require_parse_args();
+    function normalizeVersion(raw) {
+      return raw.startsWith("v") ? raw : `v${raw}`;
+    }
+    function copyDir(src, dest) {
+      mkdirSync(dest, { recursive: true });
+      const copied = [];
+      for (const entry of readdirSync(src)) {
+        const srcPath = join(src, entry);
+        const destPath = join(dest, entry);
+        const stat = statSync(srcPath);
+        if (stat.isDirectory()) {
+          const subCopied = copyDir(srcPath, destPath);
+          for (const f of subCopied) copied.push(join(entry, f));
+        } else {
+          copyFileSync(srcPath, destPath);
+          copied.push(entry);
+        }
+      }
+      return copied;
+    }
+    function runCompleteMilestone2(cwd, args) {
+      const versionRaw = parseFlag(args, "version");
+      if (!versionRaw) {
+        return { error: "Missing required flag: --version (e.g., --version v1.0)" };
+      }
+      const version = normalizeVersion(versionRaw);
+      const planningDir = join(cwd, ".planning");
+      const milestonesDir = join(planningDir, "milestones");
+      const archiveDir = join(milestonesDir, version);
+      if (!existsSync(planningDir)) {
+        return { error: ".planning/ directory not found. Run /declare:init first." };
+      }
+      if (existsSync(archiveDir)) {
+        return { error: `Archive already exists for ${version} at .planning/milestones/${version}/. Delete it first to re-archive.` };
+      }
+      const futurePath = join(planningDir, "FUTURE.md");
+      const milestonesFilePath = join(planningDir, "MILESTONES.md");
+      if (!existsSync(futurePath)) {
+        return { error: "FUTURE.md not found in .planning/. Cannot archive." };
+      }
+      if (!existsSync(milestonesFilePath)) {
+        return { error: "MILESTONES.md not found in .planning/. Cannot archive." };
+      }
+      mkdirSync(archiveDir, { recursive: true });
+      const archivedFiles = [];
+      const archiveFuture = join(archiveDir, "FUTURE.md");
+      copyFileSync(futurePath, archiveFuture);
+      archivedFiles.push(`milestones/${version}/FUTURE.md`);
+      const archiveMilestones = join(archiveDir, "MILESTONES.md");
+      copyFileSync(milestonesFilePath, archiveMilestones);
+      archivedFiles.push(`milestones/${version}/MILESTONES.md`);
+      const milestonesFolderBase = milestonesDir;
+      if (existsSync(milestonesFolderBase)) {
+        const entries = readdirSync(milestonesFolderBase);
+        for (const entry of entries) {
+          if (/^M-\d+/.test(entry)) {
+            const srcFolder = join(milestonesFolderBase, entry);
+            const stat = statSync(srcFolder);
+            if (stat.isDirectory()) {
+              const destFolder = join(archiveDir, entry);
+              const copied = copyDir(srcFolder, destFolder);
+              for (const f of copied) {
+                archivedFiles.push(`milestones/${version}/${entry}/${f}`);
+              }
+            }
+          }
+        }
+      }
+      return {
+        version,
+        archivedFiles,
+        gitTagReady: true
+      };
+    }
+    module2.exports = { runCompleteMilestone: runCompleteMilestone2 };
+  }
+});
+
 // src/declare-tools.js
 var { commitPlanningDocs } = require_commit();
 var { readState, recordSession } = require_state();
@@ -2867,6 +2952,7 @@ var { runCheckDrift } = require_check_drift();
 var { runCheckOccurrence } = require_check_occurrence();
 var { runComputePerformance } = require_compute_performance();
 var { runRenegotiate } = require_renegotiate();
+var { runCompleteMilestone } = require_complete_milestone();
 function parseCwdFlag(argv) {
   const idx = argv.indexOf("--cwd");
   if (idx === -1 || idx + 1 >= argv.length) return null;
@@ -2909,7 +2995,7 @@ function main() {
   const args = process.argv.slice(2);
   const command = args[0];
   if (!command) {
-    console.log(JSON.stringify({ error: "No command specified. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, record-session, get-state, help" }));
+    console.log(JSON.stringify({ error: "No command specified. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, record-session, get-state, help" }));
     process.exit(1);
   }
   try {
@@ -3072,6 +3158,13 @@ function main() {
         if (result.error) process.exit(1);
         break;
       }
+      case "complete-milestone": {
+        const cwdCompMs = parseCwdFlag(args) || process.cwd();
+        const result = runCompleteMilestone(cwdCompMs, args.slice(1));
+        console.log(JSON.stringify(result));
+        if (result.error) process.exit(1);
+        break;
+      }
       case "record-session": {
         const cwdRecordSession = parseCwdFlag(args) || process.cwd();
         const stoppedAt = parseNamedFlag(args, "--stopped-at");
@@ -3096,7 +3189,7 @@ function main() {
         break;
       }
       default:
-        console.log(JSON.stringify({ error: `Unknown command: ${command}. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, record-session, get-state, help` }));
+        console.log(JSON.stringify({ error: `Unknown command: ${command}. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, record-session, get-state, help` }));
         process.exit(1);
     }
   } catch (err) {

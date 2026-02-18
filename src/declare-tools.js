@@ -44,6 +44,7 @@ const { runCheckDrift } = require('./commands/check-drift');
 const { runCheckOccurrence } = require('./commands/check-occurrence');
 const { runComputePerformance } = require('./commands/compute-performance');
 const { runRenegotiate } = require('./commands/renegotiate');
+const { runCompleteMilestone } = require('./commands/complete-milestone');
 
 /**
  * Parse --cwd flag from argv.
@@ -119,7 +120,7 @@ function main() {
   const command = args[0];
 
   if (!command) {
-    console.log(JSON.stringify({ error: 'No command specified. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, record-session, get-state, help' }));
+    console.log(JSON.stringify({ error: 'No command specified. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, record-session, get-state, help' }));
     process.exit(1);
   }
 
@@ -305,6 +306,14 @@ function main() {
         break;
       }
 
+      case 'complete-milestone': {
+        const cwdCompMs = parseCwdFlag(args) || process.cwd();
+        const result = runCompleteMilestone(cwdCompMs, args.slice(1));
+        console.log(JSON.stringify(result));
+        if (result.error) process.exit(1);
+        break;
+      }
+
       case 'record-session': {
         const cwdRecordSession = parseCwdFlag(args) || process.cwd();
         const stoppedAt = parseNamedFlag(args, '--stopped-at');
@@ -331,7 +340,7 @@ function main() {
       }
 
       default:
-        console.log(JSON.stringify({ error: `Unknown command: ${command}. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, record-session, get-state, help` }));
+        console.log(JSON.stringify({ error: `Unknown command: ${command}. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, record-session, get-state, help` }));
         process.exit(1);
     }
   } catch (err) {
