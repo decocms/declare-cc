@@ -6,6 +6,7 @@
 
 Forked from [GSD (Get Shit Done)](https://github.com/gsd-build/get-shit-done) — replaces linear phase-based planning with a three-layer DAG rooted in declared futures.
 
+[![npm](https://img.shields.io/npm/v/declare-cc?style=for-the-badge&color=7c3aed)](https://www.npmjs.com/package/declare-cc)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=for-the-badge)](LICENSE)
 
 ```bash
@@ -65,32 +66,26 @@ Works backward from declarations: "What must be true for D-01 to hold?" Each mil
 
 **Creates:** `MILESTONES.md` with milestones (M-01, M-02, ...)
 
-### 4. Derive Actions
+### 4. Plan & Execute
 
 ```
-/declare:actions [M-XX]
+/declare:plan M-01        # Research → plan → verify loop (planner + checker agents)
+/declare:execute M-01     # Wave-based execution with parallel agents
 ```
 
-For each milestone: "What must be done for M-01 to be true?" Derives concrete actions with dependencies, grouped into execution plans.
+The planner agent derives concrete actions, the checker agent validates them, and the executor runs them in topological waves. Each action gets its own atomic commit.
 
-**Creates:** `.planning/milestones/M-XX-*/PLAN.md` with actions (A-01, A-02, ...)
+**Creates:** `.planning/milestones/M-XX-*/PLAN.md` and `EXEC-PLAN-*.md` files
 
-### 5. Execute
+### 5. Verify & Sync
 
 ```
-/declare:execute [M-XX]
+/declare:verify M-01      # Conversational UAT — validates deliverables
+/declare:audit M-01       # Cross-reference actions against declarations
+node dist/declare-tools.cjs sync-status   # Propagate DONE bottom-up through the graph
 ```
 
-The system:
-
-1. **Computes waves** — Groups actions by topological order using the DAG
-2. **Spawns parallel agents** — Independent actions in the same wave run simultaneously
-3. **Verifies per wave** — Each wave is verified before the next begins
-4. **Completes milestones** — When all actions pass, milestone is marked DONE with verification artifacts
-
-Each agent gets a fresh context window. Your main session stays light.
-
-**Creates:** `VERIFICATION.md` per milestone
+`sync-status` walks the DAG bottom-up: marks actions DONE (by file existence or milestone status), then milestones (all actions DONE), then declarations (all milestones DONE). Run it after any verification pass.
 
 ### 6. Navigate
 
@@ -101,6 +96,7 @@ Understand your graph at any point:
 /declare:visualize        # ASCII tree of the full DAG with status markers
 /declare:prioritize M-01  # Rank actions by unblocking power (dependency weight)
 /declare:status           # Layer counts, health indicators, integrity/alignment metrics
+/declare:dashboard        # Live interactive DAG in the browser
 ```
 
 ---
@@ -120,6 +116,22 @@ Actions (A-XX)          "What must be done" (derived backward)
 Each layer connects to the one above through causal edges. Every action traces back to a declaration. Orphan nodes (actions without a milestone, milestones without a declaration) are detected and flagged.
 
 The graph engine (`DeclareDag`) uses dual adjacency lists for O(1) bidirectional lookups — trace upward (why-chains) or traverse downward (what depends on this) with equal efficiency.
+
+---
+
+## Live DAG Dashboard
+
+```
+/declare:dashboard
+```
+
+Starts a local server and opens an interactive browser view of your full graph. Nodes are rendered in three layers (Declarations → Milestones → Actions) with live status colors.
+
+**Focus mode:** Click any node to filter the graph to its causal chain. The surrounding nodes slide out, the relevant subtree centers itself with smooth FLIP animations. Click again or press Esc to exit.
+
+**Sidebar:** Click any node to see its full causal chain — declaration → milestone → action — with context and status. Chain nodes are clickable.
+
+**Status colors:** DONE nodes retain their type hue (dimmed blue for declarations, dimmed purple for milestones, dimmed green for actions) so the graph stays readable as a living document rather than collapsing to grey.
 
 ---
 
@@ -144,12 +156,14 @@ The **honor protocol** for a commitment you can't keep: acknowledge the break, i
 
 - **Drift detection** — Are current actions still aligned with declared futures?
 - **Occurrence checks** — AI verifies declarations still hold at milestone completion
-- **Performance scoring** — Alignment x Integrity as qualitative HIGH/MEDIUM/LOW (never numeric scores)
+- **Performance scoring** — Alignment × Integrity as qualitative HIGH/MEDIUM/LOW (never numeric scores)
 - **Renegotiation flow** — When a declaration no longer fits, renegotiate it into `FUTURE-ARCHIVE.md`
 
 ---
 
 ## Commands
+
+### Core Workflow
 
 | Command | What it does |
 |---------|--------------|
@@ -157,11 +171,68 @@ The **honor protocol** for a commitment you can't keep: acknowledge the break, i
 | `/declare:future` | Guided conversation to capture declared futures |
 | `/declare:milestones` | Derive milestones backward from declarations |
 | `/declare:actions [M-XX]` | Derive actions for a milestone |
-| `/declare:execute [M-XX]` | Wave-based execution with parallel agents and verification |
-| `/declare:trace <node>` | Walk the why-chain from any node up to its source declaration |
+| `/declare:plan [M-XX]` | Research → plan → verify loop (planner + checker agents) |
+| `/declare:execute [M-XX]` | Wave-based execution with parallel agents |
+
+### Planning Support
+
+| Command | What it does |
+|---------|--------------|
+| `/declare:discuss [M-XX]` | Gather milestone context through adaptive questioning |
+| `/declare:research [M-XX]` | Spawn 4 parallel researchers, synthesize into RESEARCH.md |
+| `/declare:map-codebase` | Parallel codebase analysis → `.planning/codebase/` docs |
+
+### Quality Loop
+
+| Command | What it does |
+|---------|--------------|
+| `/declare:verify [M-XX]` | Conversational UAT — validates deliverables, spawns debuggers on failure |
+| `/declare:audit [M-XX]` | Cross-reference actions against declarations, identify gaps |
+| `/declare:debug` | Systematic debugging with scientific method and checkpoint persistence |
+
+### Navigation
+
+| Command | What it does |
+|---------|--------------|
+| `/declare:trace <node>` | Walk the why-chain from any node up to its declaration |
 | `/declare:visualize` | ASCII tree of the full DAG with status markers |
 | `/declare:prioritize [M-XX]` | Rank actions by dependency weight (unblocking power) |
 | `/declare:status` | Graph health, layer counts, integrity and alignment metrics |
+| `/declare:dashboard` | Live interactive DAG in the browser |
+
+### Productivity
+
+| Command | What it does |
+|---------|--------------|
+| `/declare:quick` | Ad-hoc task with atomic commit, outside milestone structure |
+| `/declare:add-todo` | Capture an idea or task for later |
+| `/declare:check-todos` | List pending todos, route to milestone or quick task |
+
+### Session Management
+
+| Command | What it does |
+|---------|--------------|
+| `/declare:progress` | Current position, recent work summary, route to next action |
+| `/declare:pause` | Snapshot work state to `.continue-here.md` for safe handoff |
+| `/declare:resume` | Restore full context from previous session |
+
+### Lifecycle
+
+| Command | What it does |
+|---------|--------------|
+| `/declare:new-project` | Deep context gathering, PROJECT.md + STATE.md creation |
+| `/declare:new-milestone` | Archive declarations, reset for next milestone cycle |
+| `/declare:complete-milestone` | Snapshot graph, tag release, prepare next cycle |
+
+### Maintenance
+
+| Command | What it does |
+|---------|--------------|
+| `/declare:health` | Diagnose `.planning/` directory health, repair issues |
+| `/declare:settings` | Configure workflow toggles interactively |
+| `/declare:set-profile` | Switch model profile (quality / balanced / budget) |
+| `/declare:update` | Update to latest npm version with local-patch preservation |
+| `/declare:reapply-patches` | Reapply local modifications after an update |
 | `/declare:help` | Show all commands |
 
 ---
@@ -171,18 +242,36 @@ The **honor protocol** for a commitment you can't keep: acknowledge the break, i
 ```
 FUTURE.md                              # Declared futures (D-01, D-02, ...)
 MILESTONES.md                          # Derived milestones (M-01, M-02, ...)
-FORK-BOUNDARY.md                       # What diverges from GSD and why
 
 .planning/
+├── PROJECT.md                         # Project context and goals
+├── STATE.md                           # Current work state
 ├── config.json                        # Project settings
 ├── milestones/
 │   └── M-XX-slug/
 │       ├── PLAN.md                    # Actions for this milestone
+│       ├── EXEC-PLAN-*.md             # Per-action execution plans
 │       └── VERIFICATION.md            # Integrity proof after execution
-└── research/                          # Domain research artifacts
+└── codebase/                          # Codebase analysis artifacts
+
+agents/                                # Declare-specific agent definitions
+├── declare-planner.md
+├── declare-plan-checker.md
+├── declare-researcher.md
+├── declare-research-synthesizer.md
+├── declare-codebase-mapper.md
+└── declare-debugger.md
+
+workflows/
+├── discuss.md                         # Context capture workflow
+└── verify.md                         # UAT workflow
 
 dist/declare-tools.cjs                 # Bundled CLI (zero runtime deps)
-.claude/commands/declare/*.md          # Slash command definitions
+src/                                   # Source (Node.js, CJS)
+├── graph/engine.js                    # DeclareDag — dual adjacency lists, Kahn's sort
+├── artifacts/                         # Markdown parsers/writers
+├── commands/                          # CLI command implementations
+└── server/                            # DAG web server + dashboard frontend
 ```
 
 ---
@@ -211,9 +300,9 @@ Requires Node.js 18+.
 /declare:init                  # Scaffold the project
 /declare:future                # Declare 3-5 futures
 /declare:milestones            # Derive milestones backward
-/declare:actions M-01          # Derive actions for first milestone
+/declare:plan M-01             # Research + plan first milestone
 /declare:execute M-01          # Execute with wave scheduling
-/declare:status                # Check integrity and alignment
+/declare:dashboard             # View the live DAG
 ```
 
 ### Recommended: Skip Permissions Mode
@@ -266,7 +355,19 @@ WAVE 1 (parallel)        WAVE 2 (parallel)        WAVE 3
                         A-05 needs A-03 + A-04              │
 ```
 
-Each agent gets a fresh 200k-token context window. Your main session stays at ~30-40% capacity.
+Each agent gets a fresh context window. Your main session stays light.
+
+### Status Propagation
+
+The DAG maintains status consistency bottom-up. Run `sync-status` after any verification pass:
+
+```
+Actions → check produced files exist → mark DONE
+    ↓
+Milestones → all actions DONE → mark DONE
+    ↓
+Declarations → all milestones DONE → mark DONE
+```
 
 ### Atomic Git Commits
 
@@ -308,8 +409,6 @@ Declare is forked from [GSD (Get Shit Done)](https://github.com/gsd-build/get-sh
 | `STATE.md` tracking | Graph node statuses | Status lives in the graph, not a separate file |
 | Sequential execution | Topology-aware wave scheduling | Actions execute in causal order, not linear sequence |
 | Phase numbers | Milestone IDs (M-XX) | Milestones derive from declarations, not arbitrary ordering |
-
-See `FORK-BOUNDARY.md` for the full divergence map.
 
 ---
 
