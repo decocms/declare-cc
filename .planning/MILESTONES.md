@@ -16,8 +16,8 @@
 | M-10 | Milestone audit                         | DONE    | D-03     | YES  |
 | M-11 | DAG web server                          | DONE    | D-04     | YES  |
 | M-12 | Interactive DAG visualizer              | DONE    | D-04     | YES  |
-| M-13 | Dashboard served via /declare:dashboard | PENDING | D-04     | YES  |
-| M-14 | Quick tasks and todos                   | PENDING | D-05     | YES  |
-| M-15 | Session management                      | PENDING | D-05     | YES  |
+| M-13 | Dashboard served via /declare:dashboard | DONE    | D-04     | YES  |
+| M-14 | Quick tasks and todos                   | DONE    | D-05     | YES  |
+| M-15 | Session management                      | DONE    | D-05     | YES  |
 | M-16 | Configuration and health                | PENDING | D-05     | YES  |
 | M-17 | Self-update system                      | PENDING | D-05     | YES  |
