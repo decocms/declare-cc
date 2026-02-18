@@ -53,3 +53,9 @@ Full v1.0 decision log archived in PROJECT.md Key Decisions table.
 
 Last session: 2026-02-18
 Stopped at: Completed M-03 (Planner + plan-checker loop — declare-planner, declare-plan-checker, /declare:plan command)
+
+## Session History
+
+| Date | Stopped At | Resume File |
+|------|------------|-------------|
+| 2026-02-18 | Completed M-15 A-29 (CJS layer verified) + A-30 (progress/pause/resume commands) | — |
