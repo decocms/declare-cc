@@ -392,14 +392,8 @@ function selectNode(nodeId, type) {
   const el = document.querySelector(`[data-node-id="${nodeId}"]`);
   if (el) el.classList.add('selected');
 
-  // Enter focus mode for declarations and milestones
-  if (type === 'declaration' || type === 'milestone') {
-    enterFocusMode(nodeId, type);
-  } else {
-    // Actions: exit focus if active, redraw edges
-    if (focusNodeId) exitFocusMode();
-    else drawEdges();
-  }
+  // Enter focus mode for all node types
+  enterFocusMode(nodeId, type);
 
   // Populate panel
   let item = null;
@@ -568,38 +562,48 @@ function escHtml(str) {
 // ─── Focus mode ───────────────────────────────────────────────────────────────
 
 const $focusHint = document.getElementById('focus-hint');
+const FOCUS_DUR = 360; // ms for enter/exit animation
 
 /**
  * Compute the set of node IDs that belong to a focused subtree.
- * @param {string} nodeId  - declaration or milestone ID
- * @param {string} type    - 'declaration' | 'milestone'
+ * - declaration: itself + all its milestones + all their actions
+ * - milestone:   itself + its declarations + its actions
+ * - action:      itself + its parent milestone + that milestone's declaration + all sibling actions
+ * @param {string} nodeId
+ * @param {string} type
  * @returns {Set<string>}
  */
 function getFocusSubtree(nodeId, type) {
   if (!graphData) return new Set();
-  const { declarations, milestones, actions } = graphData;
+  const { milestones, actions } = graphData;
   const visible = new Set();
 
   if (type === 'declaration') {
     visible.add(nodeId);
-    // milestones that realize this declaration
-    const relatedMilestones = milestones.filter(m => (m.realizes || []).includes(nodeId));
-    relatedMilestones.forEach(m => {
+    milestones.filter(m => (m.realizes || []).includes(nodeId)).forEach(m => {
       visible.add(m.id);
-      // actions that cause those milestones
-      actions.forEach(a => {
-        if ((a.causes || []).includes(m.id)) visible.add(a.id);
-      });
+      actions.filter(a => (a.causes || []).includes(m.id)).forEach(a => visible.add(a.id));
     });
   } else if (type === 'milestone') {
     visible.add(nodeId);
     const m = milestones.find(x => x.id === nodeId);
     if (m) {
-      // declarations this milestone realizes
       (m.realizes || []).forEach(dId => visible.add(dId));
-      // actions that cause this milestone
-      actions.forEach(a => {
-        if ((a.causes || []).includes(nodeId)) visible.add(a.id);
+      actions.filter(a => (a.causes || []).includes(nodeId)).forEach(a => visible.add(a.id));
+    }
+  } else if (type === 'action') {
+    visible.add(nodeId);
+    const a = actions.find(x => x.id === nodeId);
+    if (a) {
+      (a.causes || []).forEach(mId => {
+        visible.add(mId);
+        const m = milestones.find(x => x.id === mId);
+        if (m) {
+          // parent declarations
+          (m.realizes || []).forEach(dId => visible.add(dId));
+          // sibling actions (all actions that cause the same milestone)
+          actions.filter(sa => (sa.causes || []).includes(mId)).forEach(sa => visible.add(sa.id));
+        }
       });
     }
   }
@@ -607,20 +611,109 @@ function getFocusSubtree(nodeId, type) {
   return visible;
 }
 
-const FOCUS_EXIT_MS = 320;
-const FOCUS_ENTER_MS = 340;
+/**
+ * Apply inline styles for the exit animation (flex-basis + margin collapse + slide + fade).
+ * Using flex-basis so the node physically shrinks in the flow while sliding out —
+ * remaining nodes drift to center simultaneously, no blink.
+ */
+function applyExitStyles(el, dirLeft, origWidth, origMargin) {
+  const EASING_OUT = 'cubic-bezier(0.4,0,1,1)';
+  const EASING_WIDTH = 'cubic-bezier(0.4,0,0.6,1)';
+  const dur = FOCUS_DUR + 'ms';
+
+  // Fix current flex-basis and margin so transition has a start value
+  el.style.flexBasis = origWidth + 'px';
+  el.style.marginLeft = origMargin + 'px';
+  el.style.marginRight = origMargin + 'px';
+  el.style.minWidth = '0';
+  el.style.overflow = 'hidden';
+
+  // Force reflow
+  void el.offsetWidth;
+
+  el.style.transition = [
+    `flex-basis ${dur} ${EASING_WIDTH}`,
+    `margin-left ${dur} ${EASING_WIDTH}`,
+    `margin-right ${dur} ${EASING_WIDTH}`,
+    `opacity ${FOCUS_DUR * 0.75}ms ease`,
+    `transform ${dur} ${EASING_OUT}`,
+  ].join(',');
+
+  el.style.flexBasis = '0px';
+  el.style.marginLeft = '0px';
+  el.style.marginRight = '0px';
+  el.style.opacity = '0';
+  el.style.transform = `translateX(${dirLeft ? -160 : 160}%)`;
+  el.classList.add('focus-exiting');
+}
 
 /**
- * Enter focus mode for a declaration or milestone.
- * Phase 1: slide + fade out (320ms). Phase 2: collapse out of flow → re-center.
- * @param {string} nodeId
- * @param {string} type
+ * Apply inline styles for the enter-back animation (expand + slide in + fade).
+ */
+function applyEnterStyles(el, dirLeft, origWidth, origMargin) {
+  const EASING_IN = 'cubic-bezier(0,0,0.2,1)';
+  const EASING_WIDTH = 'cubic-bezier(0.4,0,0.6,1)';
+  const dur = FOCUS_DUR + 'ms';
+
+  // Start collapsed and offscreen (no transition)
+  el.style.transition = 'none';
+  el.style.flexBasis = '0px';
+  el.style.marginLeft = '0px';
+  el.style.marginRight = '0px';
+  el.style.minWidth = '0';
+  el.style.overflow = 'hidden';
+  el.style.opacity = '0';
+  el.style.transform = `translateX(${dirLeft ? -160 : 160}%)`;
+
+  // Force reflow
+  void el.offsetWidth;
+
+  el.style.transition = [
+    `flex-basis ${dur} ${EASING_WIDTH}`,
+    `margin-left ${dur} ${EASING_WIDTH}`,
+    `margin-right ${dur} ${EASING_WIDTH}`,
+    `opacity ${FOCUS_DUR * 0.8}ms ease ${FOCUS_DUR * 0.1}ms`,
+    `transform ${dur} ${EASING_IN}`,
+  ].join(',');
+
+  el.style.flexBasis = origWidth + 'px';
+  el.style.marginLeft = origMargin + 'px';
+  el.style.marginRight = origMargin + 'px';
+  el.style.opacity = '1';
+  el.style.transform = 'translateX(0)';
+}
+
+/** Clear all focus-mode inline styles from a node element. */
+function clearNodeFocusStyles(el) {
+  el.style.transition = '';
+  el.style.flexBasis = '';
+  el.style.marginLeft = '';
+  el.style.marginRight = '';
+  el.style.minWidth = '';
+  el.style.overflow = '';
+  el.style.opacity = '';
+  el.style.transform = '';
+  el.classList.remove('focus-exiting', 'focus-active');
+  el.dataset.focusDir = '';
+}
+
+/** @type {Array<{el: HTMLElement, origWidth: number, origMargin: number, dirLeft: boolean}>} */
+let exitedNodes = [];
+/** @type {ReturnType<typeof setTimeout> | null} */
+let focusCleanupTimer = null;
+
+/**
+ * Enter focus mode — nodes outside the subtree collapse + slide out simultaneously.
  */
 function enterFocusMode(nodeId, type) {
   if (!graphData) return;
 
-  // Clear any in-progress exit
-  if (focusNodeId) clearFocusClasses();
+  // If already in focus, clean up immediately before re-entering
+  if (focusNodeId) {
+    if (focusCleanupTimer) { clearTimeout(focusCleanupTimer); focusCleanupTimer = null; }
+    document.querySelectorAll('.node').forEach(el => clearNodeFocusStyles(el));
+    exitedNodes = [];
+  }
 
   focusNodeId = nodeId;
   const subtree = getFocusSubtree(nodeId, type);
@@ -629,84 +722,59 @@ function enterFocusMode(nodeId, type) {
   if (!focusEl) return;
   const focusCenterX = focusEl.getBoundingClientRect().left + focusEl.getBoundingClientRect().width / 2;
 
-  const exitEls = [];
+  exitedNodes = [];
 
   document.querySelectorAll('.node').forEach(el => {
     const id = el.dataset.nodeId;
     if (!id) return;
-    el.classList.remove('focus-active', 'focus-exiting', 'focus-exit-left', 'focus-exit-right', 'focus-gone', 'focus-returning', 'focus-animating-in');
+    clearNodeFocusStyles(el);
 
     if (subtree.has(id)) {
       el.classList.add('focus-active');
     } else {
-      const cx = el.getBoundingClientRect().left + el.getBoundingClientRect().width / 2;
-      el.classList.add('focus-exiting', cx < focusCenterX ? 'focus-exit-left' : 'focus-exit-right');
-      exitEls.push(el);
+      const rect = el.getBoundingClientRect();
+      const dirLeft = (rect.left + rect.width / 2) < focusCenterX;
+      const origWidth = el.offsetWidth;
+      const origMargin = 8; // matches margin: 0 8px on .node
+      exitedNodes.push({ el, origWidth, origMargin, dirLeft });
+      el.dataset.focusDir = dirLeft ? 'left' : 'right';
+      applyExitStyles(el, dirLeft, origWidth, origMargin);
     }
   });
 
   $focusHint.classList.add('visible');
   requestAnimationFrame(() => drawEdgesForSubtree(subtree));
-
-  // Phase 2: after animation, collapse exited nodes so flex re-centers
-  setTimeout(() => {
-    exitEls.forEach(el => {
-      el.classList.remove('focus-exiting');
-      el.classList.add('focus-gone');
-    });
-    // Redraw edges after re-layout
-    requestAnimationFrame(() => drawEdgesForSubtree(subtree));
-  }, FOCUS_EXIT_MS + 20);
 }
 
 /**
- * Exit focus mode — restore all nodes with return animation.
+ * Exit focus mode — all nodes animate back in, expanding and sliding from their exit direction.
  */
 function exitFocusMode() {
   if (!focusNodeId) return;
-  const subtree = getFocusSubtree(focusNodeId, document.querySelector(`[data-node-id="${focusNodeId}"]`)?.dataset.nodeType || 'declaration');
   focusNodeId = null;
+  if (focusCleanupTimer) { clearTimeout(focusCleanupTimer); focusCleanupTimer = null; }
 
-  const returnEls = [];
-
-  document.querySelectorAll('.node').forEach(el => {
-    const id = el.dataset.nodeId;
-    if (!id) return;
-
-    if (el.classList.contains('focus-gone')) {
-      const isLeft = el.classList.contains('focus-exit-left');
-      // Restore from gone: set offscreen without transition, then animate in
-      el.classList.remove('focus-gone', 'focus-exit-left', 'focus-exit-right', 'focus-exiting');
-      el.classList.add('focus-returning', isLeft ? 'focus-exit-left' : 'focus-exit-right');
-      returnEls.push(el);
-    }
+  // Restore focus-active nodes first
+  document.querySelectorAll('.node.focus-active').forEach(el => {
     el.classList.remove('focus-active');
   });
 
-  // Force reflow so returning state is painted before we add the transition
-  document.body.offsetHeight; // eslint-disable-line no-unused-expressions
-
-  returnEls.forEach(el => {
-    el.classList.remove('focus-returning');
-    el.classList.add('focus-animating-in');
+  // Animate exited nodes back in
+  exitedNodes.forEach(({ el, origWidth, origMargin, dirLeft }) => {
+    applyEnterStyles(el, dirLeft, origWidth, origMargin);
   });
 
   $focusHint.classList.remove('visible');
   requestAnimationFrame(() => drawEdges());
 
-  // Clean up after animation
-  setTimeout(() => {
-    returnEls.forEach(el => {
-      el.classList.remove('focus-animating-in', 'focus-exit-left', 'focus-exit-right');
-    });
+  // Clean up inline styles after animation
+  const nodesToClean = [...exitedNodes];
+  exitedNodes = [];
+  focusCleanupTimer = setTimeout(() => {
+    nodesToClean.forEach(({ el }) => clearNodeFocusStyles(el));
     requestAnimationFrame(() => drawEdges());
-  }, FOCUS_ENTER_MS + 20);
-}
-
-function clearFocusClasses() {
-  document.querySelectorAll('.node').forEach(el => {
-    el.classList.remove('focus-active', 'focus-exiting', 'focus-exit-left', 'focus-exit-right', 'focus-gone', 'focus-returning', 'focus-animating-in');
-  });
+    focusCleanupTimer = null;
+  }, FOCUS_DUR + 60);
 }
 
 /**

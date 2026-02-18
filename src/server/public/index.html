@@ -160,7 +160,7 @@
     .layer {
       display: flex;
       flex-wrap: wrap;
-      gap: 16px;
+      gap: 0;
       justify-content: center;
       position: relative;
       margin-bottom: 0;
@@ -190,6 +190,7 @@
       min-width: 160px;
       max-width: 220px;
       user-select: none;
+      margin: 0 8px 0 8px;
     }
 
     .node:hover {
@@ -469,38 +470,16 @@
     #canvas-wrap::-webkit-scrollbar-track { background: transparent; }
     #canvas-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
-    /* ── Focus mode ── */
-    .node { will-change: transform, opacity; }
+    /* ── Focus mode — flex-basis collapse for simultaneous shrink + slide ── */
 
-    /* Phase 1: slide + fade out */
+    /* Nodes being animated out: flex-basis + margin collapse simultaneously with slide */
     .node.focus-exiting {
-      transition: transform 0.32s cubic-bezier(0.4, 0, 1, 1), opacity 0.26s ease;
-      opacity: 0 !important;
+      overflow: hidden;
       pointer-events: none;
-    }
-    .node.focus-exiting.focus-exit-left  { transform: translateX(-160%) !important; }
-    .node.focus-exiting.focus-exit-right { transform: translateX(160%) !important; }
-
-    /* Phase 2: collapsed out of flex flow after animation */
-    .node.focus-gone {
-      display: none;
+      /* transition and initial flex-basis set via inline styles in JS */
     }
 
-    /* Phase 1 return: start offscreen (no transition yet) */
-    .node.focus-returning {
-      opacity: 0;
-      pointer-events: none;
-    }
-    .node.focus-returning.focus-exit-left  { transform: translateX(-160%); }
-    .node.focus-returning.focus-exit-right { transform: translateX(160%); }
-
-    /* Phase 2 return: animate back in */
-    .node.focus-animating-in {
-      transition: transform 0.34s cubic-bezier(0, 0, 0.2, 1), opacity 0.28s ease;
-      opacity: 1 !important;
-      transform: translateX(0) !important;
-    }
-
+    /* Nodes in focus: stay put, get a glow */
     .node.focus-active {
       box-shadow: 0 0 0 2px currentColor, 0 8px 32px rgba(0,0,0,0.6) !important;
     }
