@@ -1329,7 +1329,7 @@ var require_help = __commonJS({
             usage: "/declare:help"
           }
         ],
-        version: "0.4.6"
+        version: "0.4.7"
       };
     }
     module2.exports = { runHelp: runHelp2 };

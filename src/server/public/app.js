@@ -146,6 +146,7 @@ async function loadData() {
     renderStatusBar();
     renderGraph();
     updateLastUpdated();
+    checkProjectComplete(graph);
 
     // Re-apply selection highlight if node still exists
     if (selectedNodeId) {
@@ -1213,6 +1214,90 @@ window.addEventListener('resize', () => {
 document.getElementById('canvas-wrap').addEventListener('scroll', () => {
   if (graphData) requestAnimationFrame(() => drawEdges());
 });
+
+// ─── Confetti ────────────────────────────────────────────────────────────────
+// Fires once when all declarations reach a completed state (DONE/KEPT/HONORED).
+// Pure canvas — no external deps.
+
+let confettiFired = false;
+
+const COMPLETED_STATES = new Set(['DONE', 'KEPT', 'HONORED']);
+
+/**
+ * Check if all declarations are complete and fire confetti if so.
+ * @param {{ declarations: any[] } | null} graph
+ */
+function checkProjectComplete(graph) {
+  if (confettiFired) return;
+  if (!graph || !graph.declarations || graph.declarations.length === 0) return;
+  const allDone = graph.declarations.every(d => COMPLETED_STATES.has(d.status));
+  if (!allDone) return;
+  confettiFired = true;
+  fireConfetti();
+}
+
+function fireConfetti() {
+  const canvas = document.createElement('canvas');
+  canvas.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:9999';
+  document.body.appendChild(canvas);
+
+  const ctx = canvas.getContext('2d');
+  canvas.width  = window.innerWidth;
+  canvas.height = window.innerHeight;
+
+  const COLORS = [
+    '#5ba3ff', '#a66bff', '#34d399',   // brand: blue, purple, green
+    '#fbbf24', '#f87171', '#38bdf8',   // yellow, red, sky
+    '#ffffff',                          // white
+  ];
+
+  const count  = 180;
+  const pieces = Array.from({ length: count }, () => ({
+    x:    Math.random() * canvas.width,
+    y:    Math.random() * canvas.height * -0.5 - 10,
+    w:    6 + Math.random() * 8,
+    h:    3 + Math.random() * 5,
+    rot:  Math.random() * Math.PI * 2,
+    rotV: (Math.random() - 0.5) * 0.2,
+    vx:   (Math.random() - 0.5) * 4,
+    vy:   2 + Math.random() * 4,
+    color: COLORS[Math.floor(Math.random() * COLORS.length)],
+    alpha: 1,
+  }));
+
+  let frame;
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    let alive = 0;
+    for (const p of pieces) {
+      p.x   += p.vx;
+      p.y   += p.vy;
+      p.vy  += 0.07;           // gravity
+      p.vx  *= 0.99;           // drag
+      p.rot += p.rotV;
+      // fade out once off-screen bottom
+      if (p.y > canvas.height * 0.85) p.alpha -= 0.025;
+      if (p.alpha <= 0) continue;
+      alive++;
+      ctx.save();
+      ctx.globalAlpha = p.alpha;
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.rot);
+      ctx.fillStyle = p.color;
+      ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+      ctx.restore();
+    }
+    if (alive > 0) {
+      frame = requestAnimationFrame(draw);
+    } else {
+      canvas.remove();
+    }
+  }
+  frame = requestAnimationFrame(draw);
+
+  // Safety cleanup after 8s
+  setTimeout(() => { cancelAnimationFrame(frame); canvas.remove(); }, 8000);
+}
 
 // ─── Activity feed ────────────────────────────────────────────────────────────
 

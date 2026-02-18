@@ -188,25 +188,28 @@ If `--confirm` flag was set, pause after successful verification:
 - "Wave N complete and verified. Proceed to Wave N+1? (yes/no)"
 - Wait for user confirmation before continuing.
 
-**3e. Update action statuses in PLAN.md:**
+**3e. Propagate statuses after each wave:**
 
-After successful wave verification, update each completed action's status in the milestone's PLAN.md file:
+After successful wave verification, run sync-status to update PLAN.md, MILESTONES.md, and FUTURE.md atomically. This keeps the dashboard live as waves complete:
 
-1. Use the `milestoneFolderPath` from Step 2 to locate the PLAN.md file.
-2. Read the PLAN.md file.
-3. For each action in the completed wave, find `**Status:** PENDING` (or `**Status:** ACTIVE`) for that action and change it to `**Status:** DONE`.
-4. Write the updated PLAN.md back.
+```bash
+node dist/declare-tools.cjs sync-status
+```
 
-**Step 4: After all waves complete, check milestone completion.**
+Do not manually edit PLAN.md or MILESTONES.md — sync-status handles all of it correctly.
 
-If `milestoneCompletable` is true from the final verify-wave result:
-1. Read `.planning/MILESTONES.md`.
-2. Find the row for M-XX in the milestones table.
-3. Change its Status from PENDING or ACTIVE to DONE.
-4. Write the updated MILESTONES.md back.
-5. Display: "Milestone M-XX marked as DONE (pending verification)."
+**Step 4: After all waves complete, propagate statuses.**
 
-Proceed to Step 5. Do NOT display a completion banner yet -- that happens in Step 8 after verification.
+Run sync-status to propagate action → milestone → declaration completion automatically:
+
+```bash
+node dist/declare-tools.cjs sync-status
+```
+
+Parse the result. It will show which actions, milestones, and declarations were marked DONE.
+Display: "Status propagated — [summary from sync-status result]."
+
+Proceed to Step 5. Do NOT display a completion banner yet — that happens in Step 8 after verification.
 
 **Step 5: Milestone truth verification.**
 
