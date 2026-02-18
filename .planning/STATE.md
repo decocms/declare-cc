@@ -51,5 +51,5 @@ Full v1.0 decision log archived in PROJECT.md Key Decisions table.
 
 ## Session Continuity
 
-Last session: 2026-02-17
-Stopped at: Completed M-11 (DAG web server — HTTP server with graph API + serve CJS command)
+Last session: 2026-02-18
+Stopped at: Completed M-03 (Planner + plan-checker loop — declare-planner, declare-plan-checker, /declare:plan command)
