@@ -382,7 +382,6 @@ function selectNode(nodeId, type) {
     selectedNodeId = null;
     exitFocusMode();
     if ($panelEmpty) $panelEmpty.style.display = '';
-    drawEdges();
     return;
   }
 
