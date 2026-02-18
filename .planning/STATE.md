@@ -5,15 +5,15 @@
 See: .planning/PROJECT.md (updated 2026-02-17)
 
 **Core value:** Performance is the product of alignment and integrity. Declare makes both structurally enforced and visibly measured.
-**Current focus:** v1.0 shipped — planning next milestone
+**Current focus:** v2.0 — DAG web server + dashboard milestone shipped
 
 ## Current Position
 
-Milestone: v1.0 SHIPPED (2026-02-17)
-Status: Between milestones
-Last activity: 2026-02-17 — v1.0 milestone completed and archived
+Milestone: M-11 COMPLETE (2026-02-17)
+Status: Active — M-12/M-13 (interactive visualizer + dashboard) next
+Last activity: 2026-02-17 — M-11 DAG web server completed
 
-Progress: [██████████] 100% (v1.0)
+Progress: [██████████] 100% (v1.0) | v2.0 in progress — M-11 done
 
 ## Performance Metrics
 
@@ -23,16 +23,23 @@ Progress: [██████████] 100% (v1.0)
 - Total execution time: 0.96 hours
 - Timeline: 3 days (2026-02-15 → 2026-02-17)
 
+**v2.0 M-11 (DAG web server):**
+- Actions completed: 2 (A-22, A-23)
+- Duration: ~8min
+- Files created: 3 (src/server/index.js, src/server/public/, src/commands/serve.js)
+- Files modified: 2 (src/declare-tools.js, dist/declare-tools.cjs)
+
 ## Accumulated Context
 
 ### Decisions
 
-Full decision log archived in PROJECT.md Key Decisions table.
+Full v1.0 decision log archived in PROJECT.md Key Decisions table.
 
-**M-16 decisions:**
-- health-check returns `fixable` flag per issue so --repair can selectively fix without touching unfixable items
-- config-set auto-parses "true"/"false" to boolean and numeric strings to number at point of persistence
-- health-check --repair re-runs health-check after repairs to return accurate final state
+**v2.0 decisions:**
+- M-11: Zero runtime deps for HTTP server — used node:http, node:fs, node:path exclusively
+- M-11: Port 3847 as default — avoids common port conflicts (3000, 8080, etc.)
+- M-11: Path traversal guard on /public/* via path.resolve + startsWith
+- M-11: serve command prints JSON startup info then holds process via event loop
 
 ### Pending Todos
 
@@ -44,5 +51,5 @@ Full decision log archived in PROJECT.md Key Decisions table.
 
 ## Session Continuity
 
-Last session: 2026-02-18
-Stopped at: Completed M-16 (configuration and health — config-get, config-set, health-check CJS subcommands; /declare:settings, /declare:set-profile, /declare:health slash commands)
+Last session: 2026-02-17
+Stopped at: Completed M-11 (DAG web server — HTTP server with graph API + serve CJS command)
