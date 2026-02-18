@@ -39,5 +39,5 @@ Full decision log archived in PROJECT.md Key Decisions table.
 
 ## Session Continuity
 
-Last session: 2026-02-18
-Stopped at: Completed M-06 (complete-milestone CJS + slash command) and M-07 (new-milestone slash command)
+Last session: 2026-02-17
+Stopped at: Completed M-14 (quick-task and todo CJS commands + slash commands). Pending: sync commands/declare/ to .claude/commands/declare/ (permission gate — run: cp commands/declare/quick.md .claude/commands/declare/quick.md && cp commands/declare/add-todo.md .claude/commands/declare/add-todo.md && cp commands/declare/check-todos.md .claude/commands/declare/check-todos.md)
