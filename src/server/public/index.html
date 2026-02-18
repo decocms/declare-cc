@@ -128,13 +128,12 @@
     #main {
       flex: 1;
       overflow: hidden;
-      position: relative;
     }
 
     /* ── Canvas area ── */
     #canvas-wrap {
-      position: absolute;
-      inset: 0;
+      width: 100%;
+      height: 100%;
       overflow: auto;
       background: var(--bg);
     }
@@ -538,7 +537,6 @@
 
 <!-- Main -->
 <div id="main">
-  <!-- Canvas -->
   <div id="canvas-wrap">
     <div id="canvas-container">
       <svg id="edges-svg"></svg>
@@ -556,15 +554,15 @@
       </div>
     </div>
   </div>
+</div>
 
-  <!-- Side panel -->
-  <div id="side-panel" class="hidden">
-    <div id="panel-header">
-      <span id="panel-title">Details</span>
-      <button id="panel-close">&#10005;</button>
-    </div>
-    <div id="panel-body"></div>
+<!-- Side panel — fixed overlay, outside main so it never shifts layout -->
+<div id="side-panel" class="hidden">
+  <div id="panel-header">
+    <span id="panel-title">Details</span>
+    <button id="panel-close">&#10005;</button>
   </div>
+  <div id="panel-body"></div>
 </div>
 
 <!-- Loading/error overlay -->
