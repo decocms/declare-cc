@@ -8,7 +8,7 @@
 | M-02 | Milestone research pipeline             | PENDING | D-01     | YES  |
 | M-03 | Planner + plan-checker loop             | PENDING | D-01     | YES  |
 | M-04 | Codebase mapper                         | PENDING | D-02     | YES  |
-| M-05 | Project initialization flow             | PENDING | D-02     | NO   |
+| M-05 | Project initialization flow             | PENDING | D-02     | YES  |
 | M-06 | Milestone completion and archiving      | PENDING | D-02     | NO   |
 | M-07 | New milestone cycle                     | PENDING | D-02     | NO   |
 | M-08 | Conversational UAT                      | PENDING | D-03     | NO   |
