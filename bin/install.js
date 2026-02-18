@@ -1564,6 +1564,9 @@ function install(isGlobal, runtime = 'claude') {
   const updateCheckCommand = isGlobal
     ? buildHookCommand(targetDir, 'declare-check-update.js')
     : 'node ' + dirName + '/hooks/declare-check-update.js';
+  const activityCommand = isGlobal
+    ? buildHookCommand(targetDir, 'declare-activity.js')
+    : 'node ' + dirName + '/hooks/declare-activity.js';
 
   // Enable experimental agents for Gemini CLI (required for custom sub-agents)
   if (isGemini) {
@@ -1599,6 +1602,21 @@ function install(isGlobal, runtime = 'claude') {
         ]
       });
       console.log(`  ${green}✓${reset} Configured update check hook`);
+    }
+
+    // Configure PreToolUse + PostToolUse hooks for activity feed (Claude Code only)
+    if (!isOpencode && !isGemini) {
+      if (!settings.hooks.PreToolUse)  settings.hooks.PreToolUse  = [];
+      if (!settings.hooks.PostToolUse) settings.hooks.PostToolUse = [];
+
+      const hasActivityPre = settings.hooks.PreToolUse.some(e =>
+        e.hooks && e.hooks.some(h => h.command && h.command.includes('declare-activity'))
+      );
+      if (!hasActivityPre) {
+        settings.hooks.PreToolUse.push({ hooks: [{ type: 'command', command: activityCommand }] });
+        settings.hooks.PostToolUse.push({ hooks: [{ type: 'command', command: activityCommand }] });
+        console.log(`  ${green}✓${reset} Configured activity feed hooks`);
+      }
     }
   }
 

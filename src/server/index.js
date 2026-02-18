@@ -187,6 +187,28 @@ function handleMilestone(res, cwd, milestoneId) {
   }
 }
 
+/**
+ * Handle GET /api/activity — return last N events from activity.jsonl.
+ * @param {http.ServerResponse} res
+ * @param {string} cwd
+ */
+function handleActivity(res, cwd) {
+  const activityFile = path.join(cwd, '.planning', 'activity.jsonl');
+  if (!fs.existsSync(activityFile)) {
+    sendJson(res, 200, { events: [] });
+    return;
+  }
+  try {
+    const lines = fs.readFileSync(activityFile, 'utf-8')
+      .split('\n').filter(Boolean).slice(-100);
+    const events = lines.map(l => { try { return JSON.parse(l); } catch { return null; } })
+      .filter(Boolean).reverse(); // newest first
+    sendJson(res, 200, { events });
+  } catch (err) {
+    sendJson(res, 500, { error: String(err) });
+  }
+}
+
 /** @type {Set<http.ServerResponse>} Active SSE clients */
 const sseClients = new Set();
 
@@ -213,14 +235,29 @@ function watchPlanning(cwd) {
   const planningDir = path.join(cwd, '.planning');
   if (!fs.existsSync(planningDir)) return;
 
-  let debounceTimer = null;
+  let graphTimer = null;
+  let activityTimer = null;
+  const activityFile = path.join(planningDir, 'activity.jsonl');
+
   try {
-    fs.watch(planningDir, { recursive: true }, () => {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
-        broadcastChange();
-        debounceTimer = null;
-      }, 200);
+    fs.watch(planningDir, { recursive: true }, (_evt, filename) => {
+      if (filename && filename.endsWith('activity.jsonl')) {
+        // Activity changed — push 'activity' event (fast, no graph reload needed)
+        if (activityTimer) clearTimeout(activityTimer);
+        activityTimer = setTimeout(() => {
+          for (const client of sseClients) {
+            try { client.write('event: activity\ndata: {}\n\n'); } catch { sseClients.delete(client); }
+          }
+          activityTimer = null;
+        }, 50);
+      } else {
+        // Graph file changed — push 'change' event (triggers graph reload)
+        if (graphTimer) clearTimeout(graphTimer);
+        graphTimer = setTimeout(() => {
+          broadcastChange();
+          graphTimer = null;
+        }, 200);
+      }
     });
   } catch (_) {
     // fs.watch may not support recursive on all platforms — fail silently
@@ -285,6 +322,11 @@ function route(req, res, cwd) {
   const milestoneMatch = urlPath.match(/^\/api\/milestone\/([^/]+)$/);
   if (milestoneMatch) {
     handleMilestone(res, cwd, milestoneMatch[1]);
+    return;
+  }
+
+  if (urlPath === '/api/activity') {
+    handleActivity(res, cwd);
     return;
   }
 

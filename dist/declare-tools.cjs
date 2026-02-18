@@ -1329,7 +1329,7 @@ var require_help = __commonJS({
             usage: "/declare:help"
           }
         ],
-        version: "0.4.5"
+        version: "0.4.6"
       };
     }
     module2.exports = { runHelp: runHelp2 };
@@ -3924,6 +3924,26 @@ var require_server = __commonJS({
         sendJson(res, 500, { error: String(err) });
       }
     }
+    function handleActivity(res, cwd) {
+      const activityFile = path.join(cwd, ".planning", "activity.jsonl");
+      if (!fs.existsSync(activityFile)) {
+        sendJson(res, 200, { events: [] });
+        return;
+      }
+      try {
+        const lines = fs.readFileSync(activityFile, "utf-8").split("\n").filter(Boolean).slice(-100);
+        const events = lines.map((l) => {
+          try {
+            return JSON.parse(l);
+          } catch {
+            return null;
+          }
+        }).filter(Boolean).reverse();
+        sendJson(res, 200, { events });
+      } catch (err) {
+        sendJson(res, 500, { error: String(err) });
+      }
+    }
     var sseClients = /* @__PURE__ */ new Set();
     function broadcastChange() {
       for (const client of sseClients) {
@@ -3937,14 +3957,30 @@ var require_server = __commonJS({
     function watchPlanning(cwd) {
       const planningDir = path.join(cwd, ".planning");
       if (!fs.existsSync(planningDir)) return;
-      let debounceTimer = null;
+      let graphTimer = null;
+      let activityTimer = null;
+      const activityFile = path.join(planningDir, "activity.jsonl");
       try {
-        fs.watch(planningDir, { recursive: true }, () => {
-          if (debounceTimer) clearTimeout(debounceTimer);
-          debounceTimer = setTimeout(() => {
-            broadcastChange();
-            debounceTimer = null;
-          }, 200);
+        fs.watch(planningDir, { recursive: true }, (_evt, filename) => {
+          if (filename && filename.endsWith("activity.jsonl")) {
+            if (activityTimer) clearTimeout(activityTimer);
+            activityTimer = setTimeout(() => {
+              for (const client of sseClients) {
+                try {
+                  client.write("event: activity\ndata: {}\n\n");
+                } catch {
+                  sseClients.delete(client);
+                }
+              }
+              activityTimer = null;
+            }, 50);
+          } else {
+            if (graphTimer) clearTimeout(graphTimer);
+            graphTimer = setTimeout(() => {
+              broadcastChange();
+              graphTimer = null;
+            }, 200);
+          }
         });
       } catch (_) {
       }
@@ -3989,6 +4025,10 @@ var require_server = __commonJS({
       const milestoneMatch = urlPath.match(/^\/api\/milestone\/([^/]+)$/);
       if (milestoneMatch) {
         handleMilestone(res, cwd, milestoneMatch[1]);
+        return;
+      }
+      if (urlPath === "/api/activity") {
+        handleActivity(res, cwd);
         return;
       }
       const actionMatch = urlPath.match(/^\/api\/action\/([^/]+)$/);

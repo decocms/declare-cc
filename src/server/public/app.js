@@ -1214,6 +1214,60 @@ document.getElementById('canvas-wrap').addEventListener('scroll', () => {
   if (graphData) requestAnimationFrame(() => drawEdges());
 });
 
+// ─── Activity feed ────────────────────────────────────────────────────────────
+
+const $activityFeed   = document.getElementById('activity-feed');
+const $activityList   = document.getElementById('activity-list');
+const $activityPulse  = document.getElementById('activity-pulse');
+const $activityToggle = document.getElementById('activity-toggle');
+let activityExpanded  = false;
+
+$activityToggle.addEventListener('click', () => {
+  activityExpanded = !activityExpanded;
+  $activityFeed.classList.toggle('expanded', activityExpanded);
+});
+
+/**
+ * Fetch /api/activity and render the event list.
+ */
+async function loadActivity() {
+  try {
+    const res = await fetch('/api/activity');
+    const { events } = await res.json();
+    if (!events || events.length === 0) return;
+
+    $activityFeed.classList.add('has-events');
+
+    const html = events.slice(0, 50).map(ev => {
+      const time = new Date(ev.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+      if (ev.tool === 'Task') {
+        const icon = ev.phase === 'start' ? '⟳' : '✓';
+        const cls  = ev.phase === 'start' ? 'agent-start' : 'agent-done';
+        const label = ev.phase === 'start'
+          ? `Spawning ${ev.agent || 'agent'}: ${ev.desc}`
+          : `Done: ${ev.desc}`;
+        return `<div class="activity-event"><span class="ae-time">${time}</span><span class="ae-icon">${icon}</span><span class="ae-text ${cls}">${escHtml(label)}</span></div>`;
+      }
+      if (ev.tool === 'Bash') {
+        const icon = ev.phase === 'start' ? '▶' : '■';
+        return `<div class="activity-event"><span class="ae-time">${time}</span><span class="ae-icon" style="opacity:0.5">${icon}</span><span class="ae-text bash">${escHtml(ev.cmd || '')}</span></div>`;
+      }
+      if (ev.tool === 'Write') {
+        return `<div class="activity-event"><span class="ae-time">${time}</span><span class="ae-icon" style="opacity:0.5">✎</span><span class="ae-text write">${escHtml(ev.file || '')}</span></div>`;
+      }
+      return '';
+    }).filter(Boolean).join('');
+
+    $activityList.innerHTML = html || $activityList.innerHTML;
+
+    // Flash pulse
+    $activityPulse.classList.add('live');
+    clearTimeout($activityPulse._timer);
+    $activityPulse._timer = setTimeout(() => $activityPulse.classList.remove('live'), 3000);
+  } catch (_) {}
+}
+
 // ─── Live updates via Server-Sent Events ─────────────────────────────────────
 // Server watches .planning/ with fs.watch and pushes a 'change' event.
 // Client re-renders only when idle (not mid-animation).
@@ -1223,6 +1277,9 @@ function connectSSE() {
   es.addEventListener('change', () => {
     if (focusNodeId || focusCleanupTimer) return; // skip during animation
     loadData();
+  });
+  es.addEventListener('activity', () => {
+    loadActivity();
   });
   es.addEventListener('error', () => {
     // Connection dropped — reconnect after 3s
@@ -1237,3 +1294,4 @@ connectSSE();
 
 showLoading();
 loadData();
+loadActivity();

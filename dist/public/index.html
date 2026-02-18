@@ -146,6 +146,7 @@
       overflow: auto;
       background: var(--bg);
       padding-right: var(--panel-width);
+      padding-bottom: 40px; /* room for activity feed */
     }
 
     #canvas-container {
@@ -545,6 +546,85 @@
       z-index: 50;
     }
     #focus-hint.visible { opacity: 1; }
+    /* ── Activity feed ── */
+    #activity-feed {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: var(--panel-width);
+      height: 36px;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      overflow: hidden;
+      z-index: 20;
+      transition: height 0.2s ease;
+    }
+    #activity-feed.expanded { height: 180px; align-items: flex-start; }
+    #activity-feed.has-events { border-top-color: var(--act-border); }
+
+    #activity-toggle {
+      flex-shrink: 0;
+      padding: 0 12px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      color: var(--text-dim);
+      cursor: pointer;
+      user-select: none;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      height: 36px;
+    }
+    #activity-toggle:hover { color: var(--text-bright); }
+    #activity-pulse {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--act-color);
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    #activity-pulse.live { opacity: 1; animation: pulse 1.5s ease-in-out infinite; }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.3; }
+    }
+
+    #activity-list {
+      flex: 1;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding: 0 8px;
+      font-size: 11px;
+      font-family: monospace;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+    #activity-feed:not(.expanded) #activity-list { flex-direction: row; align-items: center; gap: 16px; overflow: hidden; white-space: nowrap; }
+
+    .activity-event {
+      padding: 4px 0;
+      color: var(--text-dim);
+      border-bottom: 1px solid var(--surface2);
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    #activity-feed:not(.expanded) .activity-event { border: none; padding: 0; }
+    .activity-event:last-child { border-bottom: none; }
+
+    .ae-time { opacity: 0.4; font-size: 10px; flex-shrink: 0; }
+    .ae-icon { flex-shrink: 0; }
+    .ae-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ae-text.agent-start { color: var(--act-color); font-weight: 600; }
+    .ae-text.agent-done  { color: var(--mile-color); }
+    .ae-text.bash        { color: var(--text-dim); }
+    .ae-text.write       { color: var(--decl-color); }
+
   </style>
 </head>
 <body>
@@ -592,6 +672,17 @@
       Click any node to see details.<br>
       Click a declaration or milestone<br>to focus its subtree.
     </div>
+  </div>
+</div>
+
+<!-- Activity feed — live agent/tool event stream -->
+<div id="activity-feed">
+  <div id="activity-toggle">
+    <div id="activity-pulse"></div>
+    <span id="activity-label">ACTIVITY</span>
+  </div>
+  <div id="activity-list">
+    <span style="color:var(--text-dim);font-size:10px;opacity:0.4">No activity yet — agents will appear here when running</span>
   </div>
 </div>
 
