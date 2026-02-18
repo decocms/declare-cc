@@ -86,17 +86,15 @@ function killPort(port) {
  * Start the dashboard server for this project in the background.
  */
 function startServer() {
+  // Write port file before spawning so /declare:dashboard always finds it
+  try { fs.writeFileSync(portFile, String(port)); } catch {}
+
   const child = cp.spawn(process.execPath, [bundle, 'serve', '--port', String(port)], {
     cwd,
     detached: true,
     stdio: 'ignore',
   });
   child.unref();
-
-  // Write port file so /declare:dashboard knows where to open
-  setTimeout(() => {
-    try { fs.writeFileSync(portFile, String(port)); } catch {}
-  }, 800);
 }
 
 // Check if something is already running on this port
@@ -111,6 +109,8 @@ checkRunningServer(port, status => {
 
   // Nothing running (or non-Declare process) — kill whatever is there and start fresh
   killPort(port);
-  setTimeout(startServer, 300);
-  process.exit(0);
+  setTimeout(() => {
+    startServer();
+    process.exit(0);
+  }, 300);
 });
