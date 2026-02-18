@@ -203,24 +203,103 @@ function renderStatusBar() {
 
 // ─── Node element builder ─────────────────────────────────────────────────────
 
+const COMPLETED = new Set(['DONE','KEPT','HONORED']);
+const IN_PROGRESS_STORED = new Set(['ACTIVE']);
+
+/**
+ * Compute derived workflow status for a milestone from its action statuses.
+ * This overrides the stored MILESTONES.md status so the dashboard always
+ * reflects reality even if sync-status hasn't been called.
+ *
+ * @param {{ id: string, status: string, hasPlan: boolean }} milestone
+ * @param {Array<{ id: string, status: string, causes: string[] }>} allActions
+ * @returns {{ displayStatus: string, doneCount: number, totalCount: number }}
+ */
+function deriveMilestoneStatus(milestone, allActions) {
+  // Authoritative integrity/terminal states — always trust these
+  if (['KEPT','HONORED','BROKEN','RENEGOTIATED'].includes(milestone.status)) {
+    const myActions = allActions.filter(a => (a.causes||[]).includes(milestone.id));
+    return { displayStatus: milestone.status, doneCount: myActions.filter(a=>COMPLETED.has(a.status)).length, totalCount: myActions.length };
+  }
+
+  const myActions = allActions.filter(a => (a.causes||[]).includes(milestone.id));
+  const doneCount  = myActions.filter(a => COMPLETED.has(a.status)).length;
+  const totalCount = myActions.length;
+
+  let displayStatus;
+  if (totalCount === 0) {
+    displayStatus = milestone.hasPlan ? 'PLANNED' : 'PENDING';
+  } else if (doneCount === totalCount) {
+    displayStatus = 'DONE';
+  } else if (doneCount > 0) {
+    displayStatus = 'EXECUTING';
+  } else {
+    displayStatus = 'PLANNED';
+  }
+
+  return { displayStatus, doneCount, totalCount };
+}
+
+/**
+ * Compute derived workflow status for a declaration from its milestone statuses.
+ * @param {{ id: string, status: string, milestones: string[] }} declaration
+ * @param {Array<{ id: string, displayStatus: string }>} enrichedMilestones
+ * @returns {string}
+ */
+function deriveDeclarationStatus(declaration, enrichedMilestones) {
+  if (['KEPT','HONORED','BROKEN','RENEGOTIATED'].includes(declaration.status)) return declaration.status;
+
+  const myMilestones = enrichedMilestones.filter(m => (declaration.milestones||[]).includes(m.id));
+  if (myMilestones.length === 0) return 'PENDING';
+
+  const doneCount     = myMilestones.filter(m => COMPLETED.has(m.displayStatus)).length;
+  const executingCount = myMilestones.filter(m => m.displayStatus === 'EXECUTING').length;
+  const plannedCount  = myMilestones.filter(m => m.displayStatus === 'PLANNED').length;
+
+  if (doneCount === myMilestones.length) return 'DONE';
+  if (executingCount > 0 || doneCount > 0) return 'EXECUTING';
+  if (plannedCount > 0) return 'PLANNED';
+  return 'PENDING';
+}
+
 /**
  * Build a node DOM element.
- * @param {{ id: string, title?: string, statement?: string, status?: string }} item
+ * @param {object} item
  * @param {'declaration'|'milestone'|'action'} type
+ * @param {{ displayStatus?: string, doneCount?: number, totalCount?: number }} [derived]
  * @returns {HTMLElement}
  */
-function buildNodeEl(item, type) {
+function buildNodeEl(item, type, derived = {}) {
+  const displayStatus = derived.displayStatus || item.status || 'PENDING';
   const el = document.createElement('div');
-  el.className = `node node-${type} status-${statusClass(item.status || 'pending')}`;
-  el.dataset.nodeId = item.id;
+  el.className = `node node-${type} status-${statusClass(displayStatus)}`;
+  el.dataset.nodeId   = item.id;
   el.dataset.nodeType = type;
 
   const title = item.title || item.statement || item.id;
 
+  // Progress bar for milestones with actions
+  let progressHtml = '';
+  if (type === 'milestone' && derived.totalCount > 0) {
+    const pct = Math.round((derived.doneCount / derived.totalCount) * 100);
+    const countLabel = `${derived.doneCount}/${derived.totalCount}`;
+    progressHtml = `
+      <div class="node-progress" title="${countLabel} actions done">
+        <div class="node-progress-fill" style="width:${pct}%"></div>
+      </div>`;
+  }
+
+  // Badge label — show progress count for executing milestones
+  let badgeLabel = displayStatus;
+  if (type === 'milestone' && displayStatus === 'EXECUTING' && derived.totalCount > 0) {
+    badgeLabel = `${derived.doneCount}/${derived.totalCount} DONE`;
+  }
+
   el.innerHTML = `
     <div class="node-id">${item.id}</div>
     <div class="node-title">${truncate(title, 55)}</div>
-    <span class="status-badge">${item.status || 'PENDING'}</span>
+    <span class="status-badge">${badgeLabel}</span>
+    ${progressHtml}
   `;
 
   el.addEventListener('click', () => selectNode(item.id, type));
@@ -234,22 +313,37 @@ function renderGraph() {
 
   const { declarations, milestones, actions } = graphData;
 
+  // ── Compute derived statuses from action data (always reflects reality) ──────
+  // Milestones
+  const enrichedMilestones = (milestones || []).map(m => ({
+    ...m,
+    ...deriveMilestoneStatus(m, actions || []),
+  }));
+
+  // Declarations
+  const enrichedDeclarations = (declarations || []).map(d => ({
+    ...d,
+    displayStatus: deriveDeclarationStatus(d, enrichedMilestones),
+  }));
+
   // Clear containers
   $nodesDecls.innerHTML = '';
   $nodesMiles.innerHTML = '';
   $nodesActs.innerHTML  = '';
 
-  // Render declarations
-  (declarations || []).forEach(d => {
-    $nodesDecls.appendChild(buildNodeEl(d, 'declaration'));
+  // Render
+  enrichedDeclarations.forEach(d => {
+    $nodesDecls.appendChild(buildNodeEl(d, 'declaration', { displayStatus: d.displayStatus }));
   });
 
-  // Render milestones
-  (milestones || []).forEach(m => {
-    $nodesMiles.appendChild(buildNodeEl(m, 'milestone'));
+  enrichedMilestones.forEach(m => {
+    $nodesMiles.appendChild(buildNodeEl(m, 'milestone', {
+      displayStatus: m.displayStatus,
+      doneCount:     m.doneCount,
+      totalCount:    m.totalCount,
+    }));
   });
 
-  // Render actions
   (actions || []).forEach(a => {
     $nodesActs.appendChild(buildNodeEl(a, 'action'));
   });
@@ -1230,7 +1324,13 @@ const COMPLETED_STATES = new Set(['DONE', 'KEPT', 'HONORED']);
 function checkProjectComplete(graph) {
   if (confettiFired) return;
   if (!graph || !graph.declarations || graph.declarations.length === 0) return;
-  const allDone = graph.declarations.every(d => COMPLETED_STATES.has(d.status));
+  // Use derived statuses (computed from actions) not stored MILESTONES.md status
+  const enriched = (graph.milestones || []).map(m => ({
+    ...m, ...deriveMilestoneStatus(m, graph.actions || []),
+  }));
+  const allDone = graph.declarations.every(d =>
+    COMPLETED_STATES.has(deriveDeclarationStatus(d, enriched))
+  );
   if (!allDone) return;
   confettiFired = true;
   fireConfetti();

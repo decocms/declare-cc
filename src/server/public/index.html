@@ -41,6 +41,15 @@
       --act-done-bg: #08180f;
       --act-done-border: #123428;
 
+      /* workflow progress tones */
+      --planned-color:   #5ba3ff;
+      --planned-bg:      #091828;
+      --planned-border:  #12305a;
+
+      --executing-color: #fbbf24;
+      --executing-bg:    #1a1200;
+      --executing-border:#3d2c00;
+
       --broken-color: #ff4d6d;
       --broken-bg: #2a0a10;
       --broken-border: #5a1520;
@@ -263,6 +272,41 @@
       color: var(--act-done-color);
       opacity: 0.82;
     }
+
+    /* Workflow progress states — computed from action data, not MILESTONES.md */
+    .node.status-planned {
+      background: var(--planned-bg);
+      border-color: var(--planned-border);
+      color: var(--planned-color);
+      opacity: 0.9;
+    }
+    .node.status-executing {
+      background: var(--executing-bg);
+      border-color: var(--executing-border);
+      color: var(--executing-color);
+      box-shadow: 0 0 0 1px var(--executing-border), 0 0 12px rgba(251,191,36,0.15);
+    }
+    .node.status-planned .node-title  { color: var(--planned-color); }
+    .node.status-executing .node-title { color: var(--executing-color); }
+
+    /* Progress bar inside milestone node */
+    .node-progress {
+      margin-top: 7px;
+      height: 3px;
+      background: rgba(255,255,255,0.08);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .node-progress-fill {
+      height: 100%;
+      border-radius: 2px;
+      transition: width 0.4s ease;
+    }
+    .status-executing .node-progress-fill { background: var(--executing-color); }
+    .status-planned   .node-progress-fill { background: var(--planned-color); opacity:0.3; }
+    .status-done      .node-progress-fill,
+    .status-kept      .node-progress-fill,
+    .status-honored   .node-progress-fill { background: var(--act-done-color); }
 
     .node.status-broken {
       background: var(--broken-bg);
