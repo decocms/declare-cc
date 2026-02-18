@@ -879,6 +879,13 @@ function enterFocusMode(nodeId, type) {
     }
   });
 
+  // After the slide-out finishes: set display:none so flex genuinely re-centers.
+  // The nodes are already opacity 0 so this is invisible.
+  setTimeout(() => {
+    exitedNodes.forEach(({ el }) => { el.style.display = 'none'; });
+    requestAnimationFrame(() => drawEdgesForSubtree(subtree));
+  }, FOCUS_DUR + 30);
+
   $focusHint.classList.add('visible');
   requestAnimationFrame(() => drawEdgesForSubtree(subtree));
 }
@@ -896,7 +903,11 @@ function exitFocusMode() {
     el.classList.remove('focus-active');
   });
 
-  // Animate exited nodes back in
+  // Restore display first (node is still invisible — opacity 0, flex-basis 0), then animate in
+  exitedNodes.forEach(({ el }) => { el.style.display = ''; });
+  // Force reflow so display:'' takes effect before we start animation
+  document.body.offsetHeight; // eslint-disable-line
+
   exitedNodes.forEach(({ el, origWidth, origHeight, origMargin, dirLeft }) => {
     applyEnterStyles(el, dirLeft, origWidth, origMargin, origHeight);
   });
@@ -908,10 +919,15 @@ function exitFocusMode() {
   const nodesToClean = [...exitedNodes];
   exitedNodes = [];
   focusCleanupTimer = setTimeout(() => {
-    nodesToClean.forEach(({ el }) => clearNodeFocusStyles(el));
+    nodesToClean.forEach(({ el }) => {
+      // Disable transitions before removing explicit height/padding to prevent snap
+      el.style.transition = 'none';
+      void el.offsetWidth;
+      clearNodeFocusStyles(el);
+    });
     requestAnimationFrame(() => drawEdges());
     focusCleanupTimer = null;
-  }, FOCUS_DUR + 60);
+  }, FOCUS_DUR + 80);
 }
 
 /**
