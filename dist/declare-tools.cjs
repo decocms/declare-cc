@@ -2928,6 +2928,293 @@ var require_complete_milestone = __commonJS({
   }
 });
 
+// src/commands/quick-task.js
+var require_quick_task = __commonJS({
+  "src/commands/quick-task.js"(exports2, module2) {
+    "use strict";
+    var { existsSync, mkdirSync, writeFileSync, readdirSync } = require("node:fs");
+    var { join } = require("node:path");
+    var { commitPlanningDocs: commitPlanningDocs2, loadConfig } = require_commit();
+    var { parseFlag } = require_parse_args();
+    function slugify(text) {
+      return text.toLowerCase().replace(/[^a-z0-9\s-]/g, "").trim().replace(/\s+/g, "-").replace(/-+/g, "-").slice(0, 40);
+    }
+    function nextQuickNumber(quickDir) {
+      if (!existsSync(quickDir)) return "001";
+      const entries = readdirSync(quickDir, { withFileTypes: true });
+      let max = 0;
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const match = entry.name.match(/^(\d{3})-/);
+        if (match) {
+          const n = parseInt(match[1], 10);
+          if (n > max) max = n;
+        }
+      }
+      return String(max + 1).padStart(3, "0");
+    }
+    function runQuickTask2(cwd, args) {
+      const description = parseFlag(args, "description");
+      const slugOverride = parseFlag(args, "slug");
+      if (!description) {
+        return { error: "Missing required flag: --description" };
+      }
+      const quickDir = join(cwd, ".planning", "quick");
+      if (!existsSync(quickDir)) {
+        mkdirSync(quickDir, { recursive: true });
+      }
+      const num = nextQuickNumber(quickDir);
+      const slug = slugOverride ? slugify(slugOverride) : slugify(description);
+      const folderName = `${num}-${slug}`;
+      const folderPath = join(quickDir, folderName);
+      const planPath = join(folderPath, "QUICK-PLAN.md");
+      const relFolderPath = `.planning/quick/${folderName}`;
+      const relPlanPath = `${relFolderPath}/QUICK-PLAN.md`;
+      mkdirSync(folderPath, { recursive: true });
+      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const content = [
+        `# Quick Task ${num}: ${description}`,
+        "",
+        `**ID:** ${num}`,
+        `**Created:** ${today}`,
+        `**Status:** PENDING`,
+        "",
+        "## Description",
+        "",
+        description,
+        "",
+        "## Tasks",
+        "",
+        "- [ ] <!-- Add tasks here -->",
+        "",
+        "## Notes",
+        "",
+        "<!-- Add notes as you work -->",
+        ""
+      ].join("\n");
+      writeFileSync(planPath, content, "utf-8");
+      const config = loadConfig(cwd);
+      let committed = false;
+      let hash;
+      if (config.commit_docs !== false) {
+        const result = commitPlanningDocs2(
+          cwd,
+          `declare: add quick task ${num} "${description}"`,
+          [relPlanPath]
+        );
+        committed = result.committed;
+        hash = result.hash;
+      }
+      return {
+        id: num,
+        folder: relFolderPath,
+        planPath: relPlanPath,
+        committed,
+        hash
+      };
+    }
+    module2.exports = { runQuickTask: runQuickTask2 };
+  }
+});
+
+// src/commands/todo.js
+var require_todo = __commonJS({
+  "src/commands/todo.js"(exports2, module2) {
+    "use strict";
+    var {
+      existsSync,
+      mkdirSync,
+      writeFileSync,
+      readFileSync,
+      readdirSync,
+      renameSync
+    } = require("node:fs");
+    var { join, basename } = require("node:path");
+    var { commitPlanningDocs: commitPlanningDocs2, loadConfig } = require_commit();
+    var { parseFlag } = require_parse_args();
+    function slugify(text) {
+      return text.toLowerCase().replace(/[^a-z0-9\s-]/g, "").trim().replace(/\s+/g, "-").replace(/-+/g, "-").slice(0, 40);
+    }
+    function nextTodoNumber(todosDir) {
+      if (!existsSync(todosDir)) return "001";
+      const entries = readdirSync(todosDir, { withFileTypes: true });
+      let max = 0;
+      for (const entry of entries) {
+        if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+        const match = entry.name.match(/^(\d{3})-/);
+        if (match) {
+          const n = parseInt(match[1], 10);
+          if (n > max) max = n;
+        }
+      }
+      const completedDir = join(todosDir, "completed");
+      if (existsSync(completedDir)) {
+        const completed = readdirSync(completedDir, { withFileTypes: true });
+        for (const entry of completed) {
+          if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+          const match = entry.name.match(/^(\d{3})-/);
+          if (match) {
+            const n = parseInt(match[1], 10);
+            if (n > max) max = n;
+          }
+        }
+      }
+      return String(max + 1).padStart(3, "0");
+    }
+    function parseTodoFile(content) {
+      const lines = content.split("\n");
+      let description = "";
+      let created = "";
+      if (lines[0] === "---") {
+        let i = 1;
+        while (i < lines.length && lines[i] !== "---") {
+          const createdMatch = lines[i].match(/^created:\s*(.+)$/);
+          if (createdMatch) created = createdMatch[1].trim();
+          i++;
+        }
+      }
+      for (const line of lines) {
+        const h1Match = line.match(/^#\s+(.+)$/);
+        if (h1Match) {
+          description = h1Match[1].trim();
+          break;
+        }
+      }
+      return { description, created };
+    }
+    function runAddTodo2(cwd, args) {
+      const description = parseFlag(args, "description");
+      if (!description) {
+        return { error: "Missing required flag: --description" };
+      }
+      const todosDir = join(cwd, ".planning", "todos");
+      if (!existsSync(todosDir)) {
+        mkdirSync(todosDir, { recursive: true });
+      }
+      const num = nextTodoNumber(todosDir);
+      const slug = slugify(description);
+      const fileName = `${num}-${slug}.md`;
+      const filePath = join(todosDir, fileName);
+      const relPath = `.planning/todos/${fileName}`;
+      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const content = [
+        "---",
+        `created: ${today}`,
+        "status: pending",
+        "---",
+        "",
+        `# ${description}`,
+        "",
+        "## Notes",
+        "",
+        "<!-- Add context and notes here -->",
+        ""
+      ].join("\n");
+      writeFileSync(filePath, content, "utf-8");
+      const config = loadConfig(cwd);
+      let committed = false;
+      let hash;
+      if (config.commit_docs !== false) {
+        const result = commitPlanningDocs2(
+          cwd,
+          `declare: add todo ${num} "${description}"`,
+          [relPath]
+        );
+        committed = result.committed;
+        hash = result.hash;
+      }
+      return {
+        id: num,
+        path: relPath,
+        committed,
+        hash
+      };
+    }
+    function runCheckTodos2(cwd) {
+      const todosDir = join(cwd, ".planning", "todos");
+      if (!existsSync(todosDir)) {
+        return { todos: [] };
+      }
+      const entries = readdirSync(todosDir, { withFileTypes: true });
+      const todos = [];
+      for (const entry of entries) {
+        if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+        const match = entry.name.match(/^(\d{3})-/);
+        if (!match) continue;
+        const id = match[1];
+        const filePath = join(todosDir, entry.name);
+        const relPath = `.planning/todos/${entry.name}`;
+        let content = "";
+        try {
+          content = readFileSync(filePath, "utf-8");
+        } catch {
+          continue;
+        }
+        const { description, created } = parseTodoFile(content);
+        todos.push({
+          id,
+          description: description || entry.name.replace(/^\d{3}-/, "").replace(/\.md$/, "").replace(/-/g, " "),
+          created: created || "",
+          path: relPath
+        });
+      }
+      todos.sort((a, b) => a.id.localeCompare(b.id));
+      return { todos };
+    }
+    function runCompleteTodo2(cwd, args) {
+      const id = parseFlag(args, "id");
+      if (!id) {
+        return { error: "Missing required flag: --id" };
+      }
+      const todosDir = join(cwd, ".planning", "todos");
+      if (!existsSync(todosDir)) {
+        return { error: `No todos directory found at .planning/todos/` };
+      }
+      const entries = readdirSync(todosDir, { withFileTypes: true });
+      let todoFile = null;
+      for (const entry of entries) {
+        if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+        if (entry.name.startsWith(`${id}-`) || entry.name === `${id}.md`) {
+          todoFile = entry.name;
+          break;
+        }
+      }
+      if (!todoFile) {
+        return { error: `Todo with ID ${id} not found in .planning/todos/` };
+      }
+      const completedDir = join(todosDir, "completed");
+      if (!existsSync(completedDir)) {
+        mkdirSync(completedDir, { recursive: true });
+      }
+      const fromPath = join(todosDir, todoFile);
+      const toPath = join(completedDir, todoFile);
+      const relFrom = `.planning/todos/${todoFile}`;
+      const relTo = `.planning/todos/completed/${todoFile}`;
+      renameSync(fromPath, toPath);
+      const config = loadConfig(cwd);
+      let committed = false;
+      let hash;
+      if (config.commit_docs !== false) {
+        const result = commitPlanningDocs2(
+          cwd,
+          `declare: complete todo ${id}`,
+          [relTo]
+        );
+        committed = result.committed;
+        hash = result.hash;
+      }
+      return {
+        id,
+        from: relFrom,
+        to: relTo,
+        committed,
+        hash
+      };
+    }
+    module2.exports = { runAddTodo: runAddTodo2, runCheckTodos: runCheckTodos2, runCompleteTodo: runCompleteTodo2 };
+  }
+});
+
 // src/declare-tools.js
 var { commitPlanningDocs } = require_commit();
 var { readState, recordSession } = require_state();
@@ -2953,6 +3240,8 @@ var { runCheckOccurrence } = require_check_occurrence();
 var { runComputePerformance } = require_compute_performance();
 var { runRenegotiate } = require_renegotiate();
 var { runCompleteMilestone } = require_complete_milestone();
+var { runQuickTask } = require_quick_task();
+var { runAddTodo, runCheckTodos, runCompleteTodo } = require_todo();
 function parseCwdFlag(argv) {
   const idx = argv.indexOf("--cwd");
   if (idx === -1 || idx + 1 >= argv.length) return null;
@@ -2995,7 +3284,7 @@ function main() {
   const args = process.argv.slice(2);
   const command = args[0];
   if (!command) {
-    console.log(JSON.stringify({ error: "No command specified. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, record-session, get-state, help" }));
+    console.log(JSON.stringify({ error: "No command specified. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, record-session, get-state, quick-task, add-todo, check-todos, complete-todo, help" }));
     process.exit(1);
   }
   try {
@@ -3188,8 +3477,36 @@ function main() {
         console.log(JSON.stringify(result));
         break;
       }
+      case "quick-task": {
+        const cwdQuickTask = parseCwdFlag(args) || process.cwd();
+        const result = runQuickTask(cwdQuickTask, args.slice(1));
+        console.log(JSON.stringify(result));
+        if (result.error) process.exit(1);
+        break;
+      }
+      case "add-todo": {
+        const cwdAddTodo = parseCwdFlag(args) || process.cwd();
+        const result = runAddTodo(cwdAddTodo, args.slice(1));
+        console.log(JSON.stringify(result));
+        if (result.error) process.exit(1);
+        break;
+      }
+      case "check-todos": {
+        const cwdCheckTodos = parseCwdFlag(args) || process.cwd();
+        const result = runCheckTodos(cwdCheckTodos);
+        console.log(JSON.stringify(result));
+        if (result.error) process.exit(1);
+        break;
+      }
+      case "complete-todo": {
+        const cwdCompleteTodo = parseCwdFlag(args) || process.cwd();
+        const result = runCompleteTodo(cwdCompleteTodo, args.slice(1));
+        console.log(JSON.stringify(result));
+        if (result.error) process.exit(1);
+        break;
+      }
       default:
-        console.log(JSON.stringify({ error: `Unknown command: ${command}. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, record-session, get-state, help` }));
+        console.log(JSON.stringify({ error: `Unknown command: ${command}. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, record-session, get-state, quick-task, add-todo, check-todos, complete-todo, help` }));
         process.exit(1);
     }
   } catch (err) {

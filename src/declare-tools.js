@@ -18,6 +18,10 @@
  *   add-milestone --title "..." --realizes D-01   - Add milestone to MILESTONES.md
  *   add-action --title "..." --causes M-01        - Add action to MILESTONES.md
  *   load-graph                                    - Load full graph as JSON
+ *   quick-task --description "..." [--slug "..."] - Create quick task folder
+ *   add-todo --description "..."                  - Capture a todo
+ *   check-todos                                   - List pending todos
+ *   complete-todo --id NNN                        - Move todo to completed/
  *   help                                          - Show available commands
  */
 
@@ -45,6 +49,11 @@ const { runCheckOccurrence } = require('./commands/check-occurrence');
 const { runComputePerformance } = require('./commands/compute-performance');
 const { runRenegotiate } = require('./commands/renegotiate');
 const { runCompleteMilestone } = require('./commands/complete-milestone');
+const { runQuickTask } = require('./commands/quick-task');
+const { runAddTodo, runCheckTodos, runCompleteTodo } = require('./commands/todo');
+const { runConfigGet } = require('./commands/config-get');
+const { runConfigSet } = require('./commands/config-set');
+const { runHealthCheck, runHealthCheckRepair } = require('./commands/health-check');
 
 /**
  * Parse --cwd flag from argv.
@@ -120,7 +129,7 @@ function main() {
   const command = args[0];
 
   if (!command) {
-    console.log(JSON.stringify({ error: 'No command specified. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, record-session, get-state, help' }));
+    console.log(JSON.stringify({ error: 'No command specified. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, record-session, get-state, quick-task, add-todo, check-todos, complete-todo, help' }));
     process.exit(1);
   }
 
@@ -339,8 +348,40 @@ function main() {
         break;
       }
 
+      case 'quick-task': {
+        const cwdQuickTask = parseCwdFlag(args) || process.cwd();
+        const result = runQuickTask(cwdQuickTask, args.slice(1));
+        console.log(JSON.stringify(result));
+        if (result.error) process.exit(1);
+        break;
+      }
+
+      case 'add-todo': {
+        const cwdAddTodo = parseCwdFlag(args) || process.cwd();
+        const result = runAddTodo(cwdAddTodo, args.slice(1));
+        console.log(JSON.stringify(result));
+        if (result.error) process.exit(1);
+        break;
+      }
+
+      case 'check-todos': {
+        const cwdCheckTodos = parseCwdFlag(args) || process.cwd();
+        const result = runCheckTodos(cwdCheckTodos);
+        console.log(JSON.stringify(result));
+        if (result.error) process.exit(1);
+        break;
+      }
+
+      case 'complete-todo': {
+        const cwdCompleteTodo = parseCwdFlag(args) || process.cwd();
+        const result = runCompleteTodo(cwdCompleteTodo, args.slice(1));
+        console.log(JSON.stringify(result));
+        if (result.error) process.exit(1);
+        break;
+      }
+
       default:
-        console.log(JSON.stringify({ error: `Unknown command: ${command}. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, record-session, get-state, help` }));
+        console.log(JSON.stringify({ error: `Unknown command: ${command}. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, record-session, get-state, quick-task, add-todo, check-todos, complete-todo, help` }));
         process.exit(1);
     }
   } catch (err) {
