@@ -29,6 +29,11 @@ Progress: [██████████] 100% (v1.0)
 
 Full decision log archived in PROJECT.md Key Decisions table.
 
+**M-16 decisions:**
+- health-check returns `fixable` flag per issue so --repair can selectively fix without touching unfixable items
+- config-set auto-parses "true"/"false" to boolean and numeric strings to number at point of persistence
+- health-check --repair re-runs health-check after repairs to return accurate final state
+
 ### Pending Todos
 
 - [ ] **Monaco file browser plugin** — Localhost-based web editor for quick file viewing/editing from Claude Code
@@ -40,4 +45,4 @@ Full decision log archived in PROJECT.md Key Decisions table.
 ## Session Continuity
 
 Last session: 2026-02-18
-Stopped at: Completed M-02 (milestone research pipeline — declare-researcher agent, declare-research-synthesizer agent, /declare:research command). Pending: sync remaining M-14 commands (cp commands/declare/quick.md .claude/commands/declare/quick.md && cp commands/declare/add-todo.md .claude/commands/declare/add-todo.md && cp commands/declare/check-todos.md .claude/commands/declare/check-todos.md)
+Stopped at: Completed M-16 (configuration and health — config-get, config-set, health-check CJS subcommands; /declare:settings, /declare:set-profile, /declare:health slash commands)
