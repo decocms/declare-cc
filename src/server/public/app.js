@@ -11,7 +11,6 @@
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const POLL_INTERVAL_MS = 5000;
 const API_GRAPH        = '/api/graph';
 const API_STATUS       = '/api/status';
 
@@ -29,8 +28,6 @@ let selectedNodeId = null;
 /** @type {string | null} Focus node ID — the declaration or milestone being focused */
 let focusNodeId = null;
 
-/** @type {number | null} */
-let pollTimer = null;
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
 
@@ -740,7 +737,7 @@ function clearNodeFocusStyles(el) {
 
 /** @type {Array<{el: HTMLElement, rect: DOMRect, dirLeft: boolean}>} */
 let exitedNodes = [];
-/** @type {ReturnType<typeof setTimeout> | null} */
+/** @type {ReturnType<typeof setTimeout> | null} Shared cleanup timer — covers both enter and exit cleanups so each cancels the other */
 let focusCleanupTimer = null;
 
 /**
@@ -768,8 +765,9 @@ function snapshotRects(ids) {
  */
 function enterFocusMode(nodeId, type) {
   if (!graphData) return;
+  // Always cancel any pending cleanup (enter or exit) before starting a new animation
+  if (focusCleanupTimer) { clearTimeout(focusCleanupTimer); focusCleanupTimer = null; }
   if (focusNodeId) {
-    if (focusCleanupTimer) { clearTimeout(focusCleanupTimer); focusCleanupTimer = null; }
     // Restore everything cleanly before re-entering
     exitedNodes.forEach(({ el }) => {
       el.style.cssText = '';
@@ -870,7 +868,9 @@ function enterFocusMode(nodeId, type) {
   });
 
   // After animation: clean up + redraw edges at final positions, then fade back in
-  setTimeout(() => {
+  // Stored in focusCleanupTimer so exitFocusMode can cancel it if user exits early
+  focusCleanupTimer = setTimeout(() => {
+    focusCleanupTimer = null;
     exitedNodes.forEach(({ el }) => {
       el.style.cssText = '';
       el.style.display = 'none';
@@ -1019,8 +1019,7 @@ function drawEdgesForSubtree(subtree) {
 // ─── Event wiring ─────────────────────────────────────────────────────────────
 
 $refreshBtn.addEventListener('click', () => {
-  stopPolling();
-  loadData().then(() => startPolling());
+  loadData();
 });
 
 // ESC to exit focus mode
@@ -1046,7 +1045,7 @@ document.getElementById('canvas-wrap').addEventListener('click', (e) => {
 
 $overlayRetry.addEventListener('click', () => {
   showLoading();
-  loadData().then(() => startPolling());
+  loadData();
 });
 
 // Redraw edges on window resize or scroll (layout may shift)
@@ -1058,23 +1057,7 @@ document.getElementById('canvas-wrap').addEventListener('scroll', () => {
   if (graphData) requestAnimationFrame(() => drawEdges());
 });
 
-// ─── Polling ──────────────────────────────────────────────────────────────────
-
-function startPolling() {
-  stopPolling();
-  pollTimer = window.setInterval(() => {
-    loadData();
-  }, POLL_INTERVAL_MS);
-}
-
-function stopPolling() {
-  if (pollTimer !== null) {
-    clearInterval(pollTimer);
-    pollTimer = null;
-  }
-}
-
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
 
 showLoading();
-loadData().then(() => startPolling());
+loadData();
