@@ -55,7 +55,7 @@ const $edgesSvg      = document.getElementById('edges-svg');
 
 const $sidePanel     = document.getElementById('side-panel');
 const $panelBody     = document.getElementById('panel-body');
-const $panelClose    = document.getElementById('panel-close');
+const $panelEmpty    = document.getElementById('panel-empty');
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
@@ -378,10 +378,10 @@ function selectNode(nodeId, type) {
   document.querySelectorAll('.node.selected').forEach(el => el.classList.remove('selected'));
 
   if (selectedNodeId === nodeId) {
-    // Toggle off — also exit focus mode
+    // Toggle off
     selectedNodeId = null;
     exitFocusMode();
-    $sidePanel.classList.add('hidden');
+    if ($panelEmpty) $panelEmpty.style.display = '';
     drawEdges();
     return;
   }
@@ -396,7 +396,7 @@ function selectNode(nodeId, type) {
   if (type === 'declaration' || type === 'milestone') {
     enterFocusMode(nodeId, type);
   } else {
-    // For actions, exit focus mode if active and redraw normally
+    // Actions: exit focus if active, redraw edges
     if (focusNodeId) exitFocusMode();
     else drawEdges();
   }
@@ -410,8 +410,8 @@ function selectNode(nodeId, type) {
   }
   if (!item) return;
 
+  if ($panelEmpty) $panelEmpty.style.display = 'none';
   renderPanelContent(item, type);
-  $sidePanel.classList.remove('hidden');
 }
 
 /**
@@ -607,65 +607,106 @@ function getFocusSubtree(nodeId, type) {
   return visible;
 }
 
+const FOCUS_EXIT_MS = 320;
+const FOCUS_ENTER_MS = 340;
+
 /**
  * Enter focus mode for a declaration or milestone.
- * Nodes outside the subtree slide out directionally based on their X position
- * relative to the focused node.
+ * Phase 1: slide + fade out (320ms). Phase 2: collapse out of flow → re-center.
  * @param {string} nodeId
  * @param {string} type
  */
 function enterFocusMode(nodeId, type) {
   if (!graphData) return;
 
+  // Clear any in-progress exit
+  if (focusNodeId) clearFocusClasses();
+
   focusNodeId = nodeId;
   const subtree = getFocusSubtree(nodeId, type);
 
   const focusEl = document.querySelector(`[data-node-id="${nodeId}"]`);
   if (!focusEl) return;
-  const focusRect = focusEl.getBoundingClientRect();
-  const focusCenterX = focusRect.left + focusRect.width / 2;
+  const focusCenterX = focusEl.getBoundingClientRect().left + focusEl.getBoundingClientRect().width / 2;
+
+  const exitEls = [];
+
+  document.querySelectorAll('.node').forEach(el => {
+    const id = el.dataset.nodeId;
+    if (!id) return;
+    el.classList.remove('focus-active', 'focus-exiting', 'focus-exit-left', 'focus-exit-right', 'focus-gone', 'focus-returning', 'focus-animating-in');
+
+    if (subtree.has(id)) {
+      el.classList.add('focus-active');
+    } else {
+      const cx = el.getBoundingClientRect().left + el.getBoundingClientRect().width / 2;
+      el.classList.add('focus-exiting', cx < focusCenterX ? 'focus-exit-left' : 'focus-exit-right');
+      exitEls.push(el);
+    }
+  });
+
+  $focusHint.classList.add('visible');
+  requestAnimationFrame(() => drawEdgesForSubtree(subtree));
+
+  // Phase 2: after animation, collapse exited nodes so flex re-centers
+  setTimeout(() => {
+    exitEls.forEach(el => {
+      el.classList.remove('focus-exiting');
+      el.classList.add('focus-gone');
+    });
+    // Redraw edges after re-layout
+    requestAnimationFrame(() => drawEdgesForSubtree(subtree));
+  }, FOCUS_EXIT_MS + 20);
+}
+
+/**
+ * Exit focus mode — restore all nodes with return animation.
+ */
+function exitFocusMode() {
+  if (!focusNodeId) return;
+  const subtree = getFocusSubtree(focusNodeId, document.querySelector(`[data-node-id="${focusNodeId}"]`)?.dataset.nodeType || 'declaration');
+  focusNodeId = null;
+
+  const returnEls = [];
 
   document.querySelectorAll('.node').forEach(el => {
     const id = el.dataset.nodeId;
     if (!id) return;
 
-    // Remove any previous focus classes
-    el.classList.remove('focus-exit', 'focus-exit-left', 'focus-exit-right', 'focus-active', 'focus-dimmed');
-
-    if (subtree.has(id)) {
-      el.classList.add('focus-active');
-    } else {
-      const rect = el.getBoundingClientRect();
-      const centerX = rect.left + rect.width / 2;
-      el.classList.add('focus-exit');
-      el.classList.add(centerX < focusCenterX ? 'focus-exit-left' : 'focus-exit-right');
+    if (el.classList.contains('focus-gone')) {
+      const isLeft = el.classList.contains('focus-exit-left');
+      // Restore from gone: set offscreen without transition, then animate in
+      el.classList.remove('focus-gone', 'focus-exit-left', 'focus-exit-right', 'focus-exiting');
+      el.classList.add('focus-returning', isLeft ? 'focus-exit-left' : 'focus-exit-right');
+      returnEls.push(el);
     }
+    el.classList.remove('focus-active');
   });
 
-  $focusHint.classList.add('visible');
-  // Redraw edges — only show edges within subtree
-  requestAnimationFrame(() => drawEdgesForSubtree(subtree));
-}
+  // Force reflow so returning state is painted before we add the transition
+  document.body.offsetHeight; // eslint-disable-line no-unused-expressions
 
-/**
- * Exit focus mode, reversing all animations.
- */
-function exitFocusMode() {
-  if (!focusNodeId) return;
-  focusNodeId = null;
-
-  document.querySelectorAll('.node').forEach(el => {
-    // Remove directional exit classes first so browser sees the transition
-    el.classList.remove('focus-exit-left', 'focus-exit-right', 'focus-active', 'focus-dimmed');
-
-    // Trigger re-paint then remove the exit class so transition plays in reverse
-    requestAnimationFrame(() => {
-      el.classList.remove('focus-exit');
-    });
+  returnEls.forEach(el => {
+    el.classList.remove('focus-returning');
+    el.classList.add('focus-animating-in');
   });
 
   $focusHint.classList.remove('visible');
   requestAnimationFrame(() => drawEdges());
+
+  // Clean up after animation
+  setTimeout(() => {
+    returnEls.forEach(el => {
+      el.classList.remove('focus-animating-in', 'focus-exit-left', 'focus-exit-right');
+    });
+    requestAnimationFrame(() => drawEdges());
+  }, FOCUS_ENTER_MS + 20);
+}
+
+function clearFocusClasses() {
+  document.querySelectorAll('.node').forEach(el => {
+    el.classList.remove('focus-active', 'focus-exiting', 'focus-exit-left', 'focus-exit-right', 'focus-gone', 'focus-returning', 'focus-animating-in');
+  });
 }
 
 /**
@@ -725,33 +766,24 @@ $refreshBtn.addEventListener('click', () => {
   loadData().then(() => startPolling());
 });
 
-$panelClose.addEventListener('click', () => {
-  document.querySelectorAll('.node.selected').forEach(el => el.classList.remove('selected'));
-  selectedNodeId = null;
-  exitFocusMode();
-  $sidePanel.classList.add('hidden');
-  drawEdges();
-});
-
 // ESC to exit focus mode
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && focusNodeId) {
     document.querySelectorAll('.node.selected').forEach(el => el.classList.remove('selected'));
     selectedNodeId = null;
     exitFocusMode();
-    $sidePanel.classList.add('hidden');
+    if ($panelEmpty) $panelEmpty.style.display = '';
   }
 });
 
-// Click outside nodes to exit focus mode
+// Click on canvas background to exit focus mode
 document.getElementById('canvas-wrap').addEventListener('click', (e) => {
   if (!focusNodeId) return;
-  // Only exit if the click wasn't on a node
   if (!e.target.closest('.node')) {
     document.querySelectorAll('.node.selected').forEach(el => el.classList.remove('selected'));
     selectedNodeId = null;
     exitFocusMode();
-    $sidePanel.classList.add('hidden');
+    if ($panelEmpty) $panelEmpty.style.display = '';
   }
 });
 
