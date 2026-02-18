@@ -1329,7 +1329,7 @@ var require_help = __commonJS({
             usage: "/declare:help"
           }
         ],
-        version: "0.3.9"
+        version: "0.4.0"
       };
     }
     module2.exports = { runHelp: runHelp2 };
@@ -1537,7 +1537,8 @@ var require_add_milestones_batch = __commonJS({
         dag.addNode(m.id, "milestone", m.title, m.status || "PENDING");
       }
       for (let i = 0; i < inputs.length; i++) {
-        const realizes = inputs[i].realizes.split(",").map((s) => s.trim()).filter(Boolean);
+        const realizesRaw = inputs[i].realizes;
+        const realizes = Array.isArray(realizesRaw) ? realizesRaw.map((s) => String(s).trim()).filter(Boolean) : String(realizesRaw).split(",").map((s) => s.trim()).filter(Boolean);
         for (const declId of realizes) {
           if (!dag.getNode(declId)) {
             return { error: `Item ${i}: declaration not found: ${declId}` };

@@ -181,9 +181,13 @@ Repeat until VERIFICATION PASSED or revision count reaches 3.
 
 **Step 9: Commit EXEC-PLANs.**
 
+Pass each file as a separate `--files` argument (not space-separated in one argument):
+
 ```bash
-node dist/declare-tools.cjs commit "docs(${MILESTONE}): create exec-plans for milestone actions" --files [space-separated list of EXEC-PLAN file paths]
+node dist/declare-tools.cjs commit "docs(${MILESTONE}): create exec-plans for milestone actions" --files [path/to/A-01-EXEC-PLAN.md] --files [path/to/A-02-EXEC-PLAN.md]
 ```
+
+If the commit reports `nothing_to_commit`, the planner already committed the files — that is fine, continue.
 
 **Step 10: Present results.**
 
@@ -211,10 +215,35 @@ Display final summary:
 
 ### Next Steps
 
-Execute: `/declare:execute M-XX`
-
-/clear first — fresh context window
 ```
+
+After displaying the summary, reload the graph and check for milestones that still have no EXEC-PLANs (hasPlan is false OR actions array for that milestone has no EXEC-PLAN files):
+
+- If **other milestones still need planning**, list them and suggest planning those next:
+  ```
+  Remaining milestones to plan:
+    /declare:plan M-02  — [title]
+    /declare:plan M-03  — [title]
+
+  Plan all milestones before executing. Run /declare:execute only when all are planned.
+  ```
+
+- If **this was the last milestone to plan**, suggest parallel execution — this is the point of the system:
+  ```
+  All milestones planned. Ready to execute in parallel.
+
+  Milestones with independent declarations can run simultaneously.
+  Open a separate Claude Code window per milestone and run each:
+
+    Window 1: /declare:execute M-01
+    Window 2: /declare:execute M-02
+    Window 3: /declare:execute M-03
+
+  Or execute sequentially if you prefer:
+    /declare:execute M-01  (then M-02, then M-03)
+
+  /clear first in each window — fresh context per execution.
+  ```
 
 If max revisions reached with issues remaining, display blocker list prominently:
 
