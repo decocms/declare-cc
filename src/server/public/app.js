@@ -856,7 +856,8 @@ function enterFocusMode(nodeId, type) {
     el.style.transform = '';
   });
 
-  // Fade edges out immediately — redraw only after animation settles
+  // Clear edges immediately (no transition lag) — redraw only after animation settles
+  $edgesSvg.innerHTML = '';
   $edgesSvg.style.opacity = '0';
 
   // PLAY: slide + fade exiting nodes out from their fixed positions
@@ -919,7 +920,8 @@ function exitFocusMode() {
 
   void document.body.offsetWidth;
 
-  // Fade edges out immediately
+  // Clear edges immediately (no transition lag) — redraw only after animation settles
+  $edgesSvg.innerHTML = '';
   $edgesSvg.style.opacity = '0';
 
   // Slide exiting nodes back to original positions
