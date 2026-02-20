@@ -363,7 +363,7 @@ Output: [Artifacts created]
 </objective>
 
 <execution_context>
-@~/.claude/get-shit-done/agents/gsd-executor.md
+@~/.claude/get-shit-done/agents/declare-executor.md
 @~/.claude/get-shit-done/templates/summary.md
 </execution_context>
 

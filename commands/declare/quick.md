@@ -73,7 +73,7 @@ If `--full` is NOT present, skip this step and proceed directly to Step 4.
 
 **Step 4: Execute the task.**
 
-Spawn a Task agent to execute the work:
+Spawn a Task agent with `subagent_type="general-purpose"` to execute the work:
 
 ```
 Execute the quick task described below. Make atomic commits after each logical unit of work.
