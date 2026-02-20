@@ -1274,13 +1274,23 @@ $refreshBtn.addEventListener('click', () => {
   loadData();
 });
 
-// ESC to exit focus mode
+// ESC to exit focus mode; arrow keys to navigate between declarations
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && focusNodeId) {
     document.querySelectorAll('.node.selected').forEach(el => el.classList.remove('selected'));
     selectedNodeId = null;
     exitFocusMode();
     if ($panelEmpty) $panelEmpty.style.display = '';
+  }
+
+  if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && selectedNodeId && graphData) {
+    const declarations = graphData.declarations;
+    const idx = declarations.findIndex(d => d.id === selectedNodeId);
+    if (idx === -1) return; // selected node is not a declaration
+    const next = e.key === 'ArrowRight'
+      ? (idx + 1) % declarations.length
+      : (idx - 1 + declarations.length) % declarations.length;
+    selectNode(declarations[next].id, 'declaration');
   }
 });
 

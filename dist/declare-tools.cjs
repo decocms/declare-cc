@@ -1329,7 +1329,7 @@ var require_help = __commonJS({
             usage: "/declare:help"
           }
         ],
-        version: "0.5.7"
+        version: "0.5.8"
       };
     }
     module2.exports = { runHelp: runHelp2 };
@@ -3831,6 +3831,7 @@ var require_server = __commonJS({
     "use strict";
     var http = require("node:http");
     var fs = require("node:fs");
+    var net = require("node:net");
     var path = require("node:path");
     var { runLoadGraph: runLoadGraph2 } = require_load_graph();
     var { runStatus: runStatus2 } = require_status();
@@ -4068,11 +4069,28 @@ var require_server = __commonJS({
       });
       return server;
     }
-    function startServer(cwd, port) {
-      const resolvedPort = port || parseInt(process.env.PORT || "", 10) || 3847;
+    function findFreePort(startPort) {
+      return new Promise((resolve) => {
+        const probe = net.createServer();
+        probe.listen(startPort, "127.0.0.1", () => {
+          const { port } = (
+            /** @type {import('net').AddressInfo} */
+            probe.address()
+          );
+          probe.close(() => resolve(port));
+        });
+        probe.on("error", () => resolve(findFreePort(startPort + 1)));
+      });
+    }
+    async function startServer(cwd, port) {
+      const preferredPort = port || parseInt(process.env.PORT || "", 10) || 3847;
+      const resolvedPort = await findFreePort(preferredPort);
       const server = createServer(cwd, resolvedPort);
-      server.listen(resolvedPort, "127.0.0.1", () => {
-        watchPlanning(cwd);
+      await new Promise((resolve) => {
+        server.listen(resolvedPort, "127.0.0.1", () => {
+          watchPlanning(cwd);
+          resolve(void 0);
+        });
       });
       const url = `http://localhost:${resolvedPort}`;
       return { server, port: resolvedPort, url };
@@ -4092,9 +4110,9 @@ var require_serve = __commonJS({
       const value = parseInt(args[idx + 1], 10);
       return Number.isNaN(value) ? void 0 : value;
     }
-    function runServe2(cwd, args) {
+    async function runServe2(cwd, args) {
       const port = parsePortFlag(args) || parseInt(process.env.PORT || "", 10) || 3847;
-      const { server, port: resolvedPort, url } = startServer(cwd, port);
+      const { server, port: resolvedPort, url } = await startServer(cwd, port);
       process.on("SIGINT", () => {
         server.close(() => process.exit(0));
       });
@@ -4368,8 +4386,12 @@ function main() {
       }
       case "serve": {
         const cwdServe = parseCwdFlag(args) || process.cwd();
-        const result = runServe(cwdServe, args.slice(1));
-        console.log(JSON.stringify(result));
+        runServe(cwdServe, args.slice(1)).then((result) => {
+          console.log(JSON.stringify(result));
+        }).catch((err) => {
+          console.log(JSON.stringify({ error: err.message || String(err) }));
+          process.exit(1);
+        });
         break;
       }
       case "record-session": {
