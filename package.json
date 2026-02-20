@@ -43,6 +43,7 @@
   },
   "scripts": {
     "test": "node --test src/graph/engine.test.js",
-    "build": "node esbuild.config.js"
+    "build": "node esbuild.config.js",
+    "release": "node scripts/release.js"
   }
 }
