@@ -1514,6 +1514,18 @@ function install(isGlobal, runtime = 'claude') {
     failures.push('VERSION');
   }
 
+  // Refresh update-check cache so the "update available" UI clears immediately
+  try {
+    const cacheDir = path.join(os.homedir(), '.claude', 'cache');
+    fs.mkdirSync(cacheDir, { recursive: true });
+    fs.writeFileSync(path.join(cacheDir, 'declare-update-check.json'), JSON.stringify({
+      update_available: false,
+      installed: pkg.version,
+      latest: pkg.version,
+      checked: Math.floor(Date.now() / 1000),
+    }));
+  } catch (e) { /* non-fatal */ }
+
   // Write package.json to force CommonJS mode for GSD scripts
   // Prevents "require is not defined" errors when project has "type": "module"
   // Node.js walks up looking for package.json - this stops inheritance from project
