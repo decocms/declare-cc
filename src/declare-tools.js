@@ -348,9 +348,13 @@ function main() {
 
       case 'serve': {
         const cwdServe = parseCwdFlag(args) || process.cwd();
-        const result = runServe(cwdServe, args.slice(1));
-        console.log(JSON.stringify(result));
-        // Keep the process alive — server blocks via event loop
+        runServe(cwdServe, args.slice(1)).then(result => {
+          console.log(JSON.stringify(result));
+          // Keep the process alive — server blocks via event loop
+        }).catch(err => {
+          console.log(JSON.stringify({ error: err.message || String(err) }));
+          process.exit(1);
+        });
         break;
       }
 

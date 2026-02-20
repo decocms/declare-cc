@@ -33,12 +33,12 @@ function parsePortFlag(args) {
  *
  * @param {string} cwd - Working directory (project root)
  * @param {string[]} args - CLI arguments (e.g. ['--port', '3847'])
- * @returns {{ url: string, port: number, pid: number }}
+ * @returns {Promise<{ url: string, port: number, pid: number }>}
  */
-function runServe(cwd, args) {
+async function runServe(cwd, args) {
   const port = parsePortFlag(args) || parseInt(process.env.PORT || '', 10) || 3847;
 
-  const { server, port: resolvedPort, url } = startServer(cwd, port);
+  const { server, port: resolvedPort, url } = await startServer(cwd, port);
 
   // Keep the process alive — the server handles shutdown via SIGINT/SIGTERM
   process.on('SIGINT', () => {

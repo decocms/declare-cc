@@ -24,6 +24,7 @@
 
 const http = require('node:http');
 const fs = require('node:fs');
+const net = require('node:net');
 const path = require('node:path');
 
 const { runLoadGraph } = require('../commands/load-graph');
@@ -382,12 +383,41 @@ function createServer(cwd, port) {
  * @param {number} [port] - Port to listen on (default: 3847 or PORT env var)
  * @returns {{ server: http.Server, port: number, url: string }}
  */
-function startServer(cwd, port) {
-  const resolvedPort = port || parseInt(process.env.PORT || '', 10) || 3847;
+/**
+ * Find the next available TCP port starting from `startPort`.
+ * @param {number} startPort
+ * @returns {Promise<number>}
+ */
+function findFreePort(startPort) {
+  return new Promise((resolve) => {
+    const probe = net.createServer();
+    probe.listen(startPort, '127.0.0.1', () => {
+      const { port } = /** @type {import('net').AddressInfo} */ (probe.address());
+      probe.close(() => resolve(port));
+    });
+    probe.on('error', () => resolve(findFreePort(startPort + 1)));
+  });
+}
+
+/**
+ * Start the Declare local web server.
+ * Automatically finds a free port if the preferred port is in use.
+ *
+ * @param {string} cwd - Project root (working directory)
+ * @param {number} [port] - Preferred port (default: 3847 or PORT env var)
+ * @returns {Promise<{ server: import('http').Server, port: number, url: string }>}
+ */
+async function startServer(cwd, port) {
+  const preferredPort = port || parseInt(process.env.PORT || '', 10) || 3847;
+  const resolvedPort = await findFreePort(preferredPort);
+
   const server = createServer(cwd, resolvedPort);
 
-  server.listen(resolvedPort, '127.0.0.1', () => {
-    watchPlanning(cwd);
+  await new Promise((resolve) => {
+    server.listen(resolvedPort, '127.0.0.1', () => {
+      watchPlanning(cwd);
+      resolve(undefined);
+    });
   });
 
   const url = `http://localhost:${resolvedPort}`;
