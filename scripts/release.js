@@ -38,7 +38,7 @@ console.log(`Bumped ${prev} → ${version}`);
 run('npm run build');
 
 // 3. Commit + tag
-run(`git add package.json dist/`);
+run(`git add package.json package-lock.json dist/`);
 run(`git commit -m "chore: bump version to ${version}"`);
 run(`git tag v${version}`);
 
