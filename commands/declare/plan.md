@@ -60,7 +60,37 @@ If no actions found, display: "No actions found for M-XX. Run `/declare:actions 
 
 If all actions already have EXEC-PLANs and status is not PENDING, display: "All actions for M-XX already have EXEC-PLANs. Use `/declare:execute M-XX` to run them." and exit.
 
-**Step 3: Research check (unless --skip-research).**
+**Step 3: Ensure milestone context exists.**
+
+Check if CONTEXT.md exists at `milestoneFolderPath/CONTEXT.md`.
+
+If CONTEXT.md does **not** exist, use AskUserQuestion:
+- header: "Context"
+- question: "Milestone [M-XX] has no implementation context yet. Discussing decisions now gives the planner the information it needs to create better EXEC-PLANs."
+- options:
+  - "Discuss first (Recommended)" — Run discuss workflow, then proceed to planning
+  - "Plan without context" — Skip; planner will use its own judgment
+
+If "Discuss first":
+
+Display: `Running /declare:discuss [M-XX]...`
+
+Spawn a Task agent:
+- subagent_type: `general-purpose`
+- description: `Discuss M-XX implementation decisions`
+- prompt:
+  ```
+  Run /declare:discuss [M-XX] for the Declare project.
+  Working directory: [absolute cwd]
+  Follow all instructions in commands/declare/discuss.md.
+  After capturing context, return DONE.
+  ```
+
+Wait for the task to complete. Then reload `contextPath` — CONTEXT.md should now exist.
+
+If "Plan without context": continue to Step 4.
+
+**Step 4: Research check (unless --skip-research).**
 
 If `researchPath` exists, display:
 ```
@@ -79,7 +109,7 @@ If `researchPath` does not exist, assess whether research is needed:
 
 - If actions are purely internal (refactoring, adding features to existing patterns, docs) → skip silently.
 
-**Step 4: Load context files.**
+**Step 5: Load context files.**
 
 ```bash
 cat [contextPath] 2>/dev/null          # CONTEXT.md if exists
@@ -91,7 +121,7 @@ cat .planning/STATE.md 2>/dev/null     # Current position and decisions
 
 Also read the milestone's PLAN.md (at `milestoneFolderPath/PLAN.md`) for action details.
 
-**Step 5: Spawn declare-planner.**
+**Step 6: Spawn declare-planner.**
 
 Spawn a Task agent using `agents/declare-planner.md` with the following prompt:
 
@@ -118,7 +148,7 @@ Return: PLANNING COMPLETE with wave structure and EXEC-PLANs created.
 
 Wait for the planner to complete.
 
-**Step 6: Spawn declare-plan-checker.**
+**Step 7: Spawn declare-plan-checker.**
 
 After planner completes, spawn a Task agent using `agents/declare-plan-checker.md` with the following prompt:
 
@@ -141,15 +171,15 @@ Return: VERIFICATION PASSED or ISSUES FOUND with structured issues YAML.
 
 Wait for the checker to complete.
 
-**Step 7: Evaluate checker result.**
+**Step 8: Evaluate checker result.**
 
 Parse the checker's return.
 
-If **VERIFICATION PASSED**: proceed to Step 9.
+If **VERIFICATION PASSED**: proceed to Step 10.
 
-If **ISSUES FOUND**: proceed to Step 8 (revision loop).
+If **ISSUES FOUND**: proceed to Step 9 (revision loop).
 
-**Step 8: Revision loop (max 3 iterations).**
+**Step 9: Revision loop (max 3 iterations).**
 
 Track revision count. If revision count >= 3, skip to Step 9 with a warning.
 
@@ -175,11 +205,11 @@ Make targeted fixes only — do not rewrite working plans.
 Return: REVISION COMPLETE with changes made.
 ```
 
-After revision, re-run checker (Step 6). Increment revision count.
+After revision, re-run checker (Step 7). Increment revision count.
 
 Repeat until VERIFICATION PASSED or revision count reaches 3.
 
-**Step 9: Commit EXEC-PLANs.**
+**Step 10: Commit EXEC-PLANs.**
 
 Pass each file as a separate `--files` argument (not space-separated in one argument):
 
@@ -189,7 +219,7 @@ node dist/declare-tools.cjs commit "docs(${MILESTONE}): create exec-plans for mi
 
 If the commit reports `nothing_to_commit`, the planner already committed the files — that is fine, continue.
 
-**Step 10: Present results.**
+**Step 11: Present results.**
 
 Display final summary:
 

@@ -24,12 +24,24 @@ If no declarations exist in the graph, tell the user to run `/declare:future` fi
 
 Note all declarations and milestones from the graph -- the workflow needs full context.
 
-**Step 2: Determine scope.**
+**Step 2: Scope review (first-time derivation only).**
+
+Skip this step if `$ARGUMENTS` contains a specific declaration ID (e.g., `D-01`) — targeted re-derivation skips scope review.
+
+Otherwise, check if any milestones already exist in the graph. If milestones already exist, this is a re-derivation — skip scope review and proceed to Step 3.
+
+If this is the first time deriving milestones (no milestones in the graph yet), run the scope review workflow before deriving anything:
+
+@workflows/scope.md
+
+Pass all declarations from the loaded graph into the scope workflow. After the scope is confirmed, continue to Step 3.
+
+**Step 3: Determine derivation scope.**
 
 - If `$ARGUMENTS` contains a declaration ID (e.g., `D-01`), derive only for that specific declaration.
 - Otherwise, derive for all declarations that have no milestones yet (declarations with empty milestones arrays in the graph).
 
-**Step 3: Follow the milestone derivation workflow.**
+**Step 4: Follow the milestone derivation workflow.**
 
 Read and follow the full workflow instructions:
 
@@ -37,7 +49,7 @@ Read and follow the full workflow instructions:
 
 Pass the loaded graph state into the workflow so it knows about existing declarations and milestones.
 
-**Step 4: Per-declaration milestone confirmation with checkboxes.**
+**Step 5: Per-declaration milestone confirmation with checkboxes.**
 
 After the workflow proposes milestones for a declaration, present them using AskUserQuestion with multi-select checkboxes:
 
@@ -50,7 +62,7 @@ Which of these milestones should we create for D-XX?
 - [ ] Milestone C -- because [reason]
 ```
 
-**Step 5: Persist all accepted milestones in one batch call.**
+**Step 6: Persist all accepted milestones in one batch call.**
 
 Build a JSON array of the checked milestones, then create them all at once:
 
@@ -60,7 +72,7 @@ node dist/declare-tools.cjs add-milestones --json '[{"title":"Milestone A","real
 
 This creates all milestones and makes a single git commit. Parse the JSON output — it returns `{ milestones: [{ id, title, realizes, status }], committed, hash }`.
 
-**Step 6: Inconsistency flagging.**
+**Step 7: Inconsistency flagging.**
 
 If milestones already exist for a declaration being processed (re-derivation case):
 - Show existing milestones for that declaration
@@ -68,7 +80,7 @@ If milestones already exist for a declaration being processed (re-derivation cas
 - Offer to keep, re-derive, or adjust
 - Do NOT auto-reconcile -- the user decides what to update
 
-**Step 7: Show summary and suggest next step.**
+**Step 8: Show summary and suggest next step.**
 
 After all declarations processed:
 
