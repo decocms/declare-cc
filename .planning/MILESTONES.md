@@ -8,7 +8,7 @@
 | M-19 | Browser-based milestone derivation         | PENDING | D-06     | YES  |
 | M-20 | Browser-based action derivation            | PENDING | D-06     | YES  |
 | M-21 | UI workflow state machine                  | PENDING | D-06     | YES  |
-| M-22 | Milestone classification in planning       | PENDING | D-07     | NO   |
+| M-22 | Milestone classification in planning       | PENDING | D-07     | YES  |
 | M-23 | Milestone dependency graph                 | PENDING | D-07     | NO   |
 | M-24 | Readiness state per milestone              | PENDING | D-07     | NO   |
 | M-25 | Play action for autonomous execution       | PENDING | D-07     | NO   |
