@@ -17,11 +17,11 @@
 | M-28 | Commit and output linking per action         | PENDING | D-08     | YES  |
 | M-29 | Execution log per milestone                  | PENDING | D-08     | YES  |
 | M-30 | Reference field on declare nodes             | PENDING | D-09     | YES  |
-| M-31 | Wholeness state computed per node            | PENDING | D-10     | YES  |
+| M-31 | Wholeness state computed per node            | DONE    | D-10     | YES  |
 | M-32 | Integrity visualization in the dashboard     | PENDING | D-10     | YES  |
 | M-33 | Workability path surface                     | PENDING | D-10     | YES  |
-| M-34 | declare global binary                        | PENDING | D-11     | YES  |
-| M-35 | Default open behavior                        | PENDING | D-11     | YES  |
+| M-34 | declare global binary                        | DONE    | D-11     | YES  |
+| M-35 | Default open behavior                        | KEPT    | D-11     | YES  |
 | M-36 | Declare daemon with mesh registration        | PENDING | D-12     | YES  |
 | M-37 | Mesh declare plugin                          | PENDING | D-12     | YES  |
 | M-38 | Model-aware agent dispatch                   | PENDING | D-07     | YES  |
