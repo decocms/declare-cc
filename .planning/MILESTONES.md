@@ -13,7 +13,7 @@
 | M-24 | Readiness state per milestone              | PENDING | D-07     | YES  |
 | M-25 | Play action for autonomous execution       | PENDING | D-07     | YES  |
 | M-26 | Real-time agent output streaming           | PENDING | D-08     | YES  |
-| M-27 | Inline file viewer with markdown rendering | PENDING | D-08     | NO   |
+| M-27 | Inline file viewer with markdown rendering | PENDING | D-08     | YES  |
 | M-28 | Commit and output linking per action       | PENDING | D-08     | NO   |
 | M-29 | Execution log per milestone                | PENDING | D-08     | NO   |
 | M-30 | Reference field on declare nodes           | PENDING | D-09     | NO   |
