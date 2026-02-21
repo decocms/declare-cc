@@ -30,6 +30,7 @@ const path = require('node:path');
 const { runLoadGraph } = require('../commands/load-graph');
 const { runStatus } = require('../commands/status');
 const { runGetExecPlan } = require('../commands/get-exec-plan');
+const { createProcessManager } = require('./process-manager');
 
 /** @type {Record<string, string>} */
 const MIME_TYPES = {
@@ -75,7 +76,7 @@ function sendJson(res, statusCode, data) {
     'Content-Type': 'application/json; charset=utf-8',
     'Content-Length': Buffer.byteLength(body),
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
   });
   res.end(body);
@@ -210,8 +211,50 @@ function handleActivity(res, cwd) {
   }
 }
 
+/**
+ * Handle POST /api/action/:id/execute
+ * Validates action has an exec-plan, then spawns Claude CLI.
+ *
+ * @param {http.ServerResponse} res
+ * @param {string} cwd
+ * @param {string} actionId
+ */
+function handleExecuteAction(res, cwd, actionId) {
+  try {
+    const result = runGetExecPlan(cwd, ['--action', actionId]);
+    if (result.error || !result.execPlan) {
+      sendJson(res, 400, { error: 'Action not found or no exec-plan' });
+      return;
+    }
+
+    const pm = getProcessManager(cwd);
+    const execResult = pm.execute(actionId, result.milestoneId);
+    if (execResult.error) {
+      sendJson(res, execResult.status || 500, { error: execResult.error });
+      return;
+    }
+
+    sendJson(res, 202, { ok: true, actionId });
+  } catch (err) {
+    sendJson(res, 500, { error: String(err) });
+  }
+}
+
 /** @type {Set<http.ServerResponse>} Active SSE clients */
 const sseClients = new Set();
+
+/** @type {ReturnType<typeof createProcessManager> | null} */
+let processManager = null;
+
+/**
+ * Get or create the process manager singleton.
+ * @param {string} cwd
+ * @returns {ReturnType<typeof createProcessManager>}
+ */
+function getProcessManager(cwd) {
+  if (!processManager) processManager = createProcessManager(sseClients, cwd);
+  return processManager;
+}
 
 /**
  * Notify all connected SSE clients that .planning/ changed.
@@ -283,15 +326,39 @@ function route(req, res, cwd) {
   if (method === 'OPTIONS') {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type',
     });
     res.end();
     return;
   }
 
-  if (method !== 'GET') {
+  if (method !== 'GET' && method !== 'POST') {
     sendJson(res, 405, { error: 'Method Not Allowed' });
+    return;
+  }
+
+  // POST routes — action execution
+  if (method === 'POST') {
+    const executeMatch = urlPath.match(/^\/api\/action\/([^/]+)\/execute$/);
+    if (executeMatch) {
+      handleExecuteAction(res, cwd, executeMatch[1]);
+      return;
+    }
+
+    const stopMatch = urlPath.match(/^\/api\/action\/([^/]+)\/stop$/);
+    if (stopMatch) {
+      const pm = getProcessManager(cwd);
+      const result = pm.stop(stopMatch[1]);
+      if (result.error) {
+        sendJson(res, result.status || 500, { error: result.error });
+      } else {
+        sendJson(res, 200, { ok: true });
+      }
+      return;
+    }
+
+    sendJson(res, 404, { error: `Route not found: ${urlPath}` });
     return;
   }
 
@@ -323,6 +390,12 @@ function route(req, res, cwd) {
   const milestoneMatch = urlPath.match(/^\/api\/milestone\/([^/]+)$/);
   if (milestoneMatch) {
     handleMilestone(res, cwd, milestoneMatch[1]);
+    return;
+  }
+
+  if (urlPath === '/api/running') {
+    const pm = getProcessManager(cwd);
+    sendJson(res, 200, { running: pm.running() });
     return;
   }
 

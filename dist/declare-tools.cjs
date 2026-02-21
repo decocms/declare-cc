@@ -3916,6 +3916,83 @@ var require_health_check = __commonJS({
   }
 });
 
+// src/server/process-manager.js
+var require_process_manager = __commonJS({
+  "src/server/process-manager.js"(exports2, module2) {
+    "use strict";
+    var { spawn } = require("node:child_process");
+    function createProcessManager(sseClients, cwd) {
+      const processes = /* @__PURE__ */ new Map();
+      function broadcast(event, data) {
+        const payload = `event: ${event}
+data: ${JSON.stringify(data)}
+
+`;
+        for (const client of sseClients) {
+          try {
+            client.write(payload);
+          } catch (_) {
+            sseClients.delete(client);
+          }
+        }
+      }
+      function createLineHandler(actionId, streamName) {
+        let buffer = "";
+        return (chunk) => {
+          buffer += chunk.toString();
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+          for (const line of lines) {
+            broadcast("action-output", { actionId, text: line, stream: streamName });
+          }
+        };
+      }
+      function execute(actionId, milestoneId) {
+        if (processes.size > 0) {
+          return { error: "busy", status: 409 };
+        }
+        if (processes.has(actionId)) {
+          return { error: "already_running", status: 409 };
+        }
+        const prompt = `Run /declare:execute ${milestoneId} for action ${actionId} only. Do not ask questions, execute autonomously.`;
+        const proc = spawn("claude", ["-p", prompt, "--no-input"], {
+          cwd,
+          env: { ...process.env, FORCE_COLOR: "0" }
+        });
+        processes.set(actionId, { proc, milestoneId });
+        if (proc.stdout) {
+          proc.stdout.on("data", createLineHandler(actionId, "stdout"));
+        }
+        if (proc.stderr) {
+          proc.stderr.on("data", createLineHandler(actionId, "stderr"));
+        }
+        proc.on("close", (exitCode) => {
+          processes.delete(actionId);
+          broadcast("action-complete", { actionId, exitCode: exitCode ?? -1 });
+        });
+        proc.on("error", (_err) => {
+          processes.delete(actionId);
+          broadcast("action-complete", { actionId, exitCode: -1 });
+        });
+        return { ok: true };
+      }
+      function stop(actionId) {
+        const entry = processes.get(actionId);
+        if (!entry) {
+          return { error: "not_running", status: 404 };
+        }
+        entry.proc.kill("SIGTERM");
+        return { ok: true };
+      }
+      function running() {
+        return [...processes.keys()];
+      }
+      return { execute, stop, running };
+    }
+    module2.exports = { createProcessManager };
+  }
+});
+
 // src/server/index.js
 var require_server = __commonJS({
   "src/server/index.js"(exports2, module2) {
@@ -3927,6 +4004,7 @@ var require_server = __commonJS({
     var { runLoadGraph: runLoadGraph2 } = require_load_graph();
     var { runStatus: runStatus2 } = require_status();
     var { runGetExecPlan: runGetExecPlan2 } = require_get_exec_plan();
+    var { createProcessManager } = require_process_manager();
     var MIME_TYPES = {
       ".html": "text/html; charset=utf-8",
       ".js": "application/javascript; charset=utf-8",
@@ -3949,7 +4027,7 @@ var require_server = __commonJS({
         "Content-Type": "application/json; charset=utf-8",
         "Content-Length": Buffer.byteLength(body),
         "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type"
       });
       res.end(body);
@@ -4043,7 +4121,30 @@ var require_server = __commonJS({
         sendJson(res, 500, { error: String(err) });
       }
     }
+    function handleExecuteAction(res, cwd, actionId) {
+      try {
+        const result = runGetExecPlan2(cwd, ["--action", actionId]);
+        if (result.error || !result.execPlan) {
+          sendJson(res, 400, { error: "Action not found or no exec-plan" });
+          return;
+        }
+        const pm = getProcessManager(cwd);
+        const execResult = pm.execute(actionId, result.milestoneId);
+        if (execResult.error) {
+          sendJson(res, execResult.status || 500, { error: execResult.error });
+          return;
+        }
+        sendJson(res, 202, { ok: true, actionId });
+      } catch (err) {
+        sendJson(res, 500, { error: String(err) });
+      }
+    }
     var sseClients = /* @__PURE__ */ new Set();
+    var processManager = null;
+    function getProcessManager(cwd) {
+      if (!processManager) processManager = createProcessManager(sseClients, cwd);
+      return processManager;
+    }
     function broadcastChange() {
       for (const client of sseClients) {
         try {
@@ -4091,14 +4192,34 @@ var require_server = __commonJS({
       if (method === "OPTIONS") {
         res.writeHead(204, {
           "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Methods": "GET, OPTIONS",
+          "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
           "Access-Control-Allow-Headers": "Content-Type"
         });
         res.end();
         return;
       }
-      if (method !== "GET") {
+      if (method !== "GET" && method !== "POST") {
         sendJson(res, 405, { error: "Method Not Allowed" });
+        return;
+      }
+      if (method === "POST") {
+        const executeMatch = urlPath.match(/^\/api\/action\/([^/]+)\/execute$/);
+        if (executeMatch) {
+          handleExecuteAction(res, cwd, executeMatch[1]);
+          return;
+        }
+        const stopMatch = urlPath.match(/^\/api\/action\/([^/]+)\/stop$/);
+        if (stopMatch) {
+          const pm = getProcessManager(cwd);
+          const result = pm.stop(stopMatch[1]);
+          if (result.error) {
+            sendJson(res, result.status || 500, { error: result.error });
+          } else {
+            sendJson(res, 200, { ok: true });
+          }
+          return;
+        }
+        sendJson(res, 404, { error: `Route not found: ${urlPath}` });
         return;
       }
       if (urlPath === "/events") {
@@ -4124,6 +4245,11 @@ var require_server = __commonJS({
       const milestoneMatch = urlPath.match(/^\/api\/milestone\/([^/]+)$/);
       if (milestoneMatch) {
         handleMilestone(res, cwd, milestoneMatch[1]);
+        return;
+      }
+      if (urlPath === "/api/running") {
+        const pm = getProcessManager(cwd);
+        sendJson(res, 200, { running: pm.running() });
         return;
       }
       if (urlPath === "/api/activity") {
