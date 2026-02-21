@@ -1,5 +1,5 @@
 ---
-description: Start a new Declare milestone cycle — archive declarations, reset FUTURE.md and MILESTONES.md, preserve PROJECT.md and STATE.md
+description: Start a new Declare cycle — archive current declarations to FUTURE-ARCHIVE.md, reset FUTURE.md and MILESTONES.md, preserve PROJECT.md and STATE.md
 allowed-tools:
   - Read
   - Write

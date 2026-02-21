@@ -89,11 +89,11 @@ Evaluate project state and present the appropriate option(s):
 
 **Route C — All milestones for active declarations complete:**
 - "All milestones for the current declaration wave are complete."
-- Offer: "Run `/declare:complete-milestone` or plan the next milestone with `/declare:new-milestone`"
+- Offer: "Run `/declare:complete-milestone` or plan the next milestone with `/declare:new-cycle`"
 
 **Route D — No active milestone:**
 - "No active milestone found."
-- Offer: "Run `/declare:new-milestone` to plan the next milestone, or `/declare:status` to review the full graph"
+- Offer: "Run `/declare:new-cycle` to plan the next milestone, or `/declare:status` to review the full graph"
 
 **Route E — No declarations exist:**
 - "No declarations found. Start by defining what you want to be true."

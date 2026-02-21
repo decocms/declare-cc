@@ -144,7 +144,7 @@ Locate or create a `## Current State` section. Update it to reflect the complete
 **Version shipped:** vX.Y (YYYY-MM-DD)
 **Milestones completed:** [N] ([M-01, M-02, ...])
 **Known gaps:** [list incomplete milestones, or "None"]
-**Next step:** Run /declare:new-milestone to start vX.Z cycle
+**Next step:** Run /declare:new-cycle to start vX.Z cycle
 ```
 
 If the section already exists, update it in place. If it does not exist, append it after the last section.
@@ -197,7 +197,7 @@ git commit -m "chore: archive vX.Y milestone snapshot
 
 Next: Start the next milestone cycle.
 
-Run /declare:new-milestone
+Run /declare:new-cycle
 ```
 
 **Error handling:**
@@ -212,4 +212,4 @@ Run /declare:new-milestone
 - Archive is a snapshot, not a destructive operation — FUTURE.md and MILESTONES.md remain in place.
 - PROJECT.md is the persistent memory across versions — always update it.
 - Git tag marks the historical release point for the snapshot.
-- This command archives only — use /declare:new-milestone to reset for the next cycle.
+- This command archives only — use /declare:new-cycle to reset for the next cycle.

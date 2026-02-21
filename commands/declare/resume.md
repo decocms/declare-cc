@@ -118,7 +118,7 @@ Evaluate the current project state and present the most relevant next step:
 
 **Route D — No active milestone:**
 - "No active milestone found."
-- Offer: "`/declare:new-milestone` to plan next milestone" or "`/declare:status` to review graph"
+- Offer: "`/declare:new-cycle` to plan next milestone" or "`/declare:status` to review graph"
 
 **Route E — No project initialized:**
 - "Project not initialized."
