@@ -23,4 +23,4 @@
 | M-34 | declare global binary                      | PENDING | D-11     | YES  |
 | M-35 | Default open behavior                      | PENDING | D-11     | YES  |
 | M-36 | Declare daemon with mesh registration      | PENDING | D-12     | YES  |
-| M-37 | Mesh declare plugin                        | PENDING | D-12     | NO   |
+| M-37 | Mesh declare plugin                        | PENDING | D-12     | YES  |
