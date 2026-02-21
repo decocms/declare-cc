@@ -24,3 +24,4 @@
 | M-35 | Default open behavior                      | PENDING | D-11     | YES  |
 | M-36 | Declare daemon with mesh registration      | PENDING | D-12     | YES  |
 | M-37 | Mesh declare plugin                        | PENDING | D-12     | YES  |
+| M-38 | Model-aware agent dispatch                 | PENDING | D-07     | NO   |
