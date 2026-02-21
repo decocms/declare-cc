@@ -33,3 +33,4 @@
 | M-27 | Inline file viewer with markdown rendering | PENDING | D-08     | NO   |
 | M-28 | Commit and output linking per action       | PENDING | D-08     | NO   |
 | M-29 | Execution log per milestone                | PENDING | D-08     | NO   |
+| M-30 | Reference field on declare nodes           | PENDING | D-09     | NO   |
