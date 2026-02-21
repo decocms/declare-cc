@@ -24,3 +24,8 @@
 **Statement:** Every GSD utility exists in Declare's namespace — quick tasks, todos, session pause/resume, settings, health checks — so the full workflow runs without ever touching a /gsd:* command.
 **Status:** DONE
 **Milestones:** M-14, M-15, M-16, M-17
+
+## D-06: UI as Primary Surface
+**Statement:** The Declare workflow is experienced entirely through the browser UI — declarations emerge in-view as you work, you accept or adjust them inline, milestones derive and appear next, then actions — the process drives you forward without ever switching to a terminal.
+**Status:** PENDING
+**Milestones:** 
