@@ -59,6 +59,21 @@ async function waitForServer(port, maxAttempts = 10, intervalMs = 100) {
  * @returns {Promise<void>}
  */
 async function runOpen(cwd, args) {
+  // 0. Guard: require .planning/ to exist
+  const planningDir = path.join(cwd, '.planning');
+  if (!fs.existsSync(planningDir)) {
+    console.log('');
+    console.log('  No .planning/ directory found in: ' + cwd);
+    console.log('');
+    console.log('  To initialize this project with Declare, run:');
+    console.log('    npx declare-cc');
+    console.log('');
+    console.log('  Or, if declare-cc is already installed globally:');
+    console.log('    declare-cc');
+    console.log('');
+    process.exit(0);
+  }
+
   // 1. Read port
   const portFile = path.join(cwd, '.planning', 'server.port');
   const port = fs.existsSync(portFile)

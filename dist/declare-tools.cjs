@@ -4154,6 +4154,19 @@ var require_open = __commonJS({
       return false;
     }
     async function runOpen2(cwd, args) {
+      const planningDir = path.join(cwd, ".planning");
+      if (!fs.existsSync(planningDir)) {
+        console.log("");
+        console.log("  No .planning/ directory found in: " + cwd);
+        console.log("");
+        console.log("  To initialize this project with Declare, run:");
+        console.log("    npx declare-cc");
+        console.log("");
+        console.log("  Or, if declare-cc is already installed globally:");
+        console.log("    declare-cc");
+        console.log("");
+        process.exit(0);
+      }
       const portFile = path.join(cwd, ".planning", "server.port");
       const port = fs.existsSync(portFile) ? parseInt(fs.readFileSync(portFile, "utf8").trim(), 10) : 3847;
       const isRunning = await checkServer(port);
