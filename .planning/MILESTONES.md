@@ -26,4 +26,4 @@
 | M-37 | Mesh declare plugin                          | PENDING | D-12     | YES  |
 | M-38 | Model-aware agent dispatch                   | PENDING | D-07     | YES  |
 | M-39 | Tri-part column browser for D→M→A navigation | PENDING | D-06     | YES  |
-| M-40 | Live activity topbar with jump-to-operation  | PENDING | D-08     | NO   |
+| M-40 | Live activity topbar with jump-to-operation  | PENDING | D-08     | YES  |
