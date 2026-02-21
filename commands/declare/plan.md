@@ -284,7 +284,7 @@ After displaying the summary, reload the graph and check for milestones that sti
   For each wave, spawn one Task agent per milestone **in the same response** so they execute in parallel:
 
   Subagent type: `gsd-executor`
-  Model: `opus`
+  model: `opus`
   Prompt per milestone:
   ```
   Execute milestone [M-XX] "[title]" for the Declare project.
