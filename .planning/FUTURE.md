@@ -48,7 +48,7 @@
 ## D-10: Integrity as Architecture
 **Statement:** The Declare system is built on the Erhard model of integrity — every declaration is a word given, every node shows its wholeness state, and the UI's primary function is to reveal where the project is whole and complete versus where integrity is diminished — so the path to full workability is always visible and actionable.
 **Status:** PENDING
-**Milestones:** 
+**Milestones:** M-31, M-32, M-33
 
 ## D-11: Global CLI
 **Statement:** declare is a global command that opens the dashboard for the current directory — declare and declare . are equivalent — showing the project's live state or prompting to initialize if empty. Subcommands like declare /path/to/project or declare serve extend it, but the default invocation is always: open and show.

@@ -34,3 +34,6 @@
 | M-28 | Commit and output linking per action       | PENDING | D-08     | NO   |
 | M-29 | Execution log per milestone                | PENDING | D-08     | NO   |
 | M-30 | Reference field on declare nodes           | PENDING | D-09     | NO   |
+| M-31 | Wholeness state computed per node          | PENDING | D-10     | NO   |
+| M-32 | Integrity visualization in the dashboard   | PENDING | D-10     | NO   |
+| M-33 | Workability path surface                   | PENDING | D-10     | NO   |
