@@ -1,4 +1,4 @@
-# Milestones: get-shit-done
+# Milestones: declare-cc
 
 ## Milestones
 
@@ -22,3 +22,4 @@
 | M-33 | Workability path surface                   | PENDING | D-10     | NO   |
 | M-34 | declare global binary                      | PENDING | D-11     | NO   |
 | M-35 | Default open behavior                      | PENDING | D-11     | NO   |
+| M-36 | Declare daemon with mesh registration      | PENDING | D-12     | NO   |
