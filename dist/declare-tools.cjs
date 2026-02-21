@@ -4125,6 +4125,60 @@ var require_serve = __commonJS({
   }
 });
 
+// src/commands/open.js
+var require_open = __commonJS({
+  "src/commands/open.js"(exports2, module2) {
+    "use strict";
+    var fs = require("fs");
+    var path = require("path");
+    var http = require("http");
+    var { spawn } = require("child_process");
+    function checkServer(port) {
+      return new Promise((resolve) => {
+        const req = http.get(`http://localhost:${port}/api/graph`, (res) => {
+          resolve(res.statusCode >= 200 && res.statusCode < 300);
+          res.resume();
+        });
+        req.on("error", () => resolve(false));
+        req.setTimeout(2e3, () => {
+          req.destroy();
+          resolve(false);
+        });
+      });
+    }
+    async function waitForServer(port, maxAttempts = 10, intervalMs = 100) {
+      for (let i = 0; i < maxAttempts; i++) {
+        if (await checkServer(port)) return true;
+        await new Promise((r) => setTimeout(r, intervalMs));
+      }
+      return false;
+    }
+    async function runOpen2(cwd, args) {
+      const portFile = path.join(cwd, ".planning", "server.port");
+      const port = fs.existsSync(portFile) ? parseInt(fs.readFileSync(portFile, "utf8").trim(), 10) : 3847;
+      const isRunning = await checkServer(port);
+      if (!isRunning) {
+        const bundlePath = path.resolve(__dirname, "declare-tools.cjs");
+        const child = spawn(process.execPath, [bundlePath, "serve", "--port", String(port)], {
+          cwd,
+          detached: true,
+          stdio: "ignore"
+        });
+        child.unref();
+        const ready = await waitForServer(port);
+        if (!ready) {
+          console.error("[declare] Warning: server may not be ready yet");
+        }
+      }
+      const url = `http://localhost:${port}`;
+      const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+      spawn(opener, [url], { stdio: "ignore", detached: true }).unref();
+      console.log(`Dashboard: ${url}`);
+    }
+    module2.exports = { runOpen: runOpen2 };
+  }
+});
+
 // src/declare-tools.js
 var { commitPlanningDocs } = require_commit();
 var { readState, recordSession } = require_state();
@@ -4158,6 +4212,7 @@ var { runConfigGet } = require_config_get();
 var { runConfigSet } = require_config_set();
 var { runHealthCheck, runHealthCheckRepair } = require_health_check();
 var { runServe } = require_serve();
+var { runOpen } = require_open();
 function parseCwdFlag(argv) {
   const idx = argv.indexOf("--cwd");
   if (idx === -1 || idx + 1 >= argv.length) return null;
@@ -4199,9 +4254,18 @@ function parseNamedFlag(argv, flag) {
 function main() {
   const args = process.argv.slice(2);
   const command = args[0];
-  if (!command) {
-    console.log(JSON.stringify({ error: "No command specified. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, sync-status, serve, record-session, get-state, quick-task, add-todo, check-todos, complete-todo, config-get, config-set, health-check, help" }));
-    process.exit(1);
+  const sub = args[0];
+  const isDefaultOpen = !sub || sub === "." || (sub.startsWith("/") || sub.startsWith("~"));
+  if (isDefaultOpen) {
+    let projectRoot = process.cwd();
+    if (sub && sub !== ".") {
+      projectRoot = sub.startsWith("~") ? sub.replace("~", require("os").homedir()) : sub;
+    }
+    runOpen(projectRoot, args.slice(1)).catch((err) => {
+      console.error("[declare] " + err.message);
+      process.exit(1);
+    });
+    return;
   }
   try {
     switch (command) {

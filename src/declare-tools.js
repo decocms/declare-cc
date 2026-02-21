@@ -61,6 +61,7 @@ const { runConfigGet } = require('./commands/config-get');
 const { runConfigSet } = require('./commands/config-set');
 const { runHealthCheck, runHealthCheckRepair } = require('./commands/health-check');
 const { runServe } = require('./commands/serve');
+const { runOpen } = require('./commands/open');
 
 /**
  * Parse --cwd flag from argv.
@@ -135,9 +136,26 @@ function main() {
   const args = process.argv.slice(2);
   const command = args[0];
 
-  if (!command) {
-    console.log(JSON.stringify({ error: 'No command specified. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, sync-status, serve, record-session, get-state, quick-task, add-todo, check-todos, complete-todo, config-get, config-set, health-check, help' }));
-    process.exit(1);
+  // Default invocation: no subcommand, '.', or an absolute/relative path arg.
+  // This replaces the former `if (!command) { process.exit(1); }` guard.
+  const sub = args[0];
+  const isDefaultOpen = !sub                          // `declare`
+    || sub === '.'                                    // `declare .`
+    || (sub.startsWith('/') || sub.startsWith('~'));  // `declare /path/to/project`
+
+  if (isDefaultOpen) {
+    // Resolve project root
+    let projectRoot = process.cwd();
+    if (sub && sub !== '.') {
+      projectRoot = sub.startsWith('~')
+        ? sub.replace('~', require('os').homedir())
+        : sub;
+    }
+    runOpen(projectRoot, args.slice(1)).catch(err => {
+      console.error('[declare] ' + err.message);
+      process.exit(1);
+    });
+    return;
   }
 
   try {
