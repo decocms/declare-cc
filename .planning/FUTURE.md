@@ -29,3 +29,8 @@
 **Statement:** The Declare workflow is experienced entirely through the browser UI — declarations emerge in-view as you work, you accept or adjust them inline, milestones derive and appear next, then actions — the process drives you forward without ever switching to a terminal.
 **Status:** PENDING
 **Milestones:** 
+
+## D-07: Human/Agent Clarity
+**Statement:** During planning, milestones are explicitly classified as agent-time or human-bound, with dependencies declared between them. Agent-time milestones are prioritized and run first — they prepare the outputs and context that human-bound milestones depend on — and when conditions are met, a play action executes all autonomous work in dependency order without interruption.
+**Status:** PENDING
+**Milestones:** 
