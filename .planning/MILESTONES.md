@@ -27,3 +27,4 @@
 | M-38 | Model-aware agent dispatch                   | DONE    | D-07     | YES  |
 | M-39 | Tri-part column browser for D→M→A navigation | PENDING | D-06     | YES  |
 | M-40 | Live activity topbar with jump-to-operation  | PENDING | D-08     | YES  |
+| M-41 | Execute actions from dashboard               | PENDING | D-08     | YES  |

@@ -13,7 +13,7 @@
 ## D-08: Live Execution Visibility
 **Statement:** As agents execute, their work is visible in real-time in the UI — progress streams, produced files are openable inline with full markdown rendering, and commit outputs are linked — so the human sees results as they emerge without leaving the interface.
 **Status:** PENDING
-**Milestones:** M-26, M-27, M-28, M-29, M-40
+**Milestones:** M-26, M-27, M-28, M-29, M-40, M-41
 
 ## D-09: Cross-Project References
 **Statement:** A declare node can reference an external project by repo URL or local folder path, so related work across separate repositories or directories is linkable from the graph — whether the sub-project runs locally or remotely is up to the operator.
@@ -27,7 +27,7 @@
 
 ## D-11: Global CLI
 **Statement:** declare is a global command that opens the dashboard for the current directory — declare and declare . are equivalent — showing the project's live state or prompting to initialize if empty. Subcommands like declare /path/to/project or declare serve extend it, but the default invocation is always: open and show.
-**Status:** PENDING
+**Status:** DONE
 **Milestones:** M-34, M-35
 
 ## D-12: Mesh Integration
