@@ -54,6 +54,14 @@
       --broken-bg: #2a0a10;
       --broken-border: #5a1520;
 
+      /* integrity wholeness indicators */
+      --integrity-whole: #34d399;
+      --integrity-whole-glow: rgba(52, 211, 153, 0.25);
+      --integrity-partial: #fbbf24;
+      --integrity-partial-glow: rgba(251, 191, 36, 0.25);
+      --integrity-broken: #ff4d6d;
+      --integrity-broken-glow: rgba(255, 77, 109, 0.25);
+
       --renegotiated-color: #ffa040;
       --renegotiated-bg: #251400;
       --renegotiated-border: #5a3000;
@@ -361,6 +369,30 @@
       letter-spacing: 0.05em;
       text-transform: uppercase;
       background: rgba(255,255,255,0.06);
+    }
+
+    /* Integrity wholeness dot */
+    .integrity-dot {
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      margin-left: 6px;
+      vertical-align: middle;
+      position: relative;
+      top: -0.5px;
+    }
+    .integrity-dot.integrity-whole {
+      background: var(--integrity-whole);
+      box-shadow: 0 0 6px var(--integrity-whole-glow);
+    }
+    .integrity-dot.integrity-partial {
+      background: var(--integrity-partial);
+      box-shadow: 0 0 6px var(--integrity-partial-glow);
+    }
+    .integrity-dot.integrity-broken {
+      background: var(--integrity-broken);
+      box-shadow: 0 0 6px var(--integrity-broken-glow);
     }
 
     /* ── Side panel — always visible, fixed right column ── */
