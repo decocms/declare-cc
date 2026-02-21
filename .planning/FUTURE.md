@@ -1,4 +1,4 @@
-# Future: get-shit-done
+# Future: declare-cc
 
 ## D-06: UI as Primary Surface
 **Statement:** The Declare workflow is experienced entirely through the browser UI — declarations emerge in-view as you work, you accept or adjust them inline, milestones derive and appear next, then actions — the process drives you forward without ever switching to a terminal.
@@ -29,3 +29,8 @@
 **Statement:** declare is a global command that opens the dashboard for the current directory — declare and declare . are equivalent — showing the project's live state or prompting to initialize if empty. Subcommands like declare /path/to/project or declare serve extend it, but the default invocation is always: open and show.
 **Status:** PENDING
 **Milestones:** M-34, M-35
+
+## D-12: Mesh Integration
+**Statement:** The Declare dashboard runs as a local daemon that registers with the mesh daemon. The mesh UI discovers active declare projects and renders the dashboard inline as a declare plugin — giving cross-project visibility and control from a single surface without leaving mesh.
+**Status:** PENDING
+**Milestones:** 
