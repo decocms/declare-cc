@@ -6,7 +6,7 @@
 |------|--------------------------------------------|---------|----------|------|
 | M-18 | Browser-based declaration capture          | PENDING | D-06     | YES  |
 | M-19 | Browser-based milestone derivation         | PENDING | D-06     | YES  |
-| M-20 | Browser-based action derivation            | PENDING | D-06     | NO   |
+| M-20 | Browser-based action derivation            | PENDING | D-06     | YES  |
 | M-21 | UI workflow state machine                  | PENDING | D-06     | NO   |
 | M-22 | Milestone classification in planning       | PENDING | D-07     | NO   |
 | M-23 | Milestone dependency graph                 | PENDING | D-07     | NO   |
