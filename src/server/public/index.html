@@ -62,6 +62,11 @@
       --integrity-broken: #ff4d6d;
       --integrity-broken-glow: rgba(255, 77, 109, 0.25);
 
+      /* wholeness border indicators */
+      --wholeness-whole: #34d399;
+      --wholeness-partial: #fbbf24;
+      --wholeness-broken: #ff4d6d;
+
       --renegotiated-color: #ffa040;
       --renegotiated-bg: #251400;
       --renegotiated-border: #5a3000;
@@ -328,6 +333,11 @@
       color: var(--renegotiated-color);
     }
 
+    /* Wholeness left-border indicator */
+    .node.wholeness-whole   { border-left: 3px solid var(--wholeness-whole); }
+    .node.wholeness-partial { border-left: 3px solid var(--wholeness-partial); }
+    .node.wholeness-broken  { border-left: 3px solid var(--wholeness-broken); }
+
     .node-id {
       font-size: 10px;
       font-weight: 700;
@@ -475,6 +485,20 @@
       text-transform: uppercase;
       margin-bottom: 20px;
     }
+
+    /* Wholeness badge in detail panel */
+    .wholeness-badge {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .wholeness-badge.wb-whole   { background: #0a2018; color: var(--wholeness-whole); border: 1px solid #1a4d34; }
+    .wholeness-badge.wb-partial { background: #1a1200; color: var(--wholeness-partial); border: 1px solid #3d2c00; }
+    .wholeness-badge.wb-broken  { background: #2a0a10; color: var(--wholeness-broken); border: 1px solid #5a1520; }
 
     .detail-section {
       margin-bottom: 20px;
@@ -700,6 +724,71 @@
     .ae-text.agent-done  { color: var(--mile-color); }
     .ae-text.bash        { color: var(--text-dim); }
     .ae-text.write       { color: var(--decl-color); }
+
+    /* ── Execute/Stop button ── */
+    .exec-btn {
+      background: var(--act-bg);
+      border: 1px solid var(--act-border);
+      color: var(--act-color);
+      padding: 6px 16px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .exec-btn:hover { background: #0d2818; border-color: #2a6a48; }
+    .exec-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .exec-btn.stop {
+      background: var(--broken-bg);
+      border-color: var(--broken-border);
+      color: var(--broken-color);
+    }
+    .exec-btn.stop:hover { background: #3a0e18; border-color: #7a2035; }
+
+    /* ── Output log panel ── */
+    .output-log {
+      background: #0a0a0e;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 12px;
+      margin-top: 12px;
+      max-height: 300px;
+      overflow-y: auto;
+      font-family: monospace;
+      font-size: 11px;
+      line-height: 1.5;
+      color: var(--text-dim);
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .output-log::-webkit-scrollbar { width: 4px; }
+    .output-log::-webkit-scrollbar-track { background: transparent; }
+    .output-log::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    .output-log .exit-code {
+      display: block;
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid var(--border);
+      font-weight: 700;
+    }
+    .output-log .exit-code.success { color: var(--act-color); }
+    .output-log .exit-code.failure { color: var(--broken-color); }
+
+    /* ── Running node pulse animation ── */
+    .node.is-running {
+      animation: running-pulse 1.8s ease-in-out infinite;
+      box-shadow: 0 0 0 2px var(--executing-color), 0 0 16px rgba(251,191,36,0.2);
+    }
+    @keyframes running-pulse {
+      0%, 100% { box-shadow: 0 0 0 2px var(--executing-color), 0 0 16px rgba(251,191,36,0.2); }
+      50% { box-shadow: 0 0 0 3px var(--executing-color), 0 0 24px rgba(251,191,36,0.35); }
+    }
 
   </style>
 </head>

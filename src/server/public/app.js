@@ -28,6 +28,12 @@ let selectedNodeId = null;
 /** @type {string | null} Focus node ID — the declaration or milestone being focused */
 let focusNodeId = null;
 
+/** @type {Set<string>} Tracks which action IDs are currently executing */
+let runningActions = new Set();
+
+/** @type {string | null} Which action's output we're listening to */
+let currentOutputActionId = null;
+
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
 
@@ -183,22 +189,35 @@ function renderStatusBar() {
   $healthBadge.textContent = healthLabel;
   $healthBadge.className   = `health-badge health-${healthLabel}`;
 
-  // Performance summary from /api/status
-  if (statusData && statusData.performance && statusData.performance.rollup) {
-    const rollup = statusData.performance.rollup;
-    // Inject a performance pill next to health if not already present
-    let perfPill = document.getElementById('perf-pill');
-    if (!perfPill) {
-      perfPill = document.createElement('span');
-      perfPill.id = 'perf-pill';
-      perfPill.style.cssText = 'font-size:11px;color:var(--text-dim);';
-      $healthBadge.after(perfPill);
-    }
-    const align = rollup.alignment   ? rollup.alignment.level   : '–';
-    const integ = rollup.integrity   ? rollup.integrity.level   : '–';
-    const perf  = rollup.performance || '–';
-    perfPill.textContent = `Alignment: ${align}  ·  Integrity: ${integ}  ·  Performance: ${perf}`;
+  // Compute project-wide integrity percentage from wholeness data
+  let perfPill = document.getElementById('perf-pill');
+  if (!perfPill) {
+    perfPill = document.createElement('span');
+    perfPill.id = 'perf-pill';
+    perfPill.style.cssText = 'font-size:11px;color:var(--text-dim);';
+    $healthBadge.after(perfPill);
   }
+
+  // Count wholeness across all node types
+  const allNodes = [
+    ...(graphData ? graphData.declarations || [] : []),
+    ...(graphData ? graphData.milestones || [] : []),
+    ...(graphData ? graphData.actions || [] : []),
+  ];
+  const total = allNodes.length;
+  const wholeCount = allNodes.filter(n => n.wholeness === 'whole').length;
+  const integrityPct = total > 0 ? Math.round((wholeCount / total) * 100) : 0;
+
+  // Alignment from status rollup if available
+  const rollup = (statusData && statusData.performance && statusData.performance.rollup) || {};
+  const align = rollup.alignment ? rollup.alignment.level : null;
+  const perf  = rollup.performance || null;
+
+  let parts = [];
+  if (align) parts.push(`Alignment: ${align}`);
+  parts.push(`Integrity: ${integrityPct}%`);
+  if (perf) parts.push(`Performance: ${perf}`);
+  perfPill.textContent = parts.join('  \u00b7  ');
 }
 
 // ─── Node element builder ─────────────────────────────────────────────────────
@@ -275,6 +294,12 @@ function buildNodeEl(item, type, derived = {}) {
   el.className = `node node-${type} status-${statusClass(displayStatus)}`;
   el.dataset.nodeId   = item.id;
   el.dataset.nodeType = type;
+
+  // Wholeness left-border indicator
+  const wh = item.wholeness;
+  if (wh === 'whole' || wh === 'partial' || wh === 'broken') {
+    el.classList.add(`wholeness-${wh}`);
+  }
 
   const title = item.title || item.statement || item.id;
 
