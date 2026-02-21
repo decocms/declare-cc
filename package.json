@@ -4,7 +4,8 @@
   "description": "A future-driven meta-prompting engine for agentic development, rooted in declared futures and causal graph structure.",
   "bin": {
     "declare-cc": "bin/install.js",
-    "declare": "bin/declare.js"
+    "declare": "bin/declare.js",
+    "dcl": "bin/declare.js"
   },
   "files": [
     "bin",
