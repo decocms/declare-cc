@@ -53,4 +53,4 @@
 ## D-11: Global CLI
 **Statement:** declare is a global command that opens the dashboard for the current directory — declare and declare . are equivalent — showing the project's live state or prompting to initialize if empty. Subcommands like declare /path/to/project or declare serve extend it, but the default invocation is always: open and show.
 **Status:** PENDING
-**Milestones:** 
+**Milestones:** M-34, M-35
