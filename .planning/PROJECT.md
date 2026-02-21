@@ -90,5 +90,14 @@ Custom graph engine (DeclareDag, 486 lines) with dual adjacency lists and Kahn's
 | FUTURE-ARCHIVE.md for renegotiated declarations | Keep FUTURE.md clean with only active declarations | ✓ Good — clear lifecycle |
 | CLI first, web later | Validate ontology in simplest form factor before building UI | — Pending (v2) |
 
+## Current State
+
+**Version shipped:** v1.0 (2026-02-21)
+**Declarations completed:** D-01 through D-05 (planning pipeline, lifecycle, quality loops, dashboard, namespace)
+**Milestones completed:** M-01 through M-17 (17 total)
+**Known gaps:** None
+**Archive:** .planning/milestones/v1.0/
+**Next cycle:** D-06 through D-11 — UI overhaul, human/agent clarity, live execution, cross-project refs, integrity architecture, global CLI
+
 ---
-*Last updated: 2026-02-17 after v1.0 milestone*
+*Last updated: 2026-02-21 after v1.0 archive*
