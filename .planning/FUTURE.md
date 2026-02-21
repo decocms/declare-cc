@@ -39,3 +39,8 @@
 **Statement:** As agents execute, their work is visible in real-time in the UI — progress streams, produced files are openable inline with full markdown rendering, and commit outputs are linked — so the human sees results as they emerge without leaving the interface.
 **Status:** PENDING
 **Milestones:** 
+
+## D-09: Cross-Project References
+**Statement:** A declare node can reference an external project by repo URL or local folder path, so related work across separate repositories or directories is linkable from the graph — whether the sub-project runs locally or remotely is up to the operator.
+**Status:** PENDING
+**Milestones:** 
