@@ -44,3 +44,8 @@
 **Statement:** A declare node can reference an external project by repo URL or local folder path, so related work across separate repositories or directories is linkable from the graph — whether the sub-project runs locally or remotely is up to the operator.
 **Status:** PENDING
 **Milestones:** 
+
+## D-10: Integrity as Architecture
+**Statement:** The Declare system is built on the Erhard model of integrity — every declaration is a word given, every node shows its wholeness state, and the UI's primary function is to reveal where the project is whole and complete versus where integrity is diminished — so the path to full workability is always visible and actionable.
+**Status:** PENDING
+**Milestones:** 
