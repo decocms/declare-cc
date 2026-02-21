@@ -2,7 +2,7 @@
 milestone: M-35-default-open-behavior
 action: A-74
 type: execute
-wave: 2
+wave: 3
 depends_on:
   - A-72
   - A-73
@@ -94,20 +94,21 @@ node /Users/guilherme/Projects/declare-cc/esbuild.config.js
 ```
   </action>
   <verify>
-1. Guard is present: `grep -n "\.planning" src/commands/open.js` shows the check
-2. Test guard fires: create a temp dir without .planning and run the command:
+1. Guard is present: `grep -n "\.planning" src/commands/open.js` shows the check at the top of the function body
+
+2. Test guard fires correctly — use a fresh temp dir as cwd so `args[0]` is absent and `process.cwd()` is the temp dir:
    ```bash
-   TMPDIR=$(mktemp -d) && node /Users/guilherme/Projects/declare-cc/dist/declare-tools.cjs --cwd "$TMPDIR" 2>&1 || true
+   TMPDIR_PATH=$(mktemp -d)
+   cd "$TMPDIR_PATH" && node /Users/guilherme/Projects/declare-cc/dist/declare-tools.cjs
+   echo "Exit code: $?"
    ```
-   Expected: prints the "No .planning/ directory found" message. Exit code 0.
+   Expected: prints "No .planning/ directory found" message, exits 0. The guard must be triggered via actual `process.cwd()` — do NOT pass `--cwd` as a CLI arg (that would be routed as an unknown subcommand, not through `runOpen`).
 
-   Note: the guard uses `cwd` passed to `runOpen`, which in the dispatcher comes from `process.cwd()` or a resolved path arg. Test by temporarily changing to a dir without `.planning/` or by patching cwd in a quick test.
-
-3. Guard does not fire in this project: `node /Users/guilherme/Projects/declare-cc/dist/declare-tools.cjs help` still works (existing subcommands unaffected)
+3. Guard does not fire in this project: `node /Users/guilherme/Projects/declare-cc/dist/declare-tools.cjs help` still works (existing subcommands unaffected, since they bypass `runOpen` entirely)
 
 4. Bundle rebuilt: `ls -la dist/declare-tools.cjs` shows recent modification time and `grep -c "No .planning" dist/declare-tools.cjs` returns > 0
   </verify>
-  <done>Guard is at the top of `runOpen`. Running in a directory without `.planning/` prints the initialization prompt and exits 0. Running in a directory with `.planning/` proceeds to port read and server start. Bundle is rebuilt with the guard included.</done>
+  <done>Guard is at the top of `runOpen`. Running in a directory without `.planning/` (with no CLI args so the no-args path in the dispatcher fires) prints the initialization prompt and exits 0. Running in a directory with `.planning/` proceeds to port read and server start. Bundle is rebuilt with the guard included.</done>
 </task>
 
 </tasks>
@@ -115,7 +116,7 @@ node /Users/guilherme/Projects/declare-cc/esbuild.config.js
 <verification>
 - `grep "No .planning" dist/declare-tools.cjs` finds the guard message in the bundle
 - `grep "npx declare-cc" dist/declare-tools.cjs` finds the init instruction
-- Running `node dist/declare-tools.cjs` from a directory without `.planning/` exits 0 with the prompt message
+- `cd $(mktemp -d) && node /Users/guilherme/Projects/declare-cc/dist/declare-tools.cjs` exits 0 with the prompt message
 - Running `node dist/declare-tools.cjs` from the declare-cc project root (which has `.planning/`) proceeds past the guard (attempts server connection)
 </verification>
 

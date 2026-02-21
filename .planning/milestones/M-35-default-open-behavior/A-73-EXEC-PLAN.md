@@ -94,6 +94,8 @@ Create `src/commands/open.js` as a CJS module. It implements the open command:
 
 3. **Start server if not running.** Use `child_process.spawn` with `detached: true` and `stdio: 'ignore'` to background the server:
    ```js
+   // After esbuild bundling, __dirname === dist/ — reference bundle by its own filename.
+   const bundlePath = path.resolve(__dirname, 'declare-tools.cjs');
    const child = spawn(process.execPath, [bundlePath, 'serve', '--port', String(port)], {
      cwd,
      detached: true,
@@ -101,7 +103,6 @@ Create `src/commands/open.js` as a CJS module. It implements the open command:
    });
    child.unref();
    ```
-   Where `bundlePath = path.resolve(__dirname, '../../dist/declare-tools.cjs')`.
 
    After spawning, poll `/api/graph` up to 10 times (100ms apart) until it responds. If still not up after 1s, print a warning but do not exit 1 — the browser open should still be attempted.
 
@@ -129,8 +130,9 @@ Create `src/commands/open.js` as a CJS module. It implements the open command:
 1. File exists: `ls -la src/commands/open.js`
 2. Exports check: `node -e "const {runOpen} = require('./src/commands/open.js'); console.log(typeof runOpen)"` → prints `function`
 3. No external requires: `node -e "const mod = require('module'); const orig = mod._resolveFilename.bind(mod); mod._resolveFilename = (req, ...a) => { if (!req.startsWith('node:') && !req.startsWith('.') && !req.startsWith('/') && req !== 'path' && req !== 'fs' && req !== 'http' && req !== 'child_process') throw new Error('external dep: '+req); return orig(req,...a); }; require('./src/commands/open.js')"` exits 0
+4. bundlePath uses same-dir reference: `grep "declare-tools.cjs" src/commands/open.js` shows `path.resolve(__dirname, 'declare-tools.cjs')` without any `../` traversal
   </verify>
-  <done>`src/commands/open.js` exists, exports `runOpen`, uses only node built-ins, implements the port-read → liveness-check → start-if-needed → browser-open → print flow.</done>
+  <done>`src/commands/open.js` exists, exports `runOpen`, uses only node built-ins, implements the port-read → liveness-check → start-if-needed → browser-open → print flow. The `bundlePath` resolves to `dist/declare-tools.cjs` using `__dirname` alone (no `../../` traversal).</done>
 </task>
 
 <task type="auto">
@@ -139,12 +141,13 @@ Create `src/commands/open.js` as a CJS module. It implements the open command:
   <action>
 **Step 1 — Update `src/declare-tools.js`:**
 
-Read the current dispatcher to understand how subcommands are routed (it uses a switch or if-chain on `args[0]`). Add the following routing logic at the TOP of the dispatch (before the existing subcommand checks):
+Read the current dispatcher. It contains an `if (!command) { ... process.exit(1); }` guard near the top of the dispatch logic (around lines 138-141) that causes a no-args invocation to print an error and exit. **Remove this guard entirely.** Replace it with the `isDefaultOpen` routing block shown below so that no-args invocations reach `runOpen` instead of exiting 1:
 
 ```js
 const { runOpen } = require('./commands/open');
 
-// Default invocation: no subcommand, '.', or an absolute/relative path arg
+// Default invocation: no subcommand, '.', or an absolute/relative path arg.
+// IMPORTANT: This block replaces the former `if (!command) { process.exit(1); }` guard.
 const sub = args[0];
 const isDefaultOpen = !sub                          // `declare`
   || sub === '.'                                    // `declare .`
@@ -163,11 +166,11 @@ if (isDefaultOpen) {
     process.exit(1);
   });
 } else {
-  // ... existing subcommand dispatch continues here
+  // ... existing subcommand dispatch continues here (serve, help, load-graph, etc.)
 }
 ```
 
-The existing `serve`, `help`, `load-graph`, etc. subcommands must remain fully functional — this change wraps them in the `else` branch, it does not replace them.
+The existing `serve`, `help`, `load-graph`, etc. subcommands must remain fully functional — they live inside the `else` branch, they are not removed or changed.
 
 **Step 2 — Rebuild the bundle:**
 
@@ -178,12 +181,21 @@ node /Users/guilherme/Projects/declare-cc/esbuild.config.js
 Verify `dist/declare-tools.cjs` timestamp is updated after the build.
   </action>
   <verify>
-1. Dispatcher updated: `grep -n "runOpen\|isDefaultOpen" src/declare-tools.js` shows the new routing lines
-2. Bundle rebuilt: `ls -la dist/declare-tools.cjs` shows a recent modification time
-3. Bundle contains open logic: `grep -c "runOpen\|isDefaultOpen\|api/graph" dist/declare-tools.cjs` returns > 0
-4. Existing serve still works: `node dist/declare-tools.cjs help 2>&1 | head -3` exits 0
+1. Former guard is gone: `grep -n "process.exit(1)" src/declare-tools.js` must NOT show a line that fires unconditionally when `!command`
+2. New routing is present: `grep -n "runOpen\|isDefaultOpen" src/declare-tools.js` shows the new routing lines
+3. Bundle rebuilt: `ls -la dist/declare-tools.cjs` shows a recent modification time
+4. Bundle contains open logic: `grep -c "runOpen\|isDefaultOpen\|api/graph" dist/declare-tools.cjs` returns > 0
+5. Existing serve subcommand still works: start it in the background, curl the health endpoint, then kill it:
+   ```bash
+   node /Users/guilherme/Projects/declare-cc/dist/declare-tools.cjs serve --port 9998 &
+   SERVER_PID=$!
+   sleep 1
+   curl -s -o /dev/null -w "%{http_code}" http://localhost:9998/api/graph
+   kill $SERVER_PID 2>/dev/null || true
+   ```
+   Expected: HTTP 200 (confirms the else-branch routing to `serve` is intact).
   </verify>
-  <done>`src/declare-tools.js` routes default invocations to `runOpen`. `dist/declare-tools.cjs` is rebuilt and contains the open command logic. Existing subcommands (serve, help, load-graph, etc.) are unaffected.</done>
+  <done>`src/declare-tools.js` no longer has an unconditional `if (!command) { process.exit(1); }` guard. It routes default invocations to `runOpen` via the `isDefaultOpen` check. `dist/declare-tools.cjs` is rebuilt and contains the open command logic. Existing subcommands (serve, help, load-graph, etc.) are unaffected.</done>
 </task>
 
 </tasks>
@@ -196,7 +208,7 @@ Verify `dist/declare-tools.cjs` timestamp is updated after the build.
 </verification>
 
 <success_criteria>
-`src/commands/open.js` implements the full open flow (port read, liveness check, background server start, browser open, confirmation print). The CLI dispatcher routes no-subcommand, `.`, and absolute-path invocations to it. The bundle is rebuilt. All existing subcommands work unchanged.
+`src/commands/open.js` implements the full open flow (port read, liveness check, background server start, browser open, confirmation print). The CLI dispatcher routes no-subcommand, `.`, and absolute-path invocations to it — the former `if (!command) { process.exit(1); }` guard is removed. The bundle is rebuilt. All existing subcommands work unchanged.
 </success_criteria>
 
 <output>
