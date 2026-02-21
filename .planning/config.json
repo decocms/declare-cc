@@ -9,5 +9,15 @@
     "plan_check": true,
     "verifier": true,
     "auto_advance": true
+  },
+  "modelAssignment": {
+    "planner": "opus",
+    "executor": "opus",
+    "debugger": "opus",
+    "researcher": "sonnet",
+    "synthesizer": "sonnet",
+    "verifier": "sonnet",
+    "checker": "haiku",
+    "status": "haiku"
   }
 }
