@@ -33,4 +33,4 @@
 ## D-12: Mesh Integration
 **Statement:** The Declare dashboard runs as a local daemon that registers with the mesh daemon. The mesh UI discovers active declare projects and renders the dashboard inline as a declare plugin — giving cross-project visibility and control from a single surface without leaving mesh.
 **Status:** PENDING
-**Milestones:** M-36
+**Milestones:** M-36, M-37
