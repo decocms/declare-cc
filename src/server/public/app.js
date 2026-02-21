@@ -295,10 +295,32 @@ function buildNodeEl(item, type, derived = {}) {
     badgeLabel = `${derived.doneCount}/${derived.totalCount} DONE`;
   }
 
+  // Integrity indicator — small colored dot next to status badge
+  // Skip for "broken" when node has no children (treat as pending/not-yet-computable)
+  let integrityDotHtml = '';
+  const wh = item.wholeness;
+  if (wh === 'whole' || wh === 'partial') {
+    integrityDotHtml = `<span class="integrity-dot integrity-${wh}" title="Integrity: ${wh}"></span>`;
+  } else if (wh === 'broken') {
+    // Only show broken dot if this node actually has children (not just "nothing to compute")
+    if (type === 'action') {
+      integrityDotHtml = `<span class="integrity-dot integrity-broken" title="Integrity: broken"></span>`;
+    } else if (type === 'milestone' && derived.totalCount > 0) {
+      integrityDotHtml = `<span class="integrity-dot integrity-broken" title="Integrity: broken"></span>`;
+    } else if (type === 'declaration') {
+      // Declarations: check if they have child milestones
+      const hasChildren = graphData && (graphData.milestones || []).some(m => (m.realizes || []).includes(item.id));
+      if (hasChildren) {
+        integrityDotHtml = `<span class="integrity-dot integrity-broken" title="Integrity: broken"></span>`;
+      }
+    }
+    // If none of the above matched, no dot shown (pending/not-computable)
+  }
+
   el.innerHTML = `
     <div class="node-id">${item.id}</div>
     <div class="node-title">${truncate(title, 55)}</div>
-    <span class="status-badge">${badgeLabel}</span>
+    <span class="status-badge">${badgeLabel}</span>${integrityDotHtml}
     ${progressHtml}
   `;
 
@@ -752,6 +774,26 @@ function renderPanelChain(item, type) {
             <div class="detail-value" style="margin-top:5px">${escHtml(s.item.produces)}</div>
           </div>`;
         }
+      }
+
+      // Wholeness indicator in panel
+      if (s.item.wholeness && s.item.wholeness !== 'pending') {
+        const whColors = {
+          whole: { color: 'var(--integrity-whole)', label: 'Whole' },
+          partial: { color: 'var(--integrity-partial)', label: 'Partial' },
+          broken: { color: 'var(--integrity-broken)', label: 'Broken' },
+        };
+        const wc = whColors[s.item.wholeness] || whColors.broken;
+        html += `<div style="margin-top:14px">
+          <div class="detail-label">Integrity</div>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
+            <span style="width:8px;height:8px;border-radius:50%;background:${wc.color};display:inline-block"></span>
+            <span style="font-size:12px;color:${wc.color};font-weight:600">${wc.label}</span>
+          </div>
+        </div>`;
+      }
+
+      if (s.type === 'action') {
         // Exec-plan placeholder — filled asynchronously after render
         html += `<div id="exec-plan-detail" style="margin-top:16px">
           <div class="detail-label" style="opacity:0.4">Loading exec-plan…</div>
