@@ -77,6 +77,7 @@ Display: `Running /declare:discuss [M-XX]...`
 
 Spawn a Task agent:
 - subagent_type: `general-purpose`
+- model: `opus`
 - description: `Discuss M-XX implementation decisions`
 - prompt:
   ```
@@ -123,7 +124,7 @@ Also read the milestone's PLAN.md (at `milestoneFolderPath/PLAN.md`) for action 
 
 **Step 6: Spawn declare-planner.**
 
-Spawn a Task agent using `agents/declare-planner.md` with the following prompt:
+Spawn a Task agent using `agents/declare-planner.md` with `model: "opus"` and the following prompt:
 
 ```
 Plan milestone ${MILESTONE} actions.
@@ -150,7 +151,7 @@ Wait for the planner to complete.
 
 **Step 7: Spawn declare-plan-checker.**
 
-After planner completes, spawn a Task agent using `agents/declare-plan-checker.md` with the following prompt:
+After planner completes, spawn a Task agent using `agents/declare-plan-checker.md` with `model: "haiku"` and the following prompt:
 
 ```
 Verify EXEC-PLAN files for milestone ${MILESTONE}.
@@ -183,7 +184,7 @@ If **ISSUES FOUND**: proceed to Step 9 (revision loop).
 
 Track revision count. If revision count >= 3, skip to Step 9 with a warning.
 
-Spawn declare-planner again in revision mode:
+Spawn declare-planner again in revision mode with `model: "opus"`:
 
 ```
 Revise EXEC-PLAN files for milestone ${MILESTONE} based on checker feedback.
@@ -283,6 +284,7 @@ After displaying the summary, reload the graph and check for milestones that sti
   For each wave, spawn one Task agent per milestone **in the same response** so they execute in parallel:
 
   Subagent type: `gsd-executor`
+  Model: `opus`
   Prompt per milestone:
   ```
   Execute milestone [M-XX] "[title]" for the Declare project.

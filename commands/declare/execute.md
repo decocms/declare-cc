@@ -126,7 +126,7 @@ Spawning [count] agent(s)...
 
 **3c. Spawn executor agents in parallel using the Task tool:**
 
-For each action in the wave, spawn a Task with instructions like:
+For each action in the wave, spawn a Task with `model: "opus"` and instructions like:
 
 ```
 Execute the plan at [outputPath].
