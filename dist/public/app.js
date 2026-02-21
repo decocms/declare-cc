@@ -352,7 +352,6 @@ function buildNodeEl(item, type, derived = {}) {
   // Integrity indicator — small colored dot next to status badge
   // Skip for "broken" when node has no children (treat as pending/not-yet-computable)
   let integrityDotHtml = '';
-  const wh = item.wholeness;
   if (wh === 'whole' || wh === 'partial') {
     integrityDotHtml = `<span class="integrity-dot integrity-${wh}" title="Integrity: ${wh}"></span>`;
   } else if (wh === 'broken') {
@@ -1036,11 +1035,156 @@ async function loadExecPlan(actionId) {
       </div>`;
     }
 
+    // Output log panel (hidden by default, shown when executing)
+    html += `<div id="output-log" class="output-log" style="display:none"></div>`;
+
     container.innerHTML = html || `<div class="detail-label" style="opacity:0.4">No exec-plan details</div>`;
+
+    // Wire button click handlers
+    const execBtn = document.getElementById('exec-action-btn');
+    if (execBtn) {
+      execBtn.addEventListener('click', () => executeAction(actionId));
+    }
+    const stopBtn = document.getElementById('stop-action-btn');
+    if (stopBtn) {
+      stopBtn.addEventListener('click', () => stopAction(actionId));
+    }
+
+    // If action is already running, show log and subscribe immediately
+    if (isRunning) {
+      subscribeToOutput(actionId);
+    }
 
   } catch (e) {
     if (container) container.innerHTML = `<div class="detail-label" style="opacity:0.4">Could not load exec-plan</div>`;
   }
+}
+
+// ─── Execution controls ───────────────────────────────────────────────────────
+
+/**
+ * Trigger action execution via POST /api/action/:id/execute.
+ * @param {string} actionId
+ */
+async function executeAction(actionId) {
+  const btn = document.getElementById('exec-action-btn');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '&#9654; Running...';
+  }
+
+  try {
+    const res = await fetch(`/api/action/${encodeURIComponent(actionId)}/execute`, { method: 'POST' });
+    const data = await res.json();
+
+    if (!res.ok) {
+      // Show error in output log
+      const logEl = document.getElementById('output-log');
+      if (logEl) {
+        logEl.style.display = '';
+        logEl.textContent = `Error: ${data.error || 'Failed to start execution'}`;
+      }
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = '&#9654; Execute';
+      }
+      return;
+    }
+
+    runningActions.add(actionId);
+    updateRunningIndicators();
+    subscribeToOutput(actionId);
+
+    // Re-render exec plan panel to show Stop button instead of Execute
+    loadExecPlan(actionId);
+  } catch (err) {
+    const logEl = document.getElementById('output-log');
+    if (logEl) {
+      logEl.style.display = '';
+      logEl.textContent = `Error: ${err.message}`;
+    }
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '&#9654; Execute';
+    }
+  }
+}
+
+/**
+ * Stop a running action via POST /api/action/:id/stop.
+ * @param {string} actionId
+ */
+async function stopAction(actionId) {
+  const btn = document.getElementById('stop-action-btn');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '&#9632; Stopping...';
+  }
+
+  try {
+    await fetch(`/api/action/${encodeURIComponent(actionId)}/stop`, { method: 'POST' });
+  } catch (_) {
+    // Will be handled by action-complete event
+  }
+}
+
+/**
+ * Subscribe to SSE output for a given action.
+ * Shows the output log panel and sets currentOutputActionId so SSE events route here.
+ * @param {string} actionId
+ */
+function subscribeToOutput(actionId) {
+  currentOutputActionId = actionId;
+  const logEl = document.getElementById('output-log');
+  if (logEl) {
+    logEl.style.display = '';
+    logEl.innerHTML = '';
+  }
+}
+
+/**
+ * Handle incoming action-output SSE event.
+ * @param {MessageEvent} e
+ */
+function handleActionOutput(e) {
+  try {
+    const { actionId, text } = JSON.parse(e.data);
+    if (actionId !== currentOutputActionId) return;
+    const logEl = document.getElementById('output-log');
+    if (!logEl) return;
+    logEl.appendChild(document.createTextNode(text + '\n'));
+    logEl.scrollTop = logEl.scrollHeight;
+  } catch (_) {}
+}
+
+/**
+ * Handle incoming action-complete SSE event.
+ * @param {MessageEvent} e
+ */
+function handleActionComplete(e) {
+  try {
+    const { actionId, exitCode } = JSON.parse(e.data);
+    if (actionId !== currentOutputActionId) return;
+
+    // Show exit code in log
+    const logEl = document.getElementById('output-log');
+    if (logEl) {
+      const span = document.createElement('span');
+      span.className = `exit-code ${exitCode === 0 ? 'success' : 'failure'}`;
+      span.textContent = `Process exited with code ${exitCode}`;
+      logEl.appendChild(span);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    // Update state
+    runningActions.delete(actionId);
+    updateRunningIndicators();
+    currentOutputActionId = null;
+
+    // Refresh graph and re-render the panel
+    loadData();
+    loadExecPlan(actionId);
+  } catch (_) {}
 }
 
 // ─── Focus mode — FLIP technique ──────────────────────────────────────────────
@@ -1617,6 +1761,8 @@ function connectSSE() {
   es.addEventListener('activity', () => {
     loadActivity();
   });
+  es.addEventListener('action-output', handleActionOutput);
+  es.addEventListener('action-complete', handleActionComplete);
   es.addEventListener('error', () => {
     // Connection dropped — reconnect after 3s
     es.close();
