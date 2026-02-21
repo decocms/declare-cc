@@ -21,3 +21,7 @@
 | M-15 | Session management                      | DONE    | D-05     | YES  |
 | M-16 | Configuration and health                | DONE    | D-05     | YES  |
 | M-17 | Self-update system                      | DONE    | D-05     | YES  |
+| M-18 | Browser-based declaration capture       | PENDING | D-06     | NO   |
+| M-19 | Browser-based milestone derivation      | PENDING | D-06     | NO   |
+| M-20 | Browser-based action derivation         | PENDING | D-06     | NO   |
+| M-21 | UI workflow state machine               | PENDING | D-06     | NO   |
