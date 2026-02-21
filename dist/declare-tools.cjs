@@ -896,6 +896,71 @@ var require_engine = __commonJS({
       get size() {
         return this.nodes.size;
       }
+      // ---------------------------------------------------------------------------
+      // Wholeness computation (bottom-up integrity model)
+      // ---------------------------------------------------------------------------
+      /**
+       * Compute wholeness state for every node in the graph.
+       *
+       * Bottom-up, three-pass computation:
+       *   1. Actions: whole if isCompleted(status), broken otherwise
+       *   2. Milestones: whole if ALL child actions whole, partial if SOME, broken if NONE (or no children)
+       *   3. Declarations: whole if ALL child milestones whole, partial if SOME, broken if NONE (or no children)
+       *
+       * Milestone wholeness is computed from action completion, NOT from the milestone's own status field.
+       * Declaration wholeness is computed from milestone wholeness results.
+       *
+       * @returns {Map<string, string>} Map of node ID to wholeness state ("whole" | "partial" | "broken")
+       */
+      computeWholeness() {
+        const wholeness = /* @__PURE__ */ new Map();
+        for (const [id, node] of this.nodes) {
+          if (node.type === "action") {
+            wholeness.set(id, isCompleted(node.status) ? "whole" : "broken");
+          }
+        }
+        for (const [id, node] of this.nodes) {
+          if (node.type === "milestone") {
+            const children = this.downEdges.get(id);
+            if (!children || children.size === 0) {
+              wholeness.set(id, "broken");
+              continue;
+            }
+            let wholeCount = 0;
+            for (const childId of children) {
+              if (wholeness.get(childId) === "whole") wholeCount++;
+            }
+            if (wholeCount === children.size) {
+              wholeness.set(id, "whole");
+            } else if (wholeCount > 0) {
+              wholeness.set(id, "partial");
+            } else {
+              wholeness.set(id, "broken");
+            }
+          }
+        }
+        for (const [id, node] of this.nodes) {
+          if (node.type === "declaration") {
+            const children = this.downEdges.get(id);
+            if (!children || children.size === 0) {
+              wholeness.set(id, "broken");
+              continue;
+            }
+            let wholeCount = 0;
+            for (const childId of children) {
+              if (wholeness.get(childId) === "whole") wholeCount++;
+            }
+            if (wholeCount === children.size) {
+              wholeness.set(id, "whole");
+            } else if (wholeCount > 0) {
+              wholeness.set(id, "partial");
+            } else {
+              wholeness.set(id, "broken");
+            }
+          }
+        }
+        return wholeness;
+      }
       /**
        * Get graph statistics.
        * @returns {{ declarations: number, milestones: number, actions: number, edges: number, byStatus: {PENDING: number, ACTIVE: number, DONE: number} }}
@@ -926,7 +991,10 @@ var require_engine = __commonJS({
         return node ? { id: node.id, type: node.type, title: node.title, status: node.status } : { id: e.node, type: "unknown", title: "", status: "" };
       });
     }
-    module2.exports = { DeclareDag, COMPLETED_STATUSES, isCompleted, findOrphans };
+    function computeWholeness(dag) {
+      return dag.computeWholeness();
+    }
+    module2.exports = { DeclareDag, COMPLETED_STATUSES, isCompleted, findOrphans, computeWholeness };
   }
 });
 
