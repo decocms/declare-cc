@@ -1678,10 +1678,11 @@ var require_load_graph = __commonJS({
       const graphResult = buildDagFromDisk(cwd);
       if (graphResult.error) return graphResult;
       const { dag, declarations, milestones, actions } = graphResult;
+      const wholeness = dag.computeWholeness();
       return {
-        declarations,
-        milestones,
-        actions,
+        declarations: declarations.map((d) => ({ ...d, wholeness: wholeness.get(d.id) || "broken" })),
+        milestones: milestones.map((m) => ({ ...m, wholeness: wholeness.get(m.id) || "broken" })),
+        actions: actions.map((a) => ({ ...a, wholeness: wholeness.get(a.id) || "broken" })),
         stats: dag.stats(),
         validation: dag.validate()
       };
