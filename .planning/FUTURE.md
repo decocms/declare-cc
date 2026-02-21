@@ -34,3 +34,8 @@
 **Statement:** During planning, milestones are explicitly classified as agent-time or human-bound, with dependencies declared between them. Agent-time milestones are prioritized and run first — they prepare the outputs and context that human-bound milestones depend on — and when conditions are met, a play action executes all autonomous work in dependency order without interruption.
 **Status:** PENDING
 **Milestones:** 
+
+## D-08: Live Execution Visibility
+**Statement:** As agents execute, their work is visible in real-time in the UI — progress streams, produced files are openable inline with full markdown rendering, and commit outputs are linked — so the human sees results as they emerge without leaving the interface.
+**Status:** PENDING
+**Milestones:** 
