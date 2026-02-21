@@ -62,9 +62,9 @@ Spawning 4 researchers: STACK, FEATURES, ARCHITECTURE, PITFALLS...
 
 Spawn all 4 Task agents in the same response so they run in parallel. Each agent researches a specific domain.
 
-For each researcher, the prompt follows this pattern (fill in milestone-specific context):
+For each researcher, the prompt follows this pattern (fill in milestone-specific context). Each researcher Task is spawned with `model: "sonnet"`.
 
-**STACK researcher:**
+**STACK researcher** (model: `sonnet`):
 
 ```
 First, read agents/declare-researcher.md for your role and instructions.
@@ -91,7 +91,7 @@ Do NOT commit — the synthesizer will commit everything together.
 </output>
 ```
 
-**FEATURES researcher:**
+**FEATURES researcher** (model: `sonnet`):
 
 ```
 First, read agents/declare-researcher.md for your role and instructions.
@@ -118,7 +118,7 @@ Do NOT commit — the synthesizer will commit everything together.
 </output>
 ```
 
-**ARCHITECTURE researcher:**
+**ARCHITECTURE researcher** (model: `sonnet`):
 
 ```
 First, read agents/declare-researcher.md for your role and instructions.
@@ -145,7 +145,7 @@ Do NOT commit — the synthesizer will commit everything together.
 </output>
 ```
 
-**PITFALLS researcher:**
+**PITFALLS researcher** (model: `sonnet`):
 
 ```
 First, read agents/declare-researcher.md for your role and instructions.
@@ -191,7 +191,7 @@ Spawning synthesizer...
 
 If any researcher returned `## RESEARCH BLOCKED`, surface the blocker to the user before spawning the synthesizer. Ask whether to continue with partial research or abort.
 
-**Step 7: Spawn declare-research-synthesizer.**
+**Step 7: Spawn declare-research-synthesizer** (model: `sonnet`).
 
 ```
 First, read agents/declare-research-synthesizer.md for your role and instructions.

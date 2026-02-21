@@ -51,6 +51,7 @@ node dist/declare-tools.cjs commit "test(${MILESTONE_ID}): complete UAT - ${PASS
 **On gaps found — spawn parallel declare-debugger agents (one per gap):**
 
 For each gap in the UAT Gaps section, spawn a declare-debugger agent with:
+- `model: "opus"`
 - `symptoms_prefilled: true` (skip symptom gathering)
 - `goal: find_root_cause_only` (diagnose but don't fix)
 - Pre-filled symptoms from the gap's test_id, expected, and actual fields
