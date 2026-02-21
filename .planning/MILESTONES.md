@@ -10,7 +10,7 @@
 | M-21 | UI workflow state machine                  | PENDING | D-06     | YES  |
 | M-22 | Milestone classification in planning       | PENDING | D-07     | YES  |
 | M-23 | Milestone dependency graph                 | PENDING | D-07     | YES  |
-| M-24 | Readiness state per milestone              | PENDING | D-07     | NO   |
+| M-24 | Readiness state per milestone              | PENDING | D-07     | YES  |
 | M-25 | Play action for autonomous execution       | PENDING | D-07     | NO   |
 | M-26 | Real-time agent output streaming           | PENDING | D-08     | NO   |
 | M-27 | Inline file viewer with markdown rendering | PENDING | D-08     | NO   |
