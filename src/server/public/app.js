@@ -148,6 +148,9 @@ async function loadData() {
     graphData  = graph;
     statusData = status;
 
+    // Fetch running actions (non-blocking — catch errors so it doesn't fail the whole load)
+    await fetchRunningActions();
+
     hideOverlay();
     renderStatusBar();
     renderGraph();
@@ -164,6 +167,32 @@ async function loadData() {
       `Could not reach the Declare server.\n${err.message}\n\nMake sure the server is running:\n  node dist/declare-tools.cjs serve`
     );
   }
+}
+
+/**
+ * Fetch /api/running and update the runningActions set.
+ */
+async function fetchRunningActions() {
+  try {
+    const data = await fetchJson('/api/running');
+    runningActions = new Set(data.running || []);
+  } catch (_) {
+    // Non-critical — keep existing set
+  }
+}
+
+/**
+ * Update is-running class on action node elements based on runningActions set.
+ */
+function updateRunningIndicators() {
+  document.querySelectorAll('.node-action').forEach(el => {
+    const id = el.dataset.nodeId;
+    if (runningActions.has(id)) {
+      el.classList.add('is-running');
+    } else {
+      el.classList.remove('is-running');
+    }
+  });
 }
 
 function updateLastUpdated() {
@@ -397,6 +426,9 @@ function renderGraph() {
 
   // Draw edges after layout settles
   requestAnimationFrame(() => drawEdges());
+
+  // Mark running actions with pulsing indicator
+  updateRunningIndicators();
 }
 
 // ─── Edge drawing ─────────────────────────────────────────────────────────────
@@ -801,21 +833,39 @@ function renderPanelChain(item, type) {
         }
       }
 
-      // Wholeness indicator in panel
-      if (s.item.wholeness && s.item.wholeness !== 'pending') {
-        const whColors = {
-          whole: { color: 'var(--integrity-whole)', label: 'Whole' },
-          partial: { color: 'var(--integrity-partial)', label: 'Partial' },
-          broken: { color: 'var(--integrity-broken)', label: 'Broken' },
-        };
-        const wc = whColors[s.item.wholeness] || whColors.broken;
-        html += `<div style="margin-top:14px">
-          <div class="detail-label">Integrity</div>
-          <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
-            <span style="width:8px;height:8px;border-radius:50%;background:${wc.color};display:inline-block"></span>
-            <span style="font-size:12px;color:${wc.color};font-weight:600">${wc.label}</span>
-          </div>
-        </div>`;
+      // Wholeness section with badge and breakdown counts
+      const panelWh = s.item.wholeness;
+      if (panelWh) {
+        let breakdownHtml = '';
+
+        if (s.type === 'milestone') {
+          // Count done vs total actions for this milestone
+          const mActions = (graphData.actions || []).filter(a =>
+            (a.causes || []).some(c => c === s.item.id)
+          );
+          const doneActions = mActions.filter(a =>
+            ['DONE','KEPT','HONORED'].includes(a.status)
+          ).length;
+          breakdownHtml = `<div class="detail-value" style="margin-top:6px">${doneActions}/${mActions.length} actions done</div>`;
+        }
+
+        if (s.type === 'declaration') {
+          // Count done vs total milestones realizing this declaration
+          const realizedByDecl = (graphData.milestones || []).filter(m =>
+            (m.realizes || []).some(r => r === s.item.id)
+          );
+          const doneMilestones = realizedByDecl.filter(m =>
+            ['DONE','KEPT','HONORED'].includes(m.status)
+          ).length;
+          breakdownHtml = `<div class="detail-value" style="margin-top:6px">${doneMilestones}/${realizedByDecl.length} milestones done</div>`;
+        }
+
+        html += `
+          <div class="detail-section">
+            <div class="detail-label">Wholeness</div>
+            <span class="wholeness-badge wb-${panelWh}">${panelWh}</span>
+            ${breakdownHtml}
+          </div>`;
       }
 
       if (s.type === 'action') {
@@ -895,6 +945,20 @@ async function loadExecPlan(actionId) {
         ${modelBadgeHtml}
         ${metaParts.map(p => `<span style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:2px 8px;font-size:10px;font-weight:600;color:var(--text-dim)">${p}</span>`).join('')}
       </div>`;
+    }
+
+    // Execute / Stop button
+    const actionItem = graphData ? graphData.actions.find(a => a.id === actionId) : null;
+    const actionStatus = actionItem ? (actionItem.status || 'PENDING') : 'PENDING';
+    const isCompleted = COMPLETED.has(actionStatus);
+    const isRunning = runningActions.has(actionId);
+
+    if (!isCompleted) {
+      if (isRunning) {
+        html += `<div style="margin-bottom:14px"><button class="exec-btn stop" id="stop-action-btn" data-action-id="${actionId}">&#9632; Stop</button></div>`;
+      } else {
+        html += `<div style="margin-bottom:14px"><button class="exec-btn" id="exec-action-btn" data-action-id="${actionId}">&#9654; Execute</button></div>`;
+      }
     }
 
     // Files modified
