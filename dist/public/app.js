@@ -814,8 +814,18 @@ async function loadExecPlan(actionId) {
     if (ep.dependsOn && ep.dependsOn.length) metaParts.push(`Depends: ${ep.dependsOn.join(', ')}`);
     if (data.summaryExists) metaParts.push('✓ Executed');
 
-    if (metaParts.length) {
-      html += `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">
+    // Model badge
+    let modelBadgeHtml = '';
+    if (data.model) {
+      const mu = String(data.model).toUpperCase();
+      const mc = { OPUS: '#a78bfa', SONNET: '#60a5fa', HAIKU: '#34d399' }[mu] || 'var(--text-dim)';
+      const mb = { OPUS: 'rgba(167,139,250,0.12)', SONNET: 'rgba(96,165,250,0.12)', HAIKU: 'rgba(52,211,153,0.12)' }[mu] || 'var(--surface2)';
+      modelBadgeHtml = `<span class="model-badge" style="background:${mb};color:${mc};border:1px solid ${mc}33;border-radius:5px;padding:2px 7px;font-size:9px;font-weight:800;letter-spacing:0.08em;font-family:monospace">${mu}</span>`;
+    }
+
+    if (metaParts.length || modelBadgeHtml) {
+      html += `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;align-items:center">
+        ${modelBadgeHtml}
         ${metaParts.map(p => `<span style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:2px 8px;font-size:10px;font-weight:600;color:var(--text-dim)">${p}</span>`).join('')}
       </div>`;
     }

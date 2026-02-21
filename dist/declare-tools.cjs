@@ -3266,6 +3266,25 @@ var require_get_exec_plan = __commonJS({
       );
       return match ? join(milestoneFolder, match) : null;
     }
+    function resolveActionModel(cwd, summaryContent) {
+      try {
+        if (summaryContent) {
+          const fmMatch = summaryContent.match(/^---\n([\s\S]*?)\n---/);
+          if (fmMatch) {
+            const fm = parseFrontmatter(fmMatch[1]);
+            if (fm.model) return String(fm.model);
+          }
+        }
+        const configPath = join(cwd, ".planning", "config.json");
+        if (existsSync(configPath)) {
+          const config = JSON.parse(readFileSync(configPath, "utf-8"));
+          return config.modelAssignment?.executor ?? null;
+        }
+        return null;
+      } catch {
+        return null;
+      }
+    }
     function runGetExecPlan2(cwd, args) {
       const actionId = parseFlag(args, "action");
       if (!actionId) {
@@ -3293,7 +3312,8 @@ var require_get_exec_plan = __commonJS({
           milestoneId: milestone.id,
           milestoneTitle: milestone.title,
           execPlan: null,
-          summaryExists: false
+          summaryExists: false,
+          model: resolveActionModel(cwd, null)
         };
       }
       const raw = readFileSync(execPlanPath, "utf-8");
@@ -3307,12 +3327,14 @@ var require_get_exec_plan = __commonJS({
       const summaryPath = join(milestoneFolder, `${actionId}-SUMMARY.md`);
       const summaryExists = existsSync(summaryPath);
       const summaryContent = summaryExists ? readFileSync(summaryPath, "utf-8") : null;
+      const model = resolveActionModel(cwd, summaryContent);
       return {
         actionId,
         actionTitle: action.title,
         status: action.status,
         milestoneId: milestone.id,
         milestoneTitle: milestone.title,
+        model,
         execPlan: {
           wave: frontmatter.wave ? Number(frontmatter.wave) : null,
           autonomous: frontmatter.autonomous === "true" || frontmatter.autonomous === true,

@@ -143,6 +143,36 @@ function findExecPlan(milestoneFolder, actionId) {
 }
 
 /**
+ * Resolve which model ran (or will run) an action.
+ * Priority: SUMMARY.md frontmatter `model` field → config.json modelAssignment.executor → null.
+ *
+ * @param {string} cwd
+ * @param {string | null} summaryContent
+ * @returns {string | null}
+ */
+function resolveActionModel(cwd, summaryContent) {
+  try {
+    // Check SUMMARY.md frontmatter for model field
+    if (summaryContent) {
+      const fmMatch = summaryContent.match(/^---\n([\s\S]*?)\n---/);
+      if (fmMatch) {
+        const fm = parseFrontmatter(fmMatch[1]);
+        if (fm.model) return String(fm.model);
+      }
+    }
+    // Fall back to config.json modelAssignment
+    const configPath = join(cwd, '.planning', 'config.json');
+    if (existsSync(configPath)) {
+      const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+      return config.modelAssignment?.executor ?? null;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Run the get-exec-plan command.
  *
  * @param {string} cwd
@@ -184,6 +214,7 @@ function runGetExecPlan(cwd, args) {
       milestoneTitle: milestone.title,
       execPlan: null,
       summaryExists: false,
+      model: resolveActionModel(cwd, null),
     };
   }
 
@@ -205,12 +236,16 @@ function runGetExecPlan(cwd, args) {
   const summaryExists = existsSync(summaryPath);
   const summaryContent = summaryExists ? readFileSync(summaryPath, 'utf-8') : null;
 
+  // Resolve model: prefer SUMMARY.md frontmatter, fall back to config.json
+  const model = resolveActionModel(cwd, summaryContent);
+
   return {
     actionId,
     actionTitle: action.title,
     status: action.status,
     milestoneId: milestone.id,
     milestoneTitle: milestone.title,
+    model,
     execPlan: {
       wave: frontmatter.wave ? Number(frontmatter.wave) : null,
       autonomous: frontmatter.autonomous === 'true' || frontmatter.autonomous === true,
