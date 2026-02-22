@@ -1119,6 +1119,80 @@ function watchPlanning(cwd) {
 }
 
 /**
+ * Handle GET /api/node/:id/revisions
+ * Returns current and previous version content for diffing.
+ *
+ * @param {http.ServerResponse} res
+ * @param {string} cwd
+ * @param {string} nodeId
+ */
+function handleGetRevisions(res, cwd, nodeId) {
+  try {
+    const id = nodeId.toUpperCase();
+    const prefix = id.split('-')[0];
+    const planningDir = path.join(cwd, '.planning');
+
+    // Determine artifact path based on node type (same logic as handleRevise)
+    let artifactPath = null;
+    if (prefix === 'D') {
+      artifactPath = path.join(planningDir, 'FUTURE.md');
+    } else if (prefix === 'M') {
+      const folder = findMilestoneFolder(planningDir, id);
+      if (folder) artifactPath = path.join(folder, 'PLAN.md');
+    } else if (prefix === 'A') {
+      const graph = runLoadGraph(cwd);
+      if (!('error' in graph)) {
+        const action = graph.actions.find(a => a.id.toUpperCase() === id);
+        if (action) {
+          const milestoneId = (action.causes || [])[0];
+          if (milestoneId) {
+            const folder = findMilestoneFolder(planningDir, milestoneId);
+            if (folder) {
+              const aNum = id.replace(/^A-/, '');
+              artifactPath = path.join(folder, `A-${aNum}-EXEC-PLAN.md`);
+              if (!fs.existsSync(artifactPath)) {
+                artifactPath = path.join(folder, 'PLAN.md');
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (!artifactPath || !fs.existsSync(artifactPath)) {
+      sendJson(res, 404, { error: 'Artifact not found for node ' + id });
+      return;
+    }
+
+    const current = fs.readFileSync(artifactPath, 'utf-8');
+
+    // Read revisionRound from annotations
+    const annData = readAnnotations(cwd, id);
+    const revisionRound = annData.revisionRound || 0;
+
+    // Read previous version: .vN.md where N = revisionRound - 1
+    // The revision-runner versions files as artifact.v{round}.md before overwriting,
+    // where round is the round at the time of revision (before incrementing).
+    // So the previous version (before the latest revision) is at .v{revisionRound - 1}.md
+    // But actually: the runner copies to .v{round} where round is the round BEFORE incrementing.
+    // After revision round 1 completes, revisionRound becomes 1, and the file saved was .v0.md.
+    // So to get the version before the latest revision, we want .v{revisionRound - 1}.md
+    let previous = null;
+    if (revisionRound >= 1) {
+      const prevRound = revisionRound - 1;
+      const prevPath = artifactPath.replace('.md', '') + '.v' + prevRound + '.md';
+      if (fs.existsSync(prevPath)) {
+        previous = fs.readFileSync(prevPath, 'utf-8');
+      }
+    }
+
+    sendJson(res, 200, { current, previous, revisionRound });
+  } catch (err) {
+    sendJson(res, 500, { error: String(err) });
+  }
+}
+
+/**
  * Handle POST /api/node/:id/revise
  * Triggers a revision subprocess that sends open annotations to Claude CLI
  * for plan revision. Versions current artifact and overwrites on success.
@@ -1302,6 +1376,13 @@ function route(req, res, cwd) {
   const getAnnotationsMatch = method === 'GET' && urlPath.match(/^\/api\/node\/([^/]+)\/annotations$/);
   if (getAnnotationsMatch) {
     handleGetAnnotations(res, cwd, getAnnotationsMatch[1]);
+    return;
+  }
+
+  // GET /api/node/:id/revisions
+  const getRevisionsMatch = method === 'GET' && urlPath.match(/^\/api\/node\/([^/]+)\/revisions$/);
+  if (getRevisionsMatch) {
+    handleGetRevisions(res, cwd, getRevisionsMatch[1]);
     return;
   }
 

@@ -80,6 +80,9 @@ let annotatingLine = null;
 /** @type {string|null} Node ID of the currently displayed annotation panel */
 let annotationNodeId = null;
 
+/** @type {boolean} Whether the diff view is showing */
+let showingDiff = false;
+
 /** @type {string|null} Active revision session ID */
 let revisionSessionId = null;
 /** @type {string|null} Node ID being revised */
@@ -1280,6 +1283,129 @@ function fmtRelativeTime(ts) {
 }
 
 /**
+ * Compute a line-by-line diff between two texts using an LCS-based algorithm.
+ * Returns an array of { type: 'same' | 'add' | 'remove', text, oldNum, newNum }.
+ *
+ * @param {string[]} oldLines
+ * @param {string[]} newLines
+ * @returns {Array<{type: string, text: string, oldNum: number|null, newNum: number|null}>}
+ */
+function computeDiff(oldLines, newLines) {
+  const n = oldLines.length;
+  const m = newLines.length;
+
+  // Build LCS table (O(n*m) — fine for files under 500 lines)
+  const dp = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+  for (let i = 1; i <= n; i++) {
+    for (let j = 1; j <= m; j++) {
+      if (oldLines[i - 1] === newLines[j - 1]) {
+        dp[i][j] = dp[i - 1][j - 1] + 1;
+      } else {
+        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+      }
+    }
+  }
+
+  // Backtrack to build edit script
+  const result = [];
+  let i = n, j = m;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
+      result.push({ type: 'same', text: oldLines[i - 1], oldNum: i, newNum: j });
+      i--; j--;
+    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+      result.push({ type: 'add', text: newLines[j - 1], oldNum: null, newNum: j });
+      j--;
+    } else {
+      result.push({ type: 'remove', text: oldLines[i - 1], oldNum: i, newNum: null });
+      i--;
+    }
+  }
+
+  result.reverse();
+  return result;
+}
+
+/**
+ * Render an inline diff view comparing current artifact against the previous revision round.
+ * Replaces the annotation panel content with a diff display.
+ *
+ * @param {string} nodeId
+ */
+async function renderDiffView(nodeId) {
+  // Remove existing annotation panel
+  const existingPanel = document.getElementById('annotation-panel');
+  if (!existingPanel) return;
+
+  existingPanel.innerHTML = '<div class="detail-label" style="margin-bottom:10px">Loading diff...</div>';
+
+  try {
+    const resp = await fetch('/api/node/' + encodeURIComponent(nodeId) + '/revisions');
+    if (!resp.ok) {
+      existingPanel.innerHTML = '<div class="detail-label" style="margin-bottom:10px">Failed to load revisions</div>';
+      return;
+    }
+
+    const data = await resp.json();
+    const { current, previous, revisionRound } = data;
+
+    if (previous === null || previous === undefined) {
+      existingPanel.innerHTML = `<div class="detail-label" style="margin-bottom:10px;display:flex;align-items:center;justify-content:space-between">
+        <span>Diff View</span>
+        <button class="diff-close-btn" id="diff-close-btn">Close Diff</button>
+      </div>
+      <div style="color:var(--text-dim);font-size:12px;padding:8px 0">No previous version available for comparison.</div>`;
+
+      existingPanel.querySelector('#diff-close-btn').addEventListener('click', () => {
+        showingDiff = false;
+        const type = nodeId.startsWith('A-') ? 'action' : nodeId.startsWith('M-') ? 'milestone' : 'declaration';
+        renderAnnotationPanel(nodeId, type);
+      });
+      return;
+    }
+
+    const oldLines = previous.split('\n');
+    const newLines = current.split('\n');
+    const diffEntries = computeDiff(oldLines, newLines);
+
+    // Build diff HTML
+    let linesHtml = '';
+    for (const entry of diffEntries) {
+      const cls = 'diff-line diff-' + entry.type;
+      const oldGutter = entry.oldNum !== null ? entry.oldNum : '';
+      const newGutter = entry.newNum !== null ? entry.newNum : '';
+      const prefix = entry.type === 'add' ? '+' : entry.type === 'remove' ? '-' : ' ';
+      const prefixCls = entry.type === 'add' || entry.type === 'remove' ? ' diff-' + entry.type : '';
+
+      linesHtml += `<div class="${cls}">`;
+      linesHtml += `<span class="diff-gutter diff-gutter-old">${oldGutter}</span>`;
+      linesHtml += `<span class="diff-gutter diff-gutter-new">${newGutter}</span>`;
+      linesHtml += `<span class="diff-prefix${prefixCls}">${prefix}</span>`;
+      linesHtml += `<span class="diff-text">${escHtml(entry.text)}</span>`;
+      linesHtml += `</div>`;
+    }
+
+    const prevRound = revisionRound - 1;
+    existingPanel.innerHTML = `<div class="diff-view">
+      <div class="diff-header">
+        <span>Diff: Round ${prevRound} &rarr; Round ${revisionRound}</span>
+        <button class="diff-close-btn" id="diff-close-btn">Close Diff</button>
+      </div>
+      ${linesHtml}
+    </div>`;
+
+    existingPanel.querySelector('#diff-close-btn').addEventListener('click', () => {
+      showingDiff = false;
+      const type = nodeId.startsWith('A-') ? 'action' : nodeId.startsWith('M-') ? 'milestone' : 'declaration';
+      renderAnnotationPanel(nodeId, type);
+    });
+
+  } catch (err) {
+    existingPanel.innerHTML = '<div class="detail-label" style="margin-bottom:10px">Error loading diff: ' + escHtml(String(err)) + '</div>';
+  }
+}
+
+/**
  * Render the annotation panel for a node. Appends to $panelBody after existing content.
  * Fetches artifact content and annotations, builds line-numbered display with inline comments.
  *
@@ -1350,8 +1476,11 @@ async function renderAnnotationPanel(nodeId, type) {
   const roundBadge = revisionRound >= 1
     ? `<span class="revision-round-badge">Round ${revisionRound}</span>`
     : '';
+  const diffToggle = revisionRound >= 1
+    ? `<button class="ann-diff-toggle" id="ann-diff-toggle">Show Diff</button>`
+    : '';
   let headerHtml = `<div class="detail-label" style="margin-bottom:10px;display:flex;align-items:center;justify-content:space-between">
-    Annotations${roundBadge}
+    <span style="display:flex;align-items:center">Annotations${roundBadge}${diffToggle}</span>
     <span class="annotation-count">${commentCount} comment${commentCount !== 1 ? 's' : ''}</span>
   </div>`;
 
@@ -1441,6 +1570,18 @@ async function renderAnnotationPanel(nodeId, type) {
 
   // Wire event delegation on the annotation panel
   el.addEventListener('click', async (e) => {
+    // Click diff toggle button
+    if (e.target.id === 'ann-diff-toggle') {
+      showingDiff = !showingDiff;
+      if (showingDiff) {
+        renderDiffView(nodeId);
+      } else {
+        showingDiff = false;
+        renderAnnotationPanel(nodeId, type);
+      }
+      return;
+    }
+
     // Click on line number to toggle annotation input
     const lineNumEl = e.target.closest('.ann-line-num');
     if (lineNumEl) {
