@@ -41,6 +41,7 @@ const { runAddMilestonesBatch } = require('../commands/add-milestones-batch');
 const { buildDagFromDisk } = require('../commands/build-dag');
 const { computeWorkabilityPath } = require('../graph/engine');
 const { findMilestoneFolder } = require('../artifacts/milestone-folders');
+const { parseFutureFile, writeFutureFile } = require('../artifacts/future');
 const { parsePlanFile, writePlanFile } = require('../artifacts/plan');
 const { computeWorkflowState } = require('../commands/workflow-state');
 
@@ -968,6 +969,11 @@ function route(req, res, cwd) {
   if (actionDeriveRunningMatch) {
     const adr = getActionDerivationRunner(cwd);
     sendJson(res, 200, { running: adr.running() });
+    return;
+  }
+
+  if (urlPath === '/api/workflow/state') {
+    handleWorkflowState(res, cwd);
     return;
   }
 
