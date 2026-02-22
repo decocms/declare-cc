@@ -4228,6 +4228,123 @@ data: ${JSON.stringify(data)}
   }
 });
 
+// src/server/derivation-runner.js
+var require_derivation_runner = __commonJS({
+  "src/server/derivation-runner.js"(exports2, module2) {
+    "use strict";
+    var { spawn } = require("node:child_process");
+    function buildPrompt(declarationId, declarations) {
+      let targets;
+      if (declarationId) {
+        targets = declarations.filter((d) => d.id === declarationId);
+      } else {
+        targets = declarations.filter(
+          (d) => !d.milestones || d.milestones.length === 0
+        );
+      }
+      const formatted = targets.map((d) => `- ${d.id}: ${d.statement}`).join("\n");
+      return 'You are deriving milestones for a Declare project. Given these declarations, propose 2-4 milestones per declaration by asking "For this to be true, what must be true?" Output ONLY a JSON array with no markdown fencing: [{"title": "milestone title", "realizes": "D-XX", "reason": "why this must be true"}]. Declarations:\n\n' + formatted;
+    }
+    function createDerivationRunner(sseClients, cwd) {
+      let current = null;
+      function broadcast(event, data) {
+        const payload = `event: ${event}
+data: ${JSON.stringify(data)}
+
+`;
+        for (const client of sseClients) {
+          try {
+            client.write(payload);
+          } catch (_) {
+            sseClients.delete(client);
+          }
+        }
+      }
+      function createLineHandler(sessionId, streamName, accumulator) {
+        let buffer = "";
+        return (chunk) => {
+          const text = chunk.toString();
+          if (streamName === "stdout") {
+            accumulator.text += text;
+          }
+          buffer += text;
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+          for (const line of lines) {
+            broadcast("derivation-output", {
+              sessionId,
+              text: line,
+              stream: streamName
+            });
+          }
+        };
+      }
+      function derive(declarationId, declarations) {
+        if (current) {
+          return { error: "busy", status: 409 };
+        }
+        const sessionId = `deriv-${Date.now()}`;
+        const prompt = buildPrompt(declarationId, declarations);
+        const proc = spawn("claude", ["-p", prompt, "--output-format", "text", "--no-input"], {
+          cwd,
+          env: { ...process.env, FORCE_COLOR: "0" }
+        });
+        current = { sessionId, proc };
+        const stdout = { text: "" };
+        if (proc.stdout) {
+          proc.stdout.on("data", createLineHandler(sessionId, "stdout", stdout));
+        }
+        if (proc.stderr) {
+          proc.stderr.on("data", createLineHandler(sessionId, "stderr", stdout));
+        }
+        proc.on("close", (exitCode) => {
+          let milestones = null;
+          if (exitCode === 0) {
+            try {
+              milestones = JSON.parse(stdout.text.trim());
+            } catch (_) {
+            }
+          }
+          current = null;
+          broadcast("derivation-complete", {
+            sessionId,
+            exitCode: exitCode ?? -1,
+            milestones
+          });
+        });
+        proc.on("error", (_err) => {
+          current = null;
+          broadcast("derivation-complete", {
+            sessionId,
+            exitCode: -1,
+            milestones: null
+          });
+        });
+        return { ok: true, sessionId };
+      }
+      function stop() {
+        if (!current) {
+          return { error: "not_running", status: 404 };
+        }
+        current.proc.kill("SIGTERM");
+        return { ok: true };
+      }
+      function running() {
+        return current ? current.sessionId : null;
+      }
+      return { derive, stop, running };
+    }
+    if (require.main === module2) {
+      const runner = createDerivationRunner(/* @__PURE__ */ new Set(), ".");
+      console.log("derive:", typeof runner.derive);
+      console.log("stop:", typeof runner.stop);
+      console.log("running:", typeof runner.running);
+      console.log("OK");
+    }
+    module2.exports = { createDerivationRunner };
+  }
+});
+
 // src/server/index.js
 var require_server = __commonJS({
   "src/server/index.js"(exports2, module2) {
@@ -4243,8 +4360,11 @@ var require_server = __commonJS({
     var { runUpdateDeclaration: runUpdateDeclaration2 } = require_update_declaration();
     var { runDeleteDeclaration: runDeleteDeclaration2 } = require_delete_declaration();
     var { createProcessManager } = require_process_manager();
+    var { createDerivationRunner } = require_derivation_runner();
+    var { runAddMilestonesBatch: runAddMilestonesBatch2 } = require_add_milestones_batch();
     var { buildDagFromDisk } = require_build_dag();
     var { computeWorkabilityPath } = require_engine();
+    var { findMilestoneFolder } = require_milestone_folders();
     var MIME_TYPES = {
       ".html": "text/html; charset=utf-8",
       ".js": "application/javascript; charset=utf-8",
@@ -4366,6 +4486,31 @@ var require_server = __commonJS({
         sendJson(res, 500, { error: String(err) });
       }
     }
+    function handleMilestoneLog(res, cwd, milestoneId) {
+      const planningDir = path.join(cwd, ".planning");
+      const milestoneFolder = findMilestoneFolder(planningDir, milestoneId);
+      if (!milestoneFolder) {
+        sendJson(res, 404, { error: "Milestone folder not found" });
+        return;
+      }
+      const logPath = path.join(milestoneFolder, "execution.log");
+      fs.readFile(logPath, "utf-8", (err, data) => {
+        if (err) {
+          res.writeHead(200, {
+            "Content-Type": "text/plain; charset=utf-8",
+            "Access-Control-Allow-Origin": "*"
+          });
+          res.end("");
+          return;
+        }
+        res.writeHead(200, {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Content-Length": Buffer.byteLength(data),
+          "Access-Control-Allow-Origin": "*"
+        });
+        res.end(data);
+      });
+    }
     function handleWorkability(res, cwd, nodeId) {
       try {
         const result = buildDagFromDisk(cwd);
@@ -4450,11 +4595,67 @@ var require_server = __commonJS({
         sendJson(res, 500, { error: String(err) });
       }
     }
+    async function handleDerive(req, res, cwd) {
+      try {
+        const body = await readJsonBody(req);
+        const graph = runLoadGraph2(cwd);
+        if ("error" in graph) {
+          sendJson(res, 500, { error: graph.error });
+          return;
+        }
+        const declarations = graph.declarations.map((d) => ({
+          id: d.id,
+          statement: d.statement,
+          milestones: d.milestones || []
+        }));
+        const dr = getDerivationRunner(cwd);
+        const result = dr.derive(body.declarationId || null, declarations);
+        if (result.error) {
+          sendJson(res, result.status || 500, { error: result.error });
+          return;
+        }
+        sendJson(res, 202, { ok: true, sessionId: result.sessionId });
+      } catch (err) {
+        sendJson(res, 400, { error: String(err) });
+      }
+    }
+    function handleDeriveStop(res, cwd) {
+      const dr = getDerivationRunner(cwd);
+      const result = dr.stop();
+      if (result.error) {
+        sendJson(res, result.status || 500, { error: result.error });
+      } else {
+        sendJson(res, 200, { ok: true });
+      }
+    }
+    async function handleDeriveAccept(req, res, cwd) {
+      try {
+        const body = await readJsonBody(req);
+        if (!body.milestones || !Array.isArray(body.milestones) || body.milestones.length === 0) {
+          sendJson(res, 400, { error: "Missing or empty milestones array" });
+          return;
+        }
+        const result = runAddMilestonesBatch2(cwd, ["--json", JSON.stringify(body.milestones)]);
+        if ("error" in result) {
+          sendJson(res, 400, { error: result.error });
+          return;
+        }
+        sendJson(res, 200, result);
+        broadcastChange();
+      } catch (err) {
+        sendJson(res, 400, { error: String(err) });
+      }
+    }
     var sseClients = /* @__PURE__ */ new Set();
     var processManager = null;
     function getProcessManager(cwd) {
       if (!processManager) processManager = createProcessManager(sseClients, cwd);
       return processManager;
+    }
+    var derivationRunner = null;
+    function getDerivationRunner(cwd) {
+      if (!derivationRunner) derivationRunner = createDerivationRunner(sseClients, cwd);
+      return derivationRunner;
     }
     function broadcastChange() {
       for (const client of sseClients) {
@@ -4586,6 +4787,18 @@ var require_server = __commonJS({
           }
           return;
         }
+        if (urlPath === "/api/milestones/derive") {
+          handleDerive(req, res, cwd);
+          return;
+        }
+        if (urlPath === "/api/milestones/derive/stop") {
+          handleDeriveStop(res, cwd);
+          return;
+        }
+        if (urlPath === "/api/milestones/derive/accept") {
+          handleDeriveAccept(req, res, cwd);
+          return;
+        }
         sendJson(res, 404, { error: `Route not found: ${urlPath}` });
         return;
       }
@@ -4614,6 +4827,11 @@ var require_server = __commonJS({
         handleWorkability(res, cwd, workabilityMatch[1]);
         return;
       }
+      const milestoneLogMatch = urlPath.match(/^\/api\/milestone\/([^/]+)\/log$/);
+      if (milestoneLogMatch) {
+        handleMilestoneLog(res, cwd, milestoneLogMatch[1]);
+        return;
+      }
       const milestoneMatch = urlPath.match(/^\/api\/milestone\/([^/]+)$/);
       if (milestoneMatch) {
         handleMilestone(res, cwd, milestoneMatch[1]);
@@ -4622,6 +4840,11 @@ var require_server = __commonJS({
       if (urlPath === "/api/running") {
         const pm = getProcessManager(cwd);
         sendJson(res, 200, { running: pm.running() });
+        return;
+      }
+      if (urlPath === "/api/derivation/running") {
+        const dr = getDerivationRunner(cwd);
+        sendJson(res, 200, { running: dr.running() });
         return;
       }
       if (urlPath === "/api/activity") {

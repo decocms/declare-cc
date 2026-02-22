@@ -1138,6 +1138,156 @@
       text-decoration: underline;
     }
 
+    /* ── Declaration edit mode ── */
+    .decl-edit-mode input,
+    .decl-edit-mode textarea {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 4px;
+      padding: 8px 12px;
+      width: 100%;
+      font-size: 13px;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .decl-edit-mode input:focus,
+    .decl-edit-mode textarea:focus {
+      border-color: var(--decl-color);
+    }
+    .decl-edit-mode textarea {
+      resize: vertical;
+      min-height: 54px;
+    }
+    .decl-edit-mode label {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin-bottom: 4px;
+      margin-top: 12px;
+      display: block;
+    }
+    .decl-edit-mode label:first-child {
+      margin-top: 0;
+    }
+
+    .decl-edit-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-top: 14px;
+    }
+    .decl-edit-actions .btn-save {
+      background: var(--decl-color);
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      padding: 6px 16px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      transition: opacity 0.15s;
+    }
+    .decl-edit-actions .btn-save:hover { opacity: 0.9; }
+    .decl-edit-actions .btn-save:disabled { opacity: 0.5; cursor: not-allowed; }
+    .decl-edit-actions .btn-cancel {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      border-radius: 4px;
+      padding: 6px 16px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    .decl-edit-actions .btn-cancel:hover { border-color: var(--text-dim); color: var(--text); }
+
+    .delete-confirm {
+      margin-top: 12px;
+      padding: 10px 12px;
+      background: var(--broken-bg);
+      border: 1px solid var(--broken-border);
+      border-radius: 6px;
+      font-size: 12px;
+      color: var(--broken-color);
+    }
+    .delete-confirm p {
+      margin-bottom: 8px;
+    }
+    .delete-confirm .delete-confirm-actions {
+      display: flex;
+      gap: 8px;
+    }
+    .delete-confirm .btn-confirm-delete {
+      background: var(--broken-color);
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      padding: 5px 14px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .delete-confirm .btn-confirm-cancel {
+      background: transparent;
+      border: 1px solid var(--broken-border);
+      color: var(--broken-color);
+      border-radius: 4px;
+      padding: 5px 14px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+
+    .decl-status-select {
+      background: var(--surface2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 8px 12px;
+      width: 100%;
+      font-size: 13px;
+      font-family: inherit;
+      outline: none;
+      cursor: pointer;
+      transition: border-color 0.15s;
+    }
+    .decl-status-select:focus {
+      border-color: var(--decl-color);
+    }
+
+    .decl-panel-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 16px;
+    }
+    .decl-panel-actions .btn-edit {
+      background: var(--decl-bg);
+      border: 1px solid var(--decl-border);
+      color: var(--decl-color);
+      border-radius: 4px;
+      padding: 5px 14px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .decl-panel-actions .btn-edit:hover { background: #0f2d50; border-color: var(--decl-color); }
+    .decl-panel-actions .btn-panel-delete {
+      background: transparent;
+      color: var(--broken-color);
+      border: 1px solid var(--broken-border);
+      border-radius: 4px;
+      padding: 5px 14px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      transition: background 0.15s;
+    }
+    .decl-panel-actions .btn-panel-delete:hover { background: var(--broken-bg); }
+
     /* Workability path section */
     .workability-path { margin-top: 4px; }
     .workability-path .wp-header {
