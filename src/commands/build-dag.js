@@ -45,6 +45,7 @@ function loadActionsFromFolders(planningDir) {
         title: action.title,
         status: action.status,
         produces: action.produces,
+        reviewState: action.reviewState || 'draft',
         causes: milestone ? [milestone] : [],
       });
     }
@@ -84,7 +85,7 @@ function buildDagFromDisk(cwd) {
   const dag = new DeclareDag();
 
   for (const d of declarations) {
-    const meta = {};
+    const meta = { reviewState: d.reviewState || 'draft' };
     if (d.ref) meta.ref = d.ref;
     dag.addNode(d.id, 'declaration', d.title, d.status || 'PENDING', meta);
   }
@@ -93,10 +94,11 @@ function buildDagFromDisk(cwd) {
       description: m.description || '',
       classification: m.classification || 'agent',
       dependsOn: m.dependsOn || [],
+      reviewState: m.reviewState || 'draft',
     });
   }
   for (const a of actions) {
-    dag.addNode(a.id, 'action', a.title, a.status || 'PENDING');
+    dag.addNode(a.id, 'action', a.title, a.status || 'PENDING', { reviewState: a.reviewState || 'draft' });
   }
 
   // Add edges: milestone->declaration (realizes)
