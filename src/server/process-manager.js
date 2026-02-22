@@ -11,10 +11,28 @@
  */
 
 const { spawn } = require('node:child_process');
+const fs = require('node:fs');
+const path = require('node:path');
+const { findMilestoneFolder } = require('../artifacts/milestone-folders');
 
 /**
- * @typedef {{ proc: import('child_process').ChildProcess, milestoneId: string }} ProcessEntry
+ * @typedef {{ proc: import('child_process').ChildProcess, milestoneId: string, logPath?: string }} ProcessEntry
  */
+
+/**
+ * Append a line to the execution log file. Never throws — write failures
+ * are swallowed so they cannot crash the server.
+ * @param {string | undefined} logPath
+ * @param {string} line
+ */
+function appendLog(logPath, line) {
+  if (!logPath) return;
+  try {
+    fs.appendFileSync(logPath, line + '\n', 'utf-8');
+  } catch (_) {
+    // Intentionally swallowed — log writing must never crash the server
+  }
+}
 
 /**
  * Create a process manager that spawns and tracks Claude CLI processes.
@@ -49,9 +67,10 @@ function createProcessManager(sseClients, cwd) {
    *
    * @param {string} actionId
    * @param {string} streamName - 'stdout' or 'stderr'
+   * @param {string | undefined} logPath - Path to execution.log (undefined to skip file logging)
    * @returns {(chunk: Buffer) => void}
    */
-  function createLineHandler(actionId, streamName) {
+  function createLineHandler(actionId, streamName, logPath) {
     let buffer = '';
     return (chunk) => {
       buffer += chunk.toString();
@@ -60,6 +79,7 @@ function createProcessManager(sseClients, cwd) {
       buffer = lines.pop() || '';
       for (const line of lines) {
         broadcast('action-output', { actionId, text: line, stream: streamName });
+        appendLog(logPath, `[${new Date().toISOString()}] [${actionId}] [${streamName}] ${line}`);
       }
     };
   }
@@ -87,26 +107,44 @@ function createProcessManager(sseClients, cwd) {
       env: { ...process.env, FORCE_COLOR: '0' },
     });
 
-    processes.set(actionId, { proc, milestoneId });
+    // Resolve milestone folder for execution log
+    const planningDir = path.join(cwd, '.planning');
+    const milestoneFolder = findMilestoneFolder(planningDir, milestoneId);
+    /** @type {string | undefined} */
+    let logPath;
+    if (milestoneFolder) {
+      logPath = path.join(milestoneFolder, 'execution.log');
+    } else {
+      process.stderr.write(`[declare] Warning: milestone folder not found for ${milestoneId}, skipping execution log\n`);
+    }
+
+    processes.set(actionId, { proc, milestoneId, logPath });
+
+    // Write start marker to execution log
+    appendLog(logPath, `\n=== START ${actionId} @ ${new Date().toISOString()} ===`);
 
     // Pipe stdout line-by-line
     if (proc.stdout) {
-      proc.stdout.on('data', createLineHandler(actionId, 'stdout'));
+      proc.stdout.on('data', createLineHandler(actionId, 'stdout', logPath));
     }
 
     // Pipe stderr line-by-line
     if (proc.stderr) {
-      proc.stderr.on('data', createLineHandler(actionId, 'stderr'));
+      proc.stderr.on('data', createLineHandler(actionId, 'stderr', logPath));
     }
 
     // Process exited
     proc.on('close', (exitCode) => {
+      const entry = processes.get(actionId);
+      appendLog(entry?.logPath, `=== END ${actionId} @ ${new Date().toISOString()} exit=${exitCode ?? -1} ===\n`);
       processes.delete(actionId);
       broadcast('action-complete', { actionId, exitCode: exitCode ?? -1 });
     });
 
     // Process failed to spawn (e.g. claude not found)
     proc.on('error', (_err) => {
+      const entry = processes.get(actionId);
+      appendLog(entry?.logPath, `=== ERROR ${actionId} @ ${new Date().toISOString()} ===\n`);
       processes.delete(actionId);
       broadcast('action-complete', { actionId, exitCode: -1 });
     });
