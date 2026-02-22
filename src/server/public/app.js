@@ -3275,6 +3275,45 @@ function switchView(mode) {
 
 // ─── Event wiring ─────────────────────────────────────────────────────────────
 
+// Topbar click — navigate to the referenced action/milestone in column browser
+if ($activityTopbar) {
+  $activityTopbar.addEventListener('click', function() {
+    var actionId = $activityTopbar.dataset.actionId;
+    var milestoneId = $activityTopbar.dataset.milestoneId;
+    if (!actionId && !milestoneId) return;
+    if (!graphData) return;
+
+    // Switch to column view if not already there
+    if (viewMode !== 'columns') {
+      switchView('columns');
+    }
+
+    // Navigate: find the declaration for this milestone, then select milestone, then action
+    if (milestoneId) {
+      var milestone = (graphData.milestones || []).find(function(m) { return m.id === milestoneId; });
+      if (milestone && milestone.realizes && milestone.realizes.length) {
+        colSelectedDecl = milestone.realizes[0];
+        colSelectedMile = milestoneId;
+        renderColumnBrowser();
+        selectNode(actionId || milestoneId, actionId ? 'action' : 'milestone');
+      }
+    } else if (actionId) {
+      // Try to find the milestone from the action
+      var action = (graphData.actions || []).find(function(a) { return a.id === actionId; });
+      if (action && action.causes && action.causes.length) {
+        var mId = action.causes[0];
+        var mile = (graphData.milestones || []).find(function(m) { return m.id === mId; });
+        if (mile && mile.realizes && mile.realizes.length) {
+          colSelectedDecl = mile.realizes[0];
+        }
+        colSelectedMile = mId;
+      }
+      renderColumnBrowser();
+      selectNode(actionId, 'action');
+    }
+  });
+}
+
 // File viewer modal close handlers
 document.getElementById('file-viewer-close').addEventListener('click', closeFileViewer);
 document.getElementById('file-viewer-modal').addEventListener('click', (e) => {
