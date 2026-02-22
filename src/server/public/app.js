@@ -1241,6 +1241,63 @@ function escHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
+// ─── Markdown Renderer ────────────────────────────────────────────────────────
+function renderMarkdown(text) {
+  if (!text) return '';
+  const esc = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const codeBlocks = [];
+  text = text.replace(/^```(\w*)\n([\s\S]*?)^```/gm, (_, lang, code) => {
+    const idx = codeBlocks.length;
+    codeBlocks.push(`<pre><code${lang ? ` class="language-${esc(lang)}"` : ''}>${esc(code.replace(/\n$/, ''))}</code></pre>`);
+    return `\x00CODEBLOCK${idx}\x00`;
+  });
+  function inlineFormat(line) {
+    const ic = [];
+    line = line.replace(/`([^`]+)`/g, (_, c) => { const x = ic.length; ic.push(`<code>${esc(c)}</code>`); return `\x01IC${x}\x01`; });
+    line = line.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_, a, u) => `<img src="${esc(u)}" alt="${esc(a)}">`);
+    line = line.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, t, u) => `<a href="${esc(u)}">${t}</a>`);
+    line = line.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    line = line.replace(/__(.+?)__/g, '<strong>$1</strong>');
+    line = line.replace(/\*(.+?)\*/g, '<em>$1</em>');
+    line = line.replace(/(?<![a-zA-Z0-9])_(.+?)_(?![a-zA-Z0-9])/g, '<em>$1</em>');
+    line = line.replace(/\x01IC(\d+)\x01/g, (_, x) => ic[parseInt(x)]);
+    return line;
+  }
+  const lines = text.split('\n'); const output = []; let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    const cb = line.match(/^\x00CODEBLOCK(\d+)\x00$/);
+    if (cb) { output.push(codeBlocks[parseInt(cb[1])]); i++; continue; }
+    const hm = line.match(/^(#{1,6})\s+(.+)$/);
+    if (hm) { output.push(`<h${hm[1].length}>${inlineFormat(hm[2])}</h${hm[1].length}>`); i++; continue; }
+    if (/^(\*{3,}|-{3,}|_{3,})\s*$/.test(line)) { output.push('<hr>'); i++; continue; }
+    if (/^>\s?/.test(line)) { const bq = []; while (i < lines.length && /^>\s?/.test(lines[i])) { bq.push(lines[i].replace(/^>\s?/,'')); i++; } output.push(`<blockquote><p>${inlineFormat(bq.join(' '))}</p></blockquote>`); continue; }
+    if (i+1 < lines.length && /^\|/.test(line) && /^\|[\s:-]+\|/.test(lines[i+1])) { const hc = line.split('|').slice(1,-1).map(c=>c.trim()); i+=2; const rs=[]; while(i<lines.length && /^\|/.test(lines[i])){rs.push(lines[i].split('|').slice(1,-1).map(c=>c.trim()));i++;} let t='<table><thead><tr>'+hc.map(c=>`<th>${inlineFormat(c)}</th>`).join('')+'</tr></thead><tbody>'; rs.forEach(r=>{t+='<tr>'+r.map(c=>`<td>${inlineFormat(c)}</td>`).join('')+'</tr>';}); output.push(t+'</tbody></table>'); continue; }
+    if (/^[\s]*[-*]\s+/.test(line)) { const it=[]; while(i<lines.length && /^[\s]*[-*]\s+/.test(lines[i])){it.push(lines[i].replace(/^[\s]*[-*]\s+/,'')); i++;} output.push('<ul>'+it.map(x=>`<li>${inlineFormat(x)}</li>`).join('')+'</ul>'); continue; }
+    if (/^[\s]*\d+\.\s+/.test(line)) { const it=[]; while(i<lines.length && /^[\s]*\d+\.\s+/.test(lines[i])){it.push(lines[i].replace(/^[\s]*\d+\.\s+/,'')); i++;} output.push('<ol>'+it.map(x=>`<li>${inlineFormat(x)}</li>`).join('')+'</ol>'); continue; }
+    if (line.trim()==='') { i++; continue; }
+    const pl=[]; while(i<lines.length && lines[i].trim()!=='' && !/^#{1,6}\s/.test(lines[i]) && !/^(\*{3,}|-{3,}|_{3,})\s*$/.test(lines[i]) && !/^>\s?/.test(lines[i]) && !/^[\s]*[-*]\s+/.test(lines[i]) && !/^[\s]*\d+\.\s+/.test(lines[i]) && !/^\|/.test(lines[i]) && !/^\x00CODEBLOCK/.test(lines[i])){pl.push(lines[i]);i++;}
+    if (pl.length) output.push(`<p>${inlineFormat(pl.join(' '))}</p>`);
+  }
+  return output.join('\n');
+}
+
+// ─── File Viewer ──────────────────────────────────────────────────────────────
+async function openFileViewer(filePath) {
+  const modal = document.getElementById('file-viewer-modal');
+  const pathEl = document.getElementById('file-viewer-path');
+  const bodyEl = document.getElementById('file-viewer-body');
+  pathEl.textContent = filePath; bodyEl.textContent = 'Loading...'; bodyEl.className = 'file-viewer-body'; modal.classList.add('open');
+  try {
+    const res = await fetch(`/api/files?path=${encodeURIComponent(filePath)}`);
+    const data = await res.json();
+    if (data.error) { bodyEl.textContent = `Error: ${data.error}`; return; }
+    if (filePath.endsWith('.md')) { bodyEl.className = 'file-viewer-body markdown'; bodyEl.innerHTML = renderMarkdown(data.content); }
+    else { bodyEl.className = 'file-viewer-body preformatted'; bodyEl.textContent = data.content; }
+  } catch (err) { bodyEl.textContent = `Failed to load file: ${err.message}`; }
+}
+function closeFileViewer() { document.getElementById('file-viewer-modal').classList.remove('open'); }
+
 // ─── Chain panel renderer ─────────────────────────────────────────────────────
 
 /**
@@ -1908,7 +1965,7 @@ async function loadExecPlan(actionId) {
       html += `<div style="margin-bottom:14px">
         <div class="detail-label">Files</div>
         <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:5px">
-          ${ep.filesModified.map(f => `<span style="background:var(--act-bg);border:1px solid var(--act-border);color:var(--act-color);border-radius:4px;padding:2px 7px;font-size:10px;font-family:monospace">${escHtml(f)}</span>`).join('')}
+          ${ep.filesModified.map(f => `<span class="file-link" style="background:var(--act-bg);border:1px solid var(--act-border);color:var(--act-color);border-radius:4px;padding:2px 7px;font-size:10px;font-family:monospace" data-file-path="${escHtml(f)}">${escHtml(f)}</span>`).join('')}
         </div>
       </div>`;
     }
@@ -2014,6 +2071,14 @@ async function loadExecPlan(actionId) {
           link.textContent = 'Copied!';
           setTimeout(() => { link.textContent = shortSha; }, 1500);
         });
+      });
+    });
+
+    // Wire file link clicks to open file viewer
+    container.querySelectorAll('.file-link').forEach(link => {
+      link.addEventListener('click', () => {
+        const fp = link.dataset.filePath;
+        if (fp) openFileViewer(fp);
       });
     });
 
@@ -2778,6 +2843,17 @@ function switchView(mode) {
 }
 
 // ─── Event wiring ─────────────────────────────────────────────────────────────
+
+// File viewer modal close handlers
+document.getElementById('file-viewer-close').addEventListener('click', closeFileViewer);
+document.getElementById('file-viewer-modal').addEventListener('click', (e) => {
+  if (e.target.id === 'file-viewer-modal') closeFileViewer();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && document.getElementById('file-viewer-modal').classList.contains('open')) {
+    closeFileViewer();
+  }
+});
 
 // View toggle button
 if ($viewToggle) {
