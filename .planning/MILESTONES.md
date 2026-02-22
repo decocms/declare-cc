@@ -38,4 +38,4 @@
 | M-49 | Mode transition gate                         | PENDING | D-14     | YES  |
 | M-50 | Execution order configuration                | PENDING | D-15     | YES  |
 | M-51 | Single Go pipeline runner                    | PENDING | D-15     | YES  |
-| M-52 | Pipeline progress and failure handling       | PENDING | D-15     | NO   |
+| M-52 | Pipeline progress and failure handling       | PENDING | D-15     | YES  |
