@@ -881,6 +881,82 @@ function route(req, res, cwd) {
     return;
   }
 
+  // PUT /api/milestones/:id/classify — toggle milestone classification (agent/human)
+  const classifyMatch = method === 'PUT' && urlPath.match(/^\/api\/milestones\/([^/]+)\/classify$/);
+  if (classifyMatch) {
+    readJsonBody(req).then(body => {
+      const milestoneId = classifyMatch[1].toUpperCase();
+      const newClassification = body.classification === 'human' ? 'human' : 'agent';
+      try {
+        const milestonesPath = path.join(cwd, '.planning', 'MILESTONES.md');
+        if (!fs.existsSync(milestonesPath)) {
+          sendJson(res, 404, { error: 'MILESTONES.md not found' });
+          return;
+        }
+        const { parseMilestonesFile: parseMF, writeMilestonesFile: writeMF } = require('../artifacts/milestones');
+        const content = fs.readFileSync(milestonesPath, 'utf-8');
+        const { milestones: allM } = parseMF(content);
+        const target = allM.find(m => m.id.toUpperCase() === milestoneId);
+        if (!target) {
+          sendJson(res, 404, { error: `Milestone '${milestoneId}' not found` });
+          return;
+        }
+        target.classification = newClassification;
+        const nameMatch = content.match(/^# Milestones:\s*(.+)/m);
+        const pName = nameMatch ? nameMatch[1].trim() : 'Project';
+        fs.writeFileSync(milestonesPath, writeMF(allM, pName));
+        sendJson(res, 200, { ok: true, id: target.id, classification: newClassification });
+        broadcastChange();
+      } catch (err) {
+        sendJson(res, 500, { error: String(err) });
+      }
+    }).catch(err => sendJson(res, 400, { error: String(err) }));
+    return;
+  }
+
+  // PUT /api/milestones/:id/depends-on — set milestone dependencies
+  const depsMatch = method === 'PUT' && urlPath.match(/^\/api\/milestones\/([^/]+)\/depends-on$/);
+  if (depsMatch) {
+    readJsonBody(req).then(body => {
+      const milestoneId = depsMatch[1].toUpperCase();
+      const deps = Array.isArray(body.dependsOn) ? body.dependsOn.map(d => d.toUpperCase()) : [];
+      try {
+        const milestonesPath = path.join(cwd, '.planning', 'MILESTONES.md');
+        if (!fs.existsSync(milestonesPath)) {
+          sendJson(res, 404, { error: 'MILESTONES.md not found' });
+          return;
+        }
+        const { parseMilestonesFile: parseMF, writeMilestonesFile: writeMF } = require('../artifacts/milestones');
+        const content = fs.readFileSync(milestonesPath, 'utf-8');
+        const { milestones: allM } = parseMF(content);
+        const target = allM.find(m => m.id.toUpperCase() === milestoneId);
+        if (!target) {
+          sendJson(res, 404, { error: `Milestone '${milestoneId}' not found` });
+          return;
+        }
+        for (const depId of deps) {
+          if (!allM.find(m => m.id.toUpperCase() === depId)) {
+            sendJson(res, 400, { error: `Dependency '${depId}' not found` });
+            return;
+          }
+        }
+        if (deps.includes(milestoneId)) {
+          sendJson(res, 400, { error: 'Cannot depend on self' });
+          return;
+        }
+        target.dependsOn = deps;
+        const nameMatch = content.match(/^# Milestones:\s*(.+)/m);
+        const pName = nameMatch ? nameMatch[1].trim() : 'Project';
+        fs.writeFileSync(milestonesPath, writeMF(allM, pName));
+        sendJson(res, 200, { ok: true, id: target.id, dependsOn: deps });
+        broadcastChange();
+      } catch (err) {
+        sendJson(res, 500, { error: String(err) });
+      }
+    }).catch(err => sendJson(res, 400, { error: String(err) }));
+    return;
+  }
+
   const declDeleteMatch = method === 'DELETE' && urlPath.match(/^\/api\/declarations\/([^/]+)$/);
   if (declDeleteMatch) {
     const result = runDeleteDeclaration(cwd, ['--id', declDeleteMatch[1]]);

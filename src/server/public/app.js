@@ -747,8 +747,10 @@ function renderColumnBrowser() {
         }
 
         const desc = m.description ? `<span class="col-item-desc">${escHtml(truncate(m.description, 80))}</span>` : '';
+        const clsIcon = m.classification === 'human' ? '\u{1F464}' : '\u{1F916}';
+        const depInfo = (m.dependsOn && m.dependsOn.length > 0) ? `<span class="dep-indicator">\u2190 ${m.dependsOn.join(', ')}</span>` : '';
         el.innerHTML = `
-          <span class="col-item-id">${escHtml(m.id)}</span>
+          <span class="col-item-id"><span class="class-icon">${clsIcon}</span>${escHtml(m.id)}${depInfo}</span>
           <span class="col-item-title">${escHtml(truncate(title, 55))}</span>
           ${desc}
           <div class="col-item-meta">
@@ -1066,6 +1068,41 @@ function drawEdges() {
       const mBot = getBottomCenter(mEl);
       const isHighlighted = selectedNodeId === a.id || selectedNodeId === mId;
       fragment.appendChild(makePath(curvePath(mBot.x, mBot.y, aTop.x, aTop.y), isHighlighted));
+    });
+  });
+
+  // Milestone → Milestone dependency edges (dashed, horizontal)
+  (milestones || []).forEach(m => {
+    const deps = m.dependsOn || [];
+    if (deps.length === 0) return;
+    const mEl = document.querySelector(`[data-node-id="${m.id}"]`);
+    if (!mEl) return;
+
+    deps.forEach(depId => {
+      const depEl = document.querySelector(`[data-node-id="${depId}"]`);
+      if (!depEl) return;
+
+      // Draw from right side of dependency to left side of dependent
+      const containerRect = document.getElementById('canvas-container').getBoundingClientRect();
+      const scrollLeft = document.getElementById('canvas-wrap').scrollLeft;
+      const scrollTop  = document.getElementById('canvas-wrap').scrollTop;
+
+      const depRect = depEl.getBoundingClientRect();
+      const mRect = mEl.getBoundingClientRect();
+
+      const x1 = depRect.right - containerRect.left + scrollLeft;
+      const y1 = depRect.top - containerRect.top + scrollTop + depRect.height / 2;
+      const x2 = mRect.left - containerRect.left + scrollLeft;
+      const y2 = mRect.top - containerRect.top + scrollTop + mRect.height / 2;
+
+      const cx = (x1 + x2) / 2;
+      const d = `M ${x1} ${y1} C ${cx} ${y1}, ${cx} ${y2}, ${x2} ${y2}`;
+      const isHighlighted = selectedNodeId === m.id || selectedNodeId === depId;
+
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', d);
+      path.setAttribute('class', isHighlighted ? 'edge dep-edge highlight' : 'edge dep-edge');
+      fragment.appendChild(path);
     });
   });
 

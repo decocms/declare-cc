@@ -73,6 +73,7 @@
 
       --panel-width: 360px;
       --status-bar-height: 52px;
+      --topbar-height: 28px;
     }
 
     body {
@@ -426,10 +427,10 @@
     /* ── Side panel — always visible, fixed right column ── */
     #side-panel {
       position: fixed;
-      top: var(--status-bar-height);
+      top: calc(var(--topbar-height) + var(--status-bar-height));
       right: 0;
       width: var(--panel-width);
-      height: calc(100vh - var(--status-bar-height));
+      height: calc(100vh - var(--topbar-height) - var(--status-bar-height));
       background: var(--surface);
       border-left: 1px solid var(--border);
       display: flex;
@@ -1672,6 +1673,11 @@
   </style>
 </head>
 <body>
+
+<!-- Activity topbar — persistent strip showing current running operation -->
+<div id="activity-topbar">
+  <span class="topbar-idle-label" id="topbar-content">No active operations</span>
+</div>
 
 <!-- Status bar -->
 <div id="status-bar">
