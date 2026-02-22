@@ -1399,6 +1399,107 @@
       font-size: 13px;
     }
 
+    /* ── Workflow next-step banner ── */
+    #workflow-banner {
+      display: none;
+      align-items: center;
+      gap: 16px;
+      padding: 12px 20px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    #workflow-banner.visible { display: flex; }
+
+    .wf-progress-bar {
+      width: 120px;
+      height: 6px;
+      background: rgba(255,255,255,0.06);
+      border-radius: 3px;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .wf-progress-fill {
+      height: 100%;
+      border-radius: 3px;
+      background: var(--act-color);
+      transition: width 0.4s ease;
+    }
+    .wf-progress-fill.state-empty { background: var(--text-dim); }
+    .wf-progress-fill.state-declarations_only { background: var(--decl-color); }
+    .wf-progress-fill.state-milestones_pending { background: var(--mile-color); }
+    .wf-progress-fill.state-actions_pending { background: var(--act-color); }
+    .wf-progress-fill.state-executing { background: var(--executing-color); }
+    .wf-progress-fill.state-complete { background: var(--integrity-whole); }
+
+    .wf-state-label {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      flex-shrink: 0;
+    }
+
+    .wf-next-label {
+      font-size: 13px;
+      color: var(--text);
+      flex: 1;
+    }
+
+    .wf-action-btn {
+      background: var(--act-bg);
+      border: 1px solid var(--act-border);
+      color: var(--act-color);
+      padding: 6px 16px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: background 0.15s, border-color 0.15s;
+      white-space: nowrap;
+    }
+    .wf-action-btn:hover { background: #0d2818; border-color: #2a6a48; }
+
+    .wf-action-btn.state-empty,
+    .wf-action-btn.state-declarations_only {
+      background: var(--decl-bg);
+      border-color: var(--decl-border);
+      color: var(--decl-color);
+    }
+    .wf-action-btn.state-empty:hover,
+    .wf-action-btn.state-declarations_only:hover {
+      background: #0f2d50;
+      border-color: var(--decl-color);
+    }
+    .wf-action-btn.state-milestones_pending {
+      background: var(--mile-bg);
+      border-color: var(--mile-border);
+      color: var(--mile-color);
+    }
+    .wf-action-btn.state-milestones_pending:hover {
+      background: #220e44;
+      border-color: var(--mile-color);
+    }
+    .wf-action-btn.state-executing {
+      background: var(--executing-bg);
+      border-color: var(--executing-border);
+      color: var(--executing-color);
+    }
+    .wf-action-btn.state-complete {
+      background: #0a2018;
+      border-color: #1a4d34;
+      color: var(--integrity-whole);
+    }
+
+    .wf-pct {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-dim);
+      flex-shrink: 0;
+    }
+
   </style>
 </head>
 <body>
@@ -1417,6 +1518,15 @@
     <span id="view-toggle-label">Columns</span>
   </button>
   <button id="refresh-btn">Refresh</button>
+</div>
+
+<!-- Workflow next-step banner -->
+<div id="workflow-banner">
+  <span class="wf-state-label" id="wf-state-label"></span>
+  <div class="wf-progress-bar"><div class="wf-progress-fill" id="wf-progress-fill"></div></div>
+  <span class="wf-pct" id="wf-pct"></span>
+  <span class="wf-next-label" id="wf-next-label"></span>
+  <button class="wf-action-btn" id="wf-action-btn"></button>
 </div>
 
 <!-- Main -->
