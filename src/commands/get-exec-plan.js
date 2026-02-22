@@ -13,6 +13,7 @@
 
 const { existsSync, readFileSync, readdirSync } = require('node:fs');
 const { join } = require('node:path');
+const { execSync } = require('node:child_process');
 const { parseFlag } = require('./parse-args');
 const { buildDagFromDisk } = require('./build-dag');
 const { findMilestoneFolder } = require('../artifacts/milestone-folders');
@@ -173,6 +174,40 @@ function resolveActionModel(cwd, summaryContent) {
 }
 
 /**
+ * Extract git commits matching a specific action's M-XX-A-YY pattern.
+ *
+ * @param {string} cwd - Project root (for git log execution)
+ * @param {string} actionId - e.g. 'A-59'
+ * @param {string} milestoneId - e.g. 'M-28-commit-and-output-linking-per-action'
+ * @returns {Array<{sha: string, shortSha: string, message: string, date: string}>}
+ */
+function getActionCommits(cwd, actionId, milestoneId) {
+  try {
+    const milestonePrefix = milestoneId.match(/^(M-\d+)/);
+    if (!milestonePrefix) return [];
+
+    const grepPattern = `(${milestonePrefix[1]}-${actionId})`;
+    const output = execSync(
+      `git log --all --oneline --format="%H|%s|%ai" --extended-regexp --grep="${grepPattern}"`,
+      { cwd, encoding: 'utf-8', timeout: 5000 }
+    );
+
+    const lines = output.trim().split('\n').filter(Boolean);
+    return lines.map(line => {
+      const [sha, message, date] = line.split('|');
+      return {
+        sha: sha || '',
+        shortSha: (sha || '').slice(0, 7),
+        message: message || '',
+        date: date || '',
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Run the get-exec-plan command.
  *
  * @param {string} cwd
@@ -204,6 +239,8 @@ function runGetExecPlan(cwd, args) {
     return { error: `Milestone folder not found for ${milestone.id}` };
   }
 
+  const commits = getActionCommits(cwd, actionId, milestone.id);
+
   const execPlanPath = findExecPlan(milestoneFolder, actionId);
   if (!execPlanPath) {
     return {
@@ -215,6 +252,7 @@ function runGetExecPlan(cwd, args) {
       execPlan: null,
       summaryExists: false,
       model: resolveActionModel(cwd, null),
+      commits,
     };
   }
 
@@ -260,6 +298,7 @@ function runGetExecPlan(cwd, args) {
     },
     summaryExists,
     summaryContent,
+    commits,
   };
 }
 
