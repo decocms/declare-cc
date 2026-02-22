@@ -34,6 +34,13 @@ let runningActions = new Set();
 /** @type {string | null} Which action's output we're listening to */
 let currentOutputActionId = null;
 
+/** @type {string|null} Action ID selected in execution view for output display */
+let execSelectedActionId = null;
+/** @type {Object<string, string>} Buffered output per action ID for review */
+let execOutputBuffers = {};
+/** @type {boolean} Auto-follow running action in execution view (false when user manually selects non-running) */
+let execAutoFollow = true;
+
 /** @type {string | null} Currently selected declaration in column browser */
 let colSelectedDecl = null;
 /** @type {string | null} Currently selected milestone in column browser */
@@ -129,6 +136,8 @@ const $viewToggle    = document.getElementById('view-toggle');
 const $viewToggleLabel = document.getElementById('view-toggle-label');
 const $canvasWrap    = document.getElementById('canvas-wrap');
 const $execView      = document.getElementById('execution-view');
+const $execOutputHeader = document.getElementById('exec-output-header');
+const $execOutputLog    = document.getElementById('exec-output-log');
 
 const $declFormContainer = document.getElementById('decl-form-container');
 const $colDeclAddBtn     = document.getElementById('col-decl-add-btn');
@@ -3337,6 +3346,18 @@ function subscribeToOutput(actionId) {
 function handleActionOutput(e) {
   try {
     const { actionId, text } = JSON.parse(e.data);
+
+    // Always buffer output for the execution view
+    if (!execOutputBuffers[actionId]) execOutputBuffers[actionId] = '';
+    execOutputBuffers[actionId] += text + '\n';
+
+    // Route to execution view output panel if it's showing this action
+    if (viewMode === 'execution' && actionId === execSelectedActionId && $execOutputLog) {
+      $execOutputLog.appendChild(document.createTextNode(text + '\n'));
+      $execOutputLog.scrollTop = $execOutputLog.scrollHeight;
+    }
+
+    // Existing detail panel output log
     if (actionId !== currentOutputActionId) return;
     const logEl = document.getElementById('output-log');
     if (!logEl) return;
@@ -3352,22 +3373,43 @@ function handleActionOutput(e) {
 function handleActionComplete(e) {
   try {
     const { actionId, exitCode } = JSON.parse(e.data);
-    if (actionId !== currentOutputActionId) return;
 
-    // Show exit code in log
-    const logEl = document.getElementById('output-log');
-    if (logEl) {
-      const span = document.createElement('span');
-      span.className = `exit-code ${exitCode === 0 ? 'success' : 'failure'}`;
-      span.textContent = `Process exited with code ${exitCode}`;
-      logEl.appendChild(span);
-      logEl.scrollTop = logEl.scrollHeight;
+    // Append exit info to exec output buffer
+    const exitMsg = `\n--- Process exited with code ${exitCode} ---\n`;
+    if (!execOutputBuffers[actionId]) execOutputBuffers[actionId] = '';
+    execOutputBuffers[actionId] += exitMsg;
+
+    // Update execution view output panel if showing this action
+    if (viewMode === 'execution' && actionId === execSelectedActionId && $execOutputLog) {
+      $execOutputLog.appendChild(document.createTextNode(exitMsg));
+      $execOutputLog.scrollTop = $execOutputLog.scrollHeight;
+    }
+
+    // Detail panel output log (existing behavior)
+    if (actionId === currentOutputActionId) {
+      const logEl = document.getElementById('output-log');
+      if (logEl) {
+        const span = document.createElement('span');
+        span.className = `exit-code ${exitCode === 0 ? 'success' : 'failure'}`;
+        span.textContent = `Process exited with code ${exitCode}`;
+        logEl.appendChild(span);
+        logEl.scrollTop = logEl.scrollHeight;
+      }
+      currentOutputActionId = null;
     }
 
     // Update state
     runningActions.delete(actionId);
     updateRunningIndicators();
-    currentOutputActionId = null;
+
+    // In execution view, auto-follow to next running action if enabled
+    if (viewMode === 'execution' && execAutoFollow && actionId === execSelectedActionId) {
+      // Find any still-running action to auto-select
+      const nextRunning = Array.from(runningActions)[0];
+      if (nextRunning) {
+        selectExecAction(nextRunning, false);
+      }
+    }
 
     // Refresh execution view if active
     if (viewMode === 'execution') renderExecutionView();
@@ -3496,6 +3538,12 @@ function handlePlayStart(e) {
       completedActions: [],
       failedActions: [],
     };
+    // Reset execution view output state for new run
+    execOutputBuffers = {};
+    execSelectedActionId = null;
+    execAutoFollow = true;
+    if ($execOutputHeader) $execOutputHeader.textContent = 'No action selected';
+    if ($execOutputLog) $execOutputLog.textContent = '';
     updatePlayUI();
     // Auto-switch to execution mode when play starts
     switchView('execution');
@@ -3519,7 +3567,16 @@ function handlePlayWaveStart(e) {
       }
     }
     updatePlayUI();
-    if (viewMode === 'execution') renderExecutionView();
+    if (viewMode === 'execution') {
+      renderExecutionView();
+      // Auto-select first running action if auto-follow is on and no action selected (or selected is done)
+      if (execAutoFollow && playStatus && playStatus.activeActions.length > 0) {
+        const selectedDone = execSelectedActionId && !runningActions.has(execSelectedActionId);
+        if (!execSelectedActionId || selectedDone) {
+          selectExecAction(playStatus.activeActions[0], false);
+        }
+      }
+    }
   } catch (_) {}
 }
 
@@ -4360,6 +4417,39 @@ function drawEdgesForSubtree(subtree) {
 // ─── Execution pipeline view ──────────────────────────────────────────────────
 
 /**
+ * Select an action in the execution view's output panel.
+ * Shows that action's buffered output (or live output if running).
+ * @param {string} actionId
+ * @param {boolean} [manual=false] Whether this was a manual user click
+ */
+function selectExecAction(actionId, manual) {
+  execSelectedActionId = actionId;
+
+  // If user manually clicks a non-running action, disable auto-follow
+  if (manual && !runningActions.has(actionId)) {
+    execAutoFollow = false;
+  } else if (manual && runningActions.has(actionId)) {
+    execAutoFollow = true;
+  }
+
+  // Update header
+  if ($execOutputHeader) {
+    const action = graphData && (graphData.actions || []).find(a => a.id === actionId);
+    const title = action ? `${actionId}: ${action.title || ''}` : actionId;
+    $execOutputHeader.textContent = title;
+  }
+
+  // Populate output log from buffer
+  if ($execOutputLog) {
+    $execOutputLog.textContent = execOutputBuffers[actionId] || '';
+    $execOutputLog.scrollTop = $execOutputLog.scrollHeight;
+  }
+
+  // Re-render pipeline to highlight the selected action
+  renderExecutionView();
+}
+
+/**
  * Render the execution pipeline view — milestones grouped by dependency waves
  * with nested actions showing status indicators in a CI-pipeline layout.
  */
@@ -4441,7 +4531,8 @@ function renderExecutionView() {
             dotClass = 'failed';
           }
 
-          const isActive = isRunning ? ' active' : '';
+          const isSelected = (a.id === execSelectedActionId);
+          const isActive = (isRunning || isSelected) ? ' active' : '';
           html += `<div class="exec-action-item${isActive}" data-action-id="${escHtml(a.id)}">`;
           html += `<span class="exec-status-dot ${dotClass}"></span>`;
           html += `<span class="exec-action-title">${escHtml(a.id)}: ${escHtml(a.title || '')}</span>`;
@@ -4461,11 +4552,14 @@ function renderExecutionView() {
 
   $pipeline.innerHTML = html;
 
-  // Wire click handlers for action items
+  // Wire click handlers for action items — select in output panel + open detail
   $pipeline.querySelectorAll('.exec-action-item').forEach(el => {
     el.addEventListener('click', () => {
       const actionId = el.getAttribute('data-action-id');
-      if (actionId) selectNode(actionId, 'action');
+      if (actionId) {
+        selectExecAction(actionId, true);
+        selectNode(actionId, 'action');
+      }
     });
   });
 }
