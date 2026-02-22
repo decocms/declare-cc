@@ -62,7 +62,7 @@ function splitMultiValue(value) {
  * - Backward compatible: parses both old format (Caused By column) and new format (Plan column)
  *
  * @param {string} content - Raw markdown content of MILESTONES.md
- * @returns {{ milestones: Array<{id: string, title: string, status: string, realizes: string[], hasPlan: boolean}> }}
+ * @returns {{ milestones: Array<{id: string, title: string, description: string, status: string, realizes: string[], hasPlan: boolean}> }}
  */
 function parseMilestonesFile(content) {
   if (!content || !content.trim()) {
@@ -76,6 +76,7 @@ function parseMilestonesFile(content) {
   const milestones = milestoneRows.map(row => ({
     id: (row['ID'] || '').trim(),
     title: (row['Title'] || '').trim(),
+    description: (row['Description'] || '').trim(),
     status: (row['Status'] || 'PENDING').trim().toUpperCase(),
     realizes: splitMultiValue(row['Realizes'] || ''),
     hasPlan: (row['Plan'] || '').trim().toUpperCase() === 'YES',
@@ -102,7 +103,7 @@ function pad(str, width) {
  * 3-arg (milestones, actions, projectName) signature. If 3 args and
  * second is an array, treats as old signature and ignores actions.
  *
- * @param {Array<{id: string, title: string, status: string, realizes: string[], hasPlan?: boolean}>} milestones
+ * @param {Array<{id: string, title: string, description?: string, status: string, realizes: string[], hasPlan?: boolean}>} milestones
  * @param {string | Array} projectNameOrActions - Project name string, or actions array (backward compat)
  * @param {string} [maybeProjectName] - Project name when using old 3-arg signature
  * @returns {string} Canonical markdown content
@@ -116,14 +117,15 @@ function writeMilestonesFile(milestones, projectNameOrActions, maybeProjectName)
   // -- Milestones table --
   lines.push('## Milestones', '');
 
-  const mHeaders = ['ID', 'Title', 'Status', 'Realizes', 'Plan'];
-  const mRows = milestones.map(m => [
-    m.id,
-    m.title,
-    m.status,
-    m.realizes.join(', '),
-    m.hasPlan ? 'YES' : 'NO',
-  ]);
+  // Include Description column only if any milestone has a description
+  const hasDescriptions = milestones.some(m => m.description);
+  const mHeaders = hasDescriptions
+    ? ['ID', 'Title', 'Description', 'Status', 'Realizes', 'Plan']
+    : ['ID', 'Title', 'Status', 'Realizes', 'Plan'];
+  const mRows = milestones.map(m => hasDescriptions
+    ? [m.id, m.title, m.description || '', m.status, m.realizes.join(', '), m.hasPlan ? 'YES' : 'NO']
+    : [m.id, m.title, m.status, m.realizes.join(', '), m.hasPlan ? 'YES' : 'NO']
+  );
 
   lines.push(...formatTable(mHeaders, mRows));
   lines.push('');

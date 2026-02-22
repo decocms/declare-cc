@@ -302,6 +302,7 @@ var require_milestones = __commonJS({
       const milestones = milestoneRows.map((row) => ({
         id: (row["ID"] || "").trim(),
         title: (row["Title"] || "").trim(),
+        description: (row["Description"] || "").trim(),
         status: (row["Status"] || "PENDING").trim().toUpperCase(),
         realizes: splitMultiValue(row["Realizes"] || ""),
         hasPlan: (row["Plan"] || "").trim().toUpperCase() === "YES"
@@ -315,14 +316,11 @@ var require_milestones = __commonJS({
       const projectName = maybeProjectName || (typeof projectNameOrActions === "string" ? projectNameOrActions : "Project");
       const lines = [`# Milestones: ${projectName}`, ""];
       lines.push("## Milestones", "");
-      const mHeaders = ["ID", "Title", "Status", "Realizes", "Plan"];
-      const mRows = milestones.map((m) => [
-        m.id,
-        m.title,
-        m.status,
-        m.realizes.join(", "),
-        m.hasPlan ? "YES" : "NO"
-      ]);
+      const hasDescriptions = milestones.some((m) => m.description);
+      const mHeaders = hasDescriptions ? ["ID", "Title", "Description", "Status", "Realizes", "Plan"] : ["ID", "Title", "Status", "Realizes", "Plan"];
+      const mRows = milestones.map(
+        (m) => hasDescriptions ? [m.id, m.title, m.description || "", m.status, m.realizes.join(", "), m.hasPlan ? "YES" : "NO"] : [m.id, m.title, m.status, m.realizes.join(", "), m.hasPlan ? "YES" : "NO"]
+      );
       lines.push(...formatTable(mHeaders, mRows));
       lines.push("");
       return lines.join("\n");
@@ -1123,7 +1121,7 @@ var require_build_dag = __commonJS({
         dag.addNode(d.id, "declaration", d.title, d.status || "PENDING");
       }
       for (const m of milestones) {
-        dag.addNode(m.id, "milestone", m.title, m.status || "PENDING");
+        dag.addNode(m.id, "milestone", m.title, m.status || "PENDING", { description: m.description || "" });
       }
       for (const a of actions) {
         dag.addNode(a.id, "action", a.title, a.status || "PENDING");

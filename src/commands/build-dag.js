@@ -87,7 +87,7 @@ function buildDagFromDisk(cwd) {
     dag.addNode(d.id, 'declaration', d.title, d.status || 'PENDING');
   }
   for (const m of milestones) {
-    dag.addNode(m.id, 'milestone', m.title, m.status || 'PENDING');
+    dag.addNode(m.id, 'milestone', m.title, m.status || 'PENDING', { description: m.description || '' });
   }
   for (const a of actions) {
     dag.addNode(a.id, 'action', a.title, a.status || 'PENDING');

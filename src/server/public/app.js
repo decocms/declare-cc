@@ -531,9 +531,11 @@ function renderColumnBrowser() {
             : `${m.doneCount}/${m.totalCount}`;
         }
 
+        const desc = m.description ? `<span class="col-item-desc">${escHtml(truncate(m.description, 80))}</span>` : '';
         el.innerHTML = `
           <span class="col-item-id">${escHtml(m.id)}</span>
           <span class="col-item-title">${escHtml(truncate(title, 55))}</span>
+          ${desc}
           <div class="col-item-meta">
             <span class="status-badge">${escHtml(badgeLabel)}</span>
           </div>
@@ -958,6 +960,9 @@ function renderPanelContent(item, type) {
   }
 
   if (type === 'milestone') {
+    if (item.description) {
+      html += section('Description', escHtml(item.description));
+    }
     if (item.produces) {
       html += section('Produces', escHtml(item.produces));
     }
