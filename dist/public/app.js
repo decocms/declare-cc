@@ -63,6 +63,11 @@ let editFormError = null;
 /** @type {string|null} ID of declaration showing delete confirmation */
 let deleteConfirmId = null;
 
+/** @type {string | null} Active derivation session ID */
+let derivationSessionId = null;
+/** @type {Array<{title: string, realizes: string, reason: string}> | null} */
+let derivationProposals = null;
+
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
 
@@ -1347,6 +1352,13 @@ function renderPanelChain(item, type) {
         </div>`;
         // Error placeholder for delete errors
         html += `<div class="form-error" id="decl-action-error" style="color:var(--broken-color);font-size:12px;margin-top:6px"></div>`;
+
+        // Derivation panel — derive milestones for this declaration
+        html += `<div class="derivation-panel" id="derivation-panel">`;
+        html += `<button class="derive-btn" id="derive-btn">Derive Milestones</button>`;
+        html += `<div id="derivation-log" class="output-log" style="display:none"></div>`;
+        html += `<div id="derivation-proposals" style="display:none"></div>`;
+        html += `</div>`;
       }
       if (s.type === 'milestone') {
         const causedBy = actions.filter(a => (a.causes || []).includes(s.item.id));
@@ -1455,6 +1467,12 @@ function renderPanelChain(item, type) {
         deleteConfirmId = null;
         renderPanelChain(focusSection.item, 'declaration');
       });
+    }
+
+    // Wire derive button
+    const deriveBtn = document.getElementById('derive-btn');
+    if (deriveBtn) {
+      deriveBtn.addEventListener('click', () => startDerivation(focusSection.item.id));
     }
   }
 
@@ -2136,6 +2154,228 @@ function handleActionComplete(e) {
   } catch (_) {}
 }
 
+// ─── Derivation controls ──────────────────────────────────────────────────────
+
+/**
+ * Trigger milestone derivation for a declaration via POST /api/milestones/derive.
+ * @param {string} declarationId
+ */
+async function startDerivation(declarationId) {
+  const btn = document.getElementById('derive-btn');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Deriving...';
+  }
+
+  const logEl = document.getElementById('derivation-log');
+  if (logEl) {
+    logEl.style.display = '';
+    logEl.innerHTML = '';
+  }
+
+  try {
+    const res = await fetch('/api/milestones/derive', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ declarationId }),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      if (logEl) logEl.textContent = 'Error: ' + (data.error || 'Failed to start derivation');
+      if (btn) { btn.disabled = false; btn.textContent = 'Derive Milestones'; }
+      return;
+    }
+
+    derivationSessionId = data.sessionId;
+    derivationProposals = null;
+  } catch (err) {
+    if (logEl) logEl.textContent = 'Error: ' + err.message;
+    if (btn) { btn.disabled = false; btn.textContent = 'Derive Milestones'; }
+  }
+}
+
+/**
+ * Handle incoming derivation-output SSE event.
+ * @param {MessageEvent} e
+ */
+function handleDerivationOutput(e) {
+  try {
+    const { sessionId, text } = JSON.parse(e.data);
+    if (sessionId !== derivationSessionId) return;
+    const logEl = document.getElementById('derivation-log');
+    if (!logEl) return;
+    logEl.appendChild(document.createTextNode(text + '\n'));
+    logEl.scrollTop = logEl.scrollHeight;
+  } catch (_) {}
+}
+
+/**
+ * Handle incoming derivation-complete SSE event.
+ * @param {MessageEvent} e
+ */
+function handleDerivationComplete(e) {
+  try {
+    const { sessionId, exitCode, milestones } = JSON.parse(e.data);
+    if (sessionId !== derivationSessionId) return;
+
+    derivationSessionId = null;
+
+    const btn = document.getElementById('derive-btn');
+    if (btn) { btn.disabled = false; btn.textContent = 'Derive Milestones'; }
+
+    if (exitCode !== 0) {
+      const logEl = document.getElementById('derivation-log');
+      if (logEl) {
+        const span = document.createElement('span');
+        span.style.color = 'var(--broken-color)';
+        span.style.fontWeight = '700';
+        span.textContent = '\nDerivation failed (exit code ' + exitCode + ')';
+        logEl.appendChild(span);
+      }
+      return;
+    }
+
+    if (milestones && Array.isArray(milestones)) {
+      derivationProposals = milestones;
+      renderProposals();
+    } else {
+      const logEl = document.getElementById('derivation-log');
+      if (logEl) {
+        const span = document.createElement('span');
+        span.style.color = 'var(--integrity-partial)';
+        span.style.fontWeight = '600';
+        span.textContent = '\nDerivation finished but output could not be parsed. Check the log above.';
+        logEl.appendChild(span);
+      }
+    }
+  } catch (_) {}
+}
+
+/**
+ * Render proposed milestones as an editable checklist.
+ */
+function renderProposals() {
+  const container = document.getElementById('derivation-proposals');
+  if (!container || !derivationProposals) return;
+  container.style.display = 'block';
+
+  let html = '<h4 style="margin:8px 0;color:var(--text-bright);font-size:13px">Proposed Milestones</h4>';
+  html += '<ul class="derivation-checklist">';
+  derivationProposals.forEach((m, idx) => {
+    html += '<li>';
+    html += '<input type="checkbox" checked data-idx="' + idx + '">';
+    html += '<input type="text" value="' + escHtml(m.title || '') + '" data-idx="' + idx + '">';
+    html += '</li>';
+    if (m.reason) {
+      html += '<li style="border-bottom:none;padding:0"><span class="reason">' + escHtml(m.reason) + '</span></li>';
+    }
+  });
+  html += '</ul>';
+  html += '<div style="margin-top:12px">';
+  html += '<button class="derive-accept-btn" onclick="acceptDerivation()">Accept Selected</button>';
+  html += '<button class="derive-cancel-btn" onclick="cancelDerivation()">Cancel</button>';
+  html += '</div>';
+
+  container.innerHTML = html;
+}
+
+/**
+ * Accept selected milestones from the derivation checklist.
+ * Gathers checked items, POSTs to /api/milestones/derive/accept.
+ */
+async function acceptDerivation() {
+  const container = document.getElementById('derivation-proposals');
+  if (!container || !derivationProposals) return;
+
+  const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+  const textInputs = container.querySelectorAll('input[type="text"]');
+
+  /** @type {Array<{title: string, realizes: string}>} */
+  const selected = [];
+  checkboxes.forEach((cb) => {
+    if (cb.checked) {
+      const idx = parseInt(cb.dataset.idx, 10);
+      const titleInput = textInputs[idx];
+      const proposal = derivationProposals[idx];
+      if (proposal && titleInput) {
+        selected.push({
+          title: titleInput.value || proposal.title,
+          realizes: proposal.realizes || '',
+        });
+      }
+    }
+  });
+
+  if (selected.length === 0) {
+    cancelDerivation();
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/milestones/derive/accept', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ milestones: selected }),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      const logEl = document.getElementById('derivation-log');
+      if (logEl) logEl.textContent += '\nError accepting: ' + (data.error || 'Unknown error');
+      return;
+    }
+
+    // Clear derivation panel and show success
+    derivationProposals = null;
+    const panel = document.getElementById('derivation-panel');
+    if (panel) {
+      panel.innerHTML = '<div style="color:var(--act-color);font-weight:600;padding:8px 0">' +
+        selected.length + ' milestone' + (selected.length !== 1 ? 's' : '') + ' created</div>';
+      setTimeout(() => { if (panel) panel.innerHTML = ''; }, 3000);
+    }
+    // SSE change event will trigger graph reload automatically
+  } catch (err) {
+    const logEl = document.getElementById('derivation-log');
+    if (logEl) logEl.textContent += '\nError: ' + err.message;
+  }
+}
+
+/**
+ * Cancel derivation — stop if running, clear proposals and panel.
+ */
+async function cancelDerivation() {
+  if (derivationSessionId) {
+    try {
+      await fetch('/api/milestones/derive/stop', { method: 'POST' });
+    } catch (_) {}
+  }
+
+  derivationSessionId = null;
+  derivationProposals = null;
+
+  const logEl = document.getElementById('derivation-log');
+  if (logEl) { logEl.style.display = 'none'; logEl.innerHTML = ''; }
+
+  const proposals = document.getElementById('derivation-proposals');
+  if (proposals) { proposals.style.display = 'none'; proposals.innerHTML = ''; }
+
+  const btn = document.getElementById('derive-btn');
+  if (btn) { btn.disabled = false; btn.textContent = 'Derive Milestones'; }
+}
+
+/**
+ * Stop a running derivation via POST /api/milestones/derive/stop.
+ */
+async function stopDerivation() {
+  const btn = document.getElementById('derive-btn');
+  if (btn) { btn.textContent = 'Stopping...'; }
+
+  try {
+    await fetch('/api/milestones/derive/stop', { method: 'POST' });
+  } catch (_) {}
+}
+
 // ─── Focus mode — FLIP technique ──────────────────────────────────────────────
 // Exiting nodes: removed from flow instantly (→ flex re-centers), then overlaid
 // at their original positions via position:fixed for the directional slide-out.
@@ -2773,6 +3013,8 @@ function connectSSE() {
   });
   es.addEventListener('action-output', handleActionOutput);
   es.addEventListener('action-complete', handleActionComplete);
+  es.addEventListener('derivation-output', handleDerivationOutput);
+  es.addEventListener('derivation-complete', handleDerivationComplete);
   es.addEventListener('error', () => {
     // Connection dropped — reconnect after 3s
     es.close();
