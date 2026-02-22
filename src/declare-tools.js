@@ -35,6 +35,8 @@ const { runInit } = require('./commands/init');
 const { runStatus } = require('./commands/status');
 const { runHelp } = require('./commands/help');
 const { runAddDeclaration } = require('./commands/add-declaration');
+const { runUpdateDeclaration } = require('./commands/update-declaration');
+const { runDeleteDeclaration } = require('./commands/delete-declaration');
 const { runAddMilestone } = require('./commands/add-milestone');
 const { runAddMilestonesBatch } = require('./commands/add-milestones-batch');
 const { runAddAction } = require('./commands/add-action');
@@ -199,6 +201,22 @@ function main() {
       case 'add-declaration': {
         const cwdAddDecl = parseCwdFlag(args) || process.cwd();
         const result = runAddDeclaration(cwdAddDecl, args.slice(1));
+        console.log(JSON.stringify(result));
+        if (result.error) process.exit(1);
+        break;
+      }
+
+      case 'update-declaration': {
+        const cwdUpdateDecl = parseCwdFlag(args) || process.cwd();
+        const result = runUpdateDeclaration(cwdUpdateDecl, args.slice(1));
+        console.log(JSON.stringify(result));
+        if (result.error) process.exit(1);
+        break;
+      }
+
+      case 'delete-declaration': {
+        const cwdDeleteDecl = parseCwdFlag(args) || process.cwd();
+        const result = runDeleteDeclaration(cwdDeleteDecl, args.slice(1));
         console.log(JSON.stringify(result));
         if (result.error) process.exit(1);
         break;
@@ -462,7 +480,7 @@ function main() {
       }
 
       default:
-        console.log(JSON.stringify({ error: `Unknown command: ${command}. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, sync-status, serve, record-session, get-state, quick-task, add-todo, check-todos, complete-todo, config-get, config-set, health-check, help` }));
+        console.log(JSON.stringify({ error: `Unknown command: ${command}. Use: commit, init, status, add-declaration, update-declaration, delete-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, sync-status, serve, record-session, get-state, quick-task, add-todo, check-todos, complete-todo, config-get, config-set, health-check, help` }));
         process.exit(1);
     }
   } catch (err) {

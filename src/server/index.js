@@ -30,6 +30,9 @@ const path = require('node:path');
 const { runLoadGraph } = require('../commands/load-graph');
 const { runStatus } = require('../commands/status');
 const { runGetExecPlan } = require('../commands/get-exec-plan');
+const { runAddDeclaration } = require('../commands/add-declaration');
+const { runUpdateDeclaration } = require('../commands/update-declaration');
+const { runDeleteDeclaration } = require('../commands/delete-declaration');
 const { createProcessManager } = require('./process-manager');
 const { buildDagFromDisk } = require('../commands/build-dag');
 const { computeWorkabilityPath } = require('../graph/engine');
@@ -78,10 +81,46 @@ function sendJson(res, statusCode, data) {
     'Content-Type': 'application/json; charset=utf-8',
     'Content-Length': Buffer.byteLength(body),
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
   });
   res.end(body);
+}
+
+/**
+ * Read and parse JSON body from an incoming request.
+ * Caps at 64KB to prevent abuse.
+ *
+ * @param {http.IncomingMessage} req
+ * @returns {Promise<any>}
+ */
+function readJsonBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    const MAX_SIZE = 64 * 1024; // 64KB
+
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > MAX_SIZE) {
+        reject(new Error('Request body too large (max 64KB)'));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+
+    req.on('end', () => {
+      try {
+        const raw = Buffer.concat(chunks).toString('utf-8');
+        resolve(JSON.parse(raw));
+      } catch (err) {
+        reject(new Error('Invalid JSON body'));
+      }
+    });
+
+    req.on('error', reject);
+  });
 }
 
 /**
@@ -402,15 +441,69 @@ function route(req, res, cwd) {
   if (method === 'OPTIONS') {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type',
     });
     res.end();
     return;
   }
 
-  if (method !== 'GET' && method !== 'POST') {
+  if (method !== 'GET' && method !== 'POST' && method !== 'PUT' && method !== 'DELETE') {
     sendJson(res, 405, { error: 'Method Not Allowed' });
+    return;
+  }
+
+  // Declaration CRUD routes (POST, PUT, DELETE)
+  if (method === 'POST' && urlPath === '/api/declarations') {
+    readJsonBody(req).then(body => {
+      if (!body.title || !body.statement) {
+        sendJson(res, 400, { error: 'Missing required fields: title and statement' });
+        return;
+      }
+      const result = runAddDeclaration(cwd, ['--title', body.title, '--statement', body.statement]);
+      if ('error' in result) {
+        sendJson(res, 400, result);
+        return;
+      }
+      sendJson(res, 201, result);
+      broadcastChange();
+    }).catch(err => sendJson(res, 400, { error: String(err) }));
+    return;
+  }
+
+  const declPutMatch = method === 'PUT' && urlPath.match(/^\/api\/declarations\/([^/]+)$/);
+  if (declPutMatch) {
+    readJsonBody(req).then(body => {
+      const args = ['--id', declPutMatch[1]];
+      if (body.title) { args.push('--title', body.title); }
+      if (body.statement) { args.push('--statement', body.statement); }
+      if (body.status) { args.push('--status', body.status); }
+      if (!body.title && !body.statement && !body.status) {
+        sendJson(res, 400, { error: 'At least one of title, statement, or status must be provided' });
+        return;
+      }
+      const result = runUpdateDeclaration(cwd, args);
+      if ('error' in result) {
+        const status = result.error.includes('not found') ? 404 : 400;
+        sendJson(res, status, result);
+        return;
+      }
+      sendJson(res, 200, result);
+      broadcastChange();
+    }).catch(err => sendJson(res, 400, { error: String(err) }));
+    return;
+  }
+
+  const declDeleteMatch = method === 'DELETE' && urlPath.match(/^\/api\/declarations\/([^/]+)$/);
+  if (declDeleteMatch) {
+    const result = runDeleteDeclaration(cwd, ['--id', declDeleteMatch[1]]);
+    if ('error' in result) {
+      const status = result.error.includes('not found') ? 404 : 400;
+      sendJson(res, status, result);
+      return;
+    }
+    sendJson(res, 200, result);
+    broadcastChange();
     return;
   }
 
