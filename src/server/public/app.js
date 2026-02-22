@@ -47,6 +47,13 @@ let kbIndex = 0;
 /** @type {'dag'|'columns'} Current view mode, persisted in localStorage */
 let viewMode = localStorage.getItem('declare-view-mode') || 'dag';
 
+/** @type {boolean} Whether the declaration input form is visible */
+let declFormVisible = false;
+/** @type {boolean} Whether a declaration creation request is in flight */
+let declFormLoading = false;
+/** @type {string|null} Current error message shown in the declaration form */
+let declFormError = null;
+
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
 
@@ -81,6 +88,10 @@ const $colActList    = document.getElementById('col-act-list');
 const $viewToggle    = document.getElementById('view-toggle');
 const $viewToggleLabel = document.getElementById('view-toggle-label');
 const $canvasWrap    = document.getElementById('canvas-wrap');
+
+const $declFormContainer = document.getElementById('decl-form-container');
+const $colDeclAddBtn     = document.getElementById('col-decl-add-btn');
+const $newDeclBtn        = document.getElementById('new-decl-btn');
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
@@ -454,6 +465,153 @@ function renderGraph() {
 
   // Mark running actions with pulsing indicator
   updateRunningIndicators();
+}
+
+// ─── Declaration input form ───────────────────────────────────────────────────
+
+/**
+ * Render or hide the declaration input form in the column browser.
+ * Inserts the form into #decl-form-container at the top of the declarations column.
+ */
+function renderDeclForm() {
+  if (!$declFormContainer) return;
+
+  if (!declFormVisible) {
+    $declFormContainer.innerHTML = '';
+    return;
+  }
+
+  const submitLabel = declFormLoading ? 'Creating...' : 'Create';
+  const disabledAttr = declFormLoading ? 'disabled' : '';
+  const errorHtml = declFormError
+    ? `<div class="form-error" id="decl-error">${escHtml(declFormError)}</div>`
+    : '<div class="form-error" id="decl-error"></div>';
+
+  $declFormContainer.innerHTML = `
+    <div class="decl-form-overlay">
+      <div class="decl-form">
+        <input type="text" id="decl-title" placeholder="Declaration title" ${disabledAttr} />
+        <textarea id="decl-statement" rows="3" placeholder="What future state are you declaring?" ${disabledAttr}></textarea>
+        <div class="decl-form-actions">
+          <button class="decl-submit-btn" id="decl-submit" ${disabledAttr}>${submitLabel}</button>
+          <button class="decl-cancel-btn" id="decl-cancel">Cancel</button>
+        </div>
+        ${errorHtml}
+      </div>
+    </div>
+  `;
+
+  // Wire events
+  const $submit = document.getElementById('decl-submit');
+  const $cancel = document.getElementById('decl-cancel');
+  const $title  = document.getElementById('decl-title');
+  const $stmt   = document.getElementById('decl-statement');
+
+  if ($submit) $submit.addEventListener('click', submitDeclaration);
+  if ($cancel) $cancel.addEventListener('click', hideDeclForm);
+
+  // Enter in title -> focus statement
+  if ($title) {
+    $title.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if ($stmt) $stmt.focus();
+      }
+    });
+  }
+
+  // Cmd/Ctrl+Enter in statement -> submit
+  if ($stmt) {
+    $stmt.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        submitDeclaration();
+      }
+    });
+  }
+
+  // Auto-focus the title input
+  if ($title && !declFormLoading) {
+    requestAnimationFrame(() => $title.focus());
+  }
+}
+
+/**
+ * Hide the declaration form and reset state.
+ */
+function hideDeclForm() {
+  declFormVisible = false;
+  declFormLoading = false;
+  declFormError = null;
+  renderDeclForm();
+}
+
+/**
+ * Show the declaration form in the column browser.
+ * If not in column view, switch to it first.
+ */
+function showDeclForm() {
+  if (viewMode !== 'columns') {
+    switchView('columns');
+  }
+  declFormVisible = true;
+  declFormLoading = false;
+  declFormError = null;
+  renderDeclForm();
+}
+
+/**
+ * Submit the declaration form data to POST /api/declarations.
+ * Validates inputs, shows loading state, handles success/error.
+ */
+async function submitDeclaration() {
+  if (declFormLoading) return;
+
+  const $title = document.getElementById('decl-title');
+  const $stmt  = document.getElementById('decl-statement');
+
+  const title     = ($title ? $title.value : '').trim();
+  const statement = ($stmt  ? $stmt.value  : '').trim();
+
+  // Validate
+  if (!title) {
+    declFormError = 'Title is required';
+    renderDeclForm();
+    return;
+  }
+  if (!statement) {
+    declFormError = 'Statement is required';
+    renderDeclForm();
+    return;
+  }
+
+  // Set loading state
+  declFormLoading = true;
+  declFormError = null;
+  renderDeclForm();
+
+  try {
+    const res = await fetch('/api/declarations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, statement }),
+    });
+
+    if (res.ok || res.status === 201) {
+      // Success: hide form, refresh graph
+      hideDeclForm();
+      await loadData();
+    } else {
+      const data = await res.json().catch(() => ({}));
+      declFormError = data.error || `Server error (${res.status})`;
+      declFormLoading = false;
+      renderDeclForm();
+    }
+  } catch (err) {
+    declFormError = err.message || 'Network error';
+    declFormLoading = false;
+    renderDeclForm();
+  }
 }
 
 // ─── Column browser ───────────────────────────────────────────────────────────
@@ -1990,6 +2148,22 @@ function switchView(mode) {
 if ($viewToggle) {
   $viewToggle.addEventListener('click', () => {
     switchView(viewMode === 'dag' ? 'columns' : 'dag');
+  });
+}
+
+// Declaration form triggers
+if ($colDeclAddBtn) {
+  $colDeclAddBtn.addEventListener('click', () => {
+    if (declFormVisible) {
+      hideDeclForm();
+    } else {
+      showDeclForm();
+    }
+  });
+}
+if ($newDeclBtn) {
+  $newDeclBtn.addEventListener('click', () => {
+    showDeclForm();
   });
 }
 

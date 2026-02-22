@@ -904,6 +904,123 @@
       font-style: italic;
     }
 
+    /* ── Declaration form ── */
+    .decl-form-trigger {
+      background: none;
+      border: 1px solid var(--decl-border);
+      color: var(--decl-color);
+      width: 22px;
+      height: 22px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.15s, border-color 0.15s;
+      flex-shrink: 0;
+      margin-left: auto;
+    }
+    .decl-form-trigger:hover {
+      background: var(--decl-bg);
+      border-color: var(--decl-color);
+    }
+
+    .decl-form-overlay {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface2);
+    }
+
+    .decl-form {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .decl-form input,
+    .decl-form textarea {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 4px;
+      padding: 8px 12px;
+      width: 100%;
+      font-size: 13px;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .decl-form input:focus,
+    .decl-form textarea:focus {
+      border-color: var(--decl-color);
+    }
+
+    .decl-form textarea {
+      resize: vertical;
+      min-height: 54px;
+    }
+
+    .decl-form-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .decl-form-actions .decl-submit-btn {
+      background: var(--decl-color);
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      padding: 6px 16px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      transition: opacity 0.15s;
+    }
+    .decl-form-actions .decl-submit-btn:hover { opacity: 0.9; }
+    .decl-form-actions .decl-submit-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .decl-form-actions .decl-cancel-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      border-radius: 4px;
+      padding: 6px 16px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    .decl-form-actions .decl-cancel-btn:hover {
+      border-color: var(--text-dim);
+      color: var(--text);
+    }
+
+    .decl-form .form-error {
+      color: var(--broken-color);
+      font-size: 12px;
+      margin-top: 4px;
+      min-height: 0;
+    }
+
+    /* Status bar new-decl button */
+    .new-decl-btn {
+      background: var(--decl-bg);
+      border: 1px solid var(--decl-border);
+      color: var(--decl-color);
+      padding: 5px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .new-decl-btn:hover { background: #0f2d50; border-color: var(--decl-color); }
+
     /* Scrollbar for column panels */
     .col-panel::-webkit-scrollbar { width: 4px; }
     .col-panel::-webkit-scrollbar-track { background: transparent; }
@@ -956,6 +1073,7 @@
   <span class="stat-group"><span class="value" id="stat-acts">–</span> Actions</span>
   <span id="health-badge" class="health-badge health-unknown">–</span>
   <span class="spacer"></span>
+  <button id="new-decl-btn" class="new-decl-btn">+ Declaration</button>
   <span id="last-updated"></span>
   <button id="view-toggle" title="Switch view">
     <span id="view-toggle-label">Columns</span>
@@ -986,7 +1104,11 @@
   <!-- Column browser — Finder-style D→M→A navigation (hidden until toggled) -->
   <div id="column-browser">
     <div class="col-panel col-panel-decl" id="col-declarations">
-      <div class="col-panel-header">Declarations</div>
+      <div class="col-panel-header" style="display:flex;align-items:center;gap:8px">
+        <span>Declarations</span>
+        <button class="decl-form-trigger" id="col-decl-add-btn" title="New declaration">+</button>
+      </div>
+      <div id="decl-form-container"></div>
       <div id="col-decl-list"></div>
     </div>
     <div class="col-panel col-panel-mile" id="col-milestones">
