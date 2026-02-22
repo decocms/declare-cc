@@ -29,7 +29,12 @@ function runLoadGraph(cwd) {
 
   return {
     declarations: declarations.map(d => ({ ...d, wholeness: wholeness.get(d.id) || 'broken' })),
-    milestones: milestones.map(m => ({ ...m, wholeness: wholeness.get(m.id) || 'broken' })),
+    milestones: milestones.map(m => ({
+      ...m,
+      classification: m.classification || 'agent',
+      dependsOn: m.dependsOn || [],
+      wholeness: wholeness.get(m.id) || 'broken',
+    })),
     actions: actions.map(a => ({ ...a, wholeness: wholeness.get(a.id) || 'broken' })),
     stats: dag.stats(),
     validation: dag.validate(),

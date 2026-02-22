@@ -62,7 +62,7 @@ function splitMultiValue(value) {
  * - Backward compatible: parses both old format (Caused By column) and new format (Plan column)
  *
  * @param {string} content - Raw markdown content of MILESTONES.md
- * @returns {{ milestones: Array<{id: string, title: string, description: string, status: string, realizes: string[], hasPlan: boolean}> }}
+ * @returns {{ milestones: Array<{id: string, title: string, description: string, status: string, realizes: string[], hasPlan: boolean, classification: string, dependsOn: string[]}> }}
  */
 function parseMilestonesFile(content) {
   if (!content || !content.trim()) {
@@ -80,6 +80,8 @@ function parseMilestonesFile(content) {
     status: (row['Status'] || 'PENDING').trim().toUpperCase(),
     realizes: splitMultiValue(row['Realizes'] || ''),
     hasPlan: (row['Plan'] || '').trim().toUpperCase() === 'YES',
+    classification: (row['Classification'] || 'agent').trim().toLowerCase() === 'human' ? 'human' : 'agent',
+    dependsOn: splitMultiValue(row['Depends On'] || ''),
   })).filter(m => m.id);
 
   return { milestones };
@@ -119,13 +121,24 @@ function writeMilestonesFile(milestones, projectNameOrActions, maybeProjectName)
 
   // Include Description column only if any milestone has a description
   const hasDescriptions = milestones.some(m => m.description);
-  const mHeaders = hasDescriptions
-    ? ['ID', 'Title', 'Description', 'Status', 'Realizes', 'Plan']
-    : ['ID', 'Title', 'Status', 'Realizes', 'Plan'];
-  const mRows = milestones.map(m => hasDescriptions
-    ? [m.id, m.title, m.description || '', m.status, m.realizes.join(', '), m.hasPlan ? 'YES' : 'NO']
-    : [m.id, m.title, m.status, m.realizes.join(', '), m.hasPlan ? 'YES' : 'NO']
-  );
+  const hasClassification = milestones.some(m => m.classification && m.classification !== 'agent');
+  const hasDependsOn = milestones.some(m => m.dependsOn && m.dependsOn.length > 0);
+
+  // Build dynamic headers and rows
+  const mHeaders = ['ID', 'Title'];
+  if (hasDescriptions) mHeaders.push('Description');
+  mHeaders.push('Status', 'Realizes', 'Plan');
+  if (hasClassification) mHeaders.push('Classification');
+  if (hasDependsOn) mHeaders.push('Depends On');
+
+  const mRows = milestones.map(m => {
+    const row = [m.id, m.title];
+    if (hasDescriptions) row.push(m.description || '');
+    row.push(m.status, m.realizes.join(', '), m.hasPlan ? 'YES' : 'NO');
+    if (hasClassification) row.push(m.classification || 'agent');
+    if (hasDependsOn) row.push((m.dependsOn || []).join(', '));
+    return row;
+  });
 
   lines.push(...formatTable(mHeaders, mRows));
   lines.push('');
