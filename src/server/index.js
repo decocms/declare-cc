@@ -855,12 +855,14 @@ function getAnnotationsPath(cwd, nodeId) {
 function readAnnotations(cwd, nodeId) {
   const filePath = getAnnotationsPath(cwd, nodeId);
   if (!fs.existsSync(filePath)) {
-    return { nodeId: nodeId.toUpperCase(), annotations: [] };
+    return { nodeId: nodeId.toUpperCase(), annotations: [], revisionRound: 0 };
   }
   try {
-    return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    data.revisionRound = data.revisionRound || 0;
+    return data;
   } catch (_) {
-    return { nodeId: nodeId.toUpperCase(), annotations: [] };
+    return { nodeId: nodeId.toUpperCase(), annotations: [], revisionRound: 0 };
   }
 }
 
@@ -965,6 +967,26 @@ function handleDeleteAnnotation(res, cwd, nodeId, annotationId) {
     broadcastChange();
 
     sendJson(res, 200, { ok: true, id: annotationId });
+  } catch (err) {
+    sendJson(res, 500, { error: String(err) });
+  }
+}
+
+/**
+ * Handle POST /api/node/:id/annotations/increment-round
+ * Increments the revision round counter for a node's annotations.
+ *
+ * @param {http.ServerResponse} res
+ * @param {string} cwd
+ * @param {string} nodeId
+ */
+function handleIncrementRevisionRound(res, cwd, nodeId) {
+  try {
+    const data = readAnnotations(cwd, nodeId);
+    data.revisionRound = (data.revisionRound || 0) + 1;
+    writeAnnotations(cwd, nodeId, data);
+    broadcastChange();
+    sendJson(res, 200, { ok: true, revisionRound: data.revisionRound });
   } catch (err) {
     sendJson(res, 500, { error: String(err) });
   }
@@ -1170,6 +1192,13 @@ function route(req, res, cwd) {
   const getAnnotationsMatch = method === 'GET' && urlPath.match(/^\/api\/node\/([^/]+)\/annotations$/);
   if (getAnnotationsMatch) {
     handleGetAnnotations(res, cwd, getAnnotationsMatch[1]);
+    return;
+  }
+
+  // POST /api/node/:id/annotations/increment-round
+  const incrementRoundMatch = method === 'POST' && urlPath.match(/^\/api\/node\/([^/]+)\/annotations\/increment-round$/);
+  if (incrementRoundMatch) {
+    handleIncrementRevisionRound(res, cwd, incrementRoundMatch[1]);
     return;
   }
 
