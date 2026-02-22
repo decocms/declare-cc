@@ -8,8 +8,8 @@
 | M-19 | Browser-based milestone derivation           | Derive milestones from declarations via agent invocation in the browser    | DONE    | D-06     | YES  |
 | M-20 | Browser-based action derivation              | Derive actions per milestone via scoped agent invocation in the browser    | PENDING | D-06     | YES  |
 | M-21 | UI workflow state machine                    | State machine driving the D-M-A workflow progression in the UI            | PENDING | D-06     | YES  |
-| M-22 | Milestone classification in planning         | Classify milestones as agent-time or human-bound during planning           | PENDING | D-07     | YES  |
-| M-23 | Milestone dependency graph                   | Declare and visualize dependencies between milestones in the DAG          | PENDING | D-07     | YES  |
+| M-22 | Milestone classification in planning         | Classify milestones as agent-time or human-bound during planning           | DONE    | D-07     | YES  |
+| M-23 | Milestone dependency graph                   | Declare and visualize dependencies between milestones in the DAG          | DONE    | D-07     | YES  |
 | M-24 | Readiness state per milestone                | Compute and display readiness state based on dependency completion         | PENDING | D-07     | YES  |
 | M-25 | Play action for autonomous execution         | One-click execution of all ready agent-time milestones in dependency order | PENDING | D-07     | YES  |
 | M-26 | Real-time agent output streaming             | Stream agent output in real-time to the dashboard during execution         | DONE    | D-08     | YES  |
