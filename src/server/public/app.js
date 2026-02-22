@@ -1285,6 +1285,16 @@ async function renderAnnotationPanel(nodeId, type) {
   annotationNodeId = nodeId;
   annotatingLine = null;
 
+  // Look up node's current reviewState from graphData
+  let nodeReviewState = 'draft';
+  if (graphData) {
+    let node = null;
+    if (type === 'declaration') node = graphData.declarations.find(d => d.id === nodeId);
+    if (type === 'milestone')   node = graphData.milestones.find(m => m.id === nodeId);
+    if (type === 'action')      node = graphData.actions.find(a => a.id === nodeId);
+    if (node) nodeReviewState = node.reviewState || 'draft';
+  }
+
   const artifactPath = getNodeArtifactPath(nodeId, type);
 
   // Fetch annotations
@@ -1393,6 +1403,21 @@ async function renderAnnotationPanel(nodeId, type) {
     el.innerHTML = headerHtml + `<div class="ann-no-artifact">No artifact content available. Select a line-numbered artifact to add annotations.</div>`;
   }
 
+  // Show approve button if all annotations are resolved and node is in a reviewable state
+  if (annotations.length === 0 && nodeReviewState === 'revision_needed') {
+    const approveHtml = `<div class="ann-approve-section">
+      <div class="ann-approve-msg">All annotations resolved</div>
+      <button class="ann-approve-btn" id="ann-approve-btn">Approve</button>
+    </div>`;
+    el.insertAdjacentHTML('beforeend', approveHtml);
+  } else if (annotations.length === 0 && nodeReviewState === 'in_review') {
+    const approveHtml = `<div class="ann-approve-section">
+      <div class="ann-approve-msg">No annotations — ready to approve</div>
+      <button class="ann-approve-btn" id="ann-approve-btn">Approve</button>
+    </div>`;
+    el.insertAdjacentHTML('beforeend', approveHtml);
+  }
+
   $panelBody.appendChild(el);
 
   // Wire event delegation on the annotation panel
@@ -1419,6 +1444,20 @@ async function renderAnnotationPanel(nodeId, type) {
             body: JSON.stringify({ line: annotatingLine, text: input.value.trim() })
           });
           annotatingLine = null;
+          // Update review badge immediately to revision_needed
+          const badge = document.querySelector('.review-badge[data-node-id="' + nodeId + '"]');
+          if (badge) {
+            badge.className = 'review-badge review-revision_needed';
+            badge.dataset.reviewState = 'revision_needed';
+            badge.textContent = REVIEW_DISPLAY['revision_needed'] || 'Needs Revision';
+          }
+          if (graphData) {
+            let node = null;
+            if (type === 'declaration') node = graphData.declarations.find(d => d.id === nodeId);
+            if (type === 'milestone')   node = graphData.milestones.find(m => m.id === nodeId);
+            if (type === 'action')      node = graphData.actions.find(a => a.id === nodeId);
+            if (node) node.reviewState = 'revision_needed';
+          }
           renderAnnotationPanel(nodeId, type);
         } catch (_) { /* ignore */ }
       }
@@ -1452,6 +1491,36 @@ async function renderAnnotationPanel(nodeId, type) {
       renderAnnotationPanelFull(nodeId, type);
       return;
     }
+
+    // Click approve button
+    if (e.target.id === 'ann-approve-btn') {
+      try {
+        const resp = await fetch('/api/node/' + encodeURIComponent(nodeId) + '/review-state', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reviewState: 'approved' }),
+        });
+        if (resp.ok) {
+          // Update badge immediately
+          const badge = document.querySelector('.review-badge[data-node-id="' + nodeId + '"]');
+          if (badge) {
+            badge.className = 'review-badge review-approved';
+            badge.dataset.reviewState = 'approved';
+            badge.textContent = REVIEW_DISPLAY['approved'] || 'Approved';
+          }
+          // Update local graphData so re-render picks up new state
+          if (graphData) {
+            let node = null;
+            if (type === 'declaration') node = graphData.declarations.find(d => d.id === nodeId);
+            if (type === 'milestone')   node = graphData.milestones.find(m => m.id === nodeId);
+            if (type === 'action')      node = graphData.actions.find(a => a.id === nodeId);
+            if (node) node.reviewState = 'approved';
+          }
+          renderAnnotationPanel(nodeId, type);
+        }
+      } catch (_) { /* ignore */ }
+      return;
+    }
   });
 
   // Wire Enter key in annotation input
@@ -1466,6 +1535,20 @@ async function renderAnnotationPanel(nodeId, type) {
             body: JSON.stringify({ line: annotatingLine, text: input.value.trim() })
           });
           annotatingLine = null;
+          // Update review badge immediately to revision_needed
+          const badge = document.querySelector('.review-badge[data-node-id="' + nodeId + '"]');
+          if (badge) {
+            badge.className = 'review-badge review-revision_needed';
+            badge.dataset.reviewState = 'revision_needed';
+            badge.textContent = REVIEW_DISPLAY['revision_needed'] || 'Needs Revision';
+          }
+          if (graphData) {
+            let node = null;
+            if (type === 'declaration') node = graphData.declarations.find(d => d.id === nodeId);
+            if (type === 'milestone')   node = graphData.milestones.find(m => m.id === nodeId);
+            if (type === 'action')      node = graphData.actions.find(a => a.id === nodeId);
+            if (node) node.reviewState = 'revision_needed';
+          }
           renderAnnotationPanel(nodeId, type);
         } catch (_) { /* ignore */ }
       }
