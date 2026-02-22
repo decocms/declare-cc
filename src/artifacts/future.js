@@ -35,7 +35,7 @@ function extractField(lines, field) {
  * - Sections without valid ID pattern are skipped
  *
  * @param {string} content - Raw markdown content of FUTURE.md
- * @returns {Array<{id: string, title: string, statement: string, status: string, milestones: string[]}>}
+ * @returns {Array<{id: string, title: string, statement: string, status: string, milestones: string[], ref?: {url?: string, path?: string}}>}
  */
 function parseFutureFile(content) {
   if (!content || !content.trim()) return [];
@@ -57,7 +57,20 @@ function parseFutureFile(content) {
       ? rawMilestones.split(',').map(s => s.trim()).filter(Boolean)
       : [];
 
-    declarations.push({ id, title: title.trim(), statement, status, milestones });
+    // Parse optional ref field: **Ref:** url=<url> path=<path>
+    const rawRef = extractField(lines, 'Ref');
+    let ref;
+    if (rawRef) {
+      ref = {};
+      const urlMatch = rawRef.match(/url=(\S+)/);
+      const pathMatch = rawRef.match(/path=(\S+)/);
+      if (urlMatch) ref.url = urlMatch[1];
+      if (pathMatch) ref.path = pathMatch[1];
+    }
+
+    const decl = { id, title: title.trim(), statement, status, milestones };
+    if (ref) decl.ref = ref;
+    declarations.push(decl);
   }
 
   return declarations;
@@ -66,7 +79,7 @@ function parseFutureFile(content) {
 /**
  * Write an array of declarations to canonical FUTURE.md format.
  *
- * @param {Array<{id: string, title: string, statement: string, status: string, milestones: string[]}>} declarations
+ * @param {Array<{id: string, title: string, statement: string, status: string, milestones: string[], ref?: {url?: string, path?: string}}>} declarations
  * @param {string} projectName
  * @returns {string} Canonical markdown content
  */
@@ -78,6 +91,12 @@ function writeFutureFile(declarations, projectName) {
     lines.push(`**Statement:** ${d.statement}`);
     lines.push(`**Status:** ${d.status}`);
     lines.push(`**Milestones:** ${d.milestones.join(', ')}`);
+    if (d.ref && (d.ref.url || d.ref.path)) {
+      const parts = [];
+      if (d.ref.url) parts.push(`url=${d.ref.url}`);
+      if (d.ref.path) parts.push(`path=${d.ref.path}`);
+      lines.push(`**Ref:** ${parts.join(' ')}`);
+    }
     lines.push('');
   }
 

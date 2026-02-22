@@ -817,6 +817,47 @@ function route(req, res, cwd) {
     return;
   }
 
+  // PUT /api/declarations/:id/ref -- set or update ref field
+  const declRefPutMatch = method === 'PUT' && urlPath.match(/^\/api\/declarations\/([^/]+)\/ref$/);
+  if (declRefPutMatch) {
+    readJsonBody(req).then(body => {
+      const declId = declRefPutMatch[1].toUpperCase();
+      const planningDir = path.join(cwd, '.planning');
+      const futurePath = path.join(planningDir, 'FUTURE.md');
+
+      if (!fs.existsSync(futurePath)) {
+        sendJson(res, 404, { error: 'FUTURE.md not found' });
+        return;
+      }
+
+      const futureContent = fs.readFileSync(futurePath, 'utf-8');
+      const declarations = parseFutureFile(futureContent);
+      const decl = declarations.find(d => d.id === declId);
+
+      if (!decl) {
+        sendJson(res, 404, { error: `Declaration not found: ${declId}` });
+        return;
+      }
+
+      // Update ref field
+      const ref = {};
+      if (body.url != null) ref.url = body.url || undefined;
+      if (body.path != null) ref.path = body.path || undefined;
+      decl.ref = (ref.url || ref.path) ? ref : undefined;
+
+      // Extract project name from header
+      const headerMatch = futureContent.match(/^# Future: (.+)/m);
+      const projectName = headerMatch ? headerMatch[1].trim() : 'Project';
+
+      const content = writeFutureFile(declarations, projectName);
+      fs.writeFileSync(futurePath, content, 'utf-8');
+
+      sendJson(res, 200, { id: declId, ref: decl.ref || null });
+      broadcastChange();
+    }).catch(err => sendJson(res, 400, { error: String(err) }));
+    return;
+  }
+
   const declPutMatch = method === 'PUT' && urlPath.match(/^\/api\/declarations\/([^/]+)$/);
   if (declPutMatch) {
     readJsonBody(req).then(body => {

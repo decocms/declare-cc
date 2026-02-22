@@ -84,7 +84,9 @@ function buildDagFromDisk(cwd) {
   const dag = new DeclareDag();
 
   for (const d of declarations) {
-    dag.addNode(d.id, 'declaration', d.title, d.status || 'PENDING');
+    const meta = {};
+    if (d.ref) meta.ref = d.ref;
+    dag.addNode(d.id, 'declaration', d.title, d.status || 'PENDING', meta);
   }
   for (const m of milestones) {
     dag.addNode(m.id, 'milestone', m.title, m.status || 'PENDING', {
