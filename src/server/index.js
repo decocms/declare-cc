@@ -245,6 +245,49 @@ function handleActivity(res, cwd) {
 }
 
 /**
+ * Handle GET /api/files?path=...
+ * Returns raw file content as JSON for the inline file viewer.
+ *
+ * @param {http.IncomingMessage} req
+ * @param {http.ServerResponse} res
+ * @param {string} cwd
+ */
+function handleFileContent(req, res, cwd) {
+  try {
+    const parsedUrl = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+    const requestedPath = parsedUrl.searchParams.get('path');
+
+    if (!requestedPath) {
+      sendJson(res, 400, { error: "Missing 'path' query parameter" });
+      return;
+    }
+
+    const resolvedPath = path.resolve(cwd, requestedPath);
+
+    // Path traversal guard: resolved path must be within cwd
+    if (resolvedPath !== cwd && !resolvedPath.startsWith(cwd + path.sep)) {
+      sendJson(res, 403, { error: 'Forbidden' });
+      return;
+    }
+
+    if (!fs.existsSync(resolvedPath)) {
+      sendJson(res, 404, { error: 'File not found' });
+      return;
+    }
+
+    if (fs.statSync(resolvedPath).isDirectory()) {
+      sendJson(res, 400, { error: 'Path is a directory' });
+      return;
+    }
+
+    const fileContent = fs.readFileSync(resolvedPath, 'utf-8');
+    sendJson(res, 200, { path: requestedPath, content: fileContent });
+  } catch (err) {
+    sendJson(res, 500, { error: String(err) });
+  }
+}
+
+/**
  * Handle POST /api/action/:id/execute
  * Validates action has an exec-plan, then spawns Claude CLI.
  *
@@ -440,6 +483,11 @@ function route(req, res, cwd) {
 
   if (urlPath === '/api/activity') {
     handleActivity(res, cwd);
+    return;
+  }
+
+  if (urlPath === '/api/files') {
+    handleFileContent(req, res, cwd);
     return;
   }
 

@@ -3994,6 +3994,16 @@ var require_process_manager = __commonJS({
   "src/server/process-manager.js"(exports2, module2) {
     "use strict";
     var { spawn } = require("node:child_process");
+    var fs = require("node:fs");
+    var path = require("node:path");
+    var { findMilestoneFolder } = require_milestone_folders();
+    function appendLog(logPath, line) {
+      if (!logPath) return;
+      try {
+        fs.appendFileSync(logPath, line + "\n", "utf-8");
+      } catch (_) {
+      }
+    }
     function createProcessManager(sseClients, cwd) {
       const processes = /* @__PURE__ */ new Map();
       function broadcast(event, data) {
@@ -4009,7 +4019,7 @@ data: ${JSON.stringify(data)}
           }
         }
       }
-      function createLineHandler(actionId, streamName) {
+      function createLineHandler(actionId, streamName, logPath) {
         let buffer = "";
         return (chunk) => {
           buffer += chunk.toString();
@@ -4017,6 +4027,7 @@ data: ${JSON.stringify(data)}
           buffer = lines.pop() || "";
           for (const line of lines) {
             broadcast("action-output", { actionId, text: line, stream: streamName });
+            appendLog(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] [${actionId}] [${streamName}] ${line}`);
           }
         };
       }
@@ -4215,6 +4226,33 @@ var require_server = __commonJS({
         sendJson(res, 500, { error: String(err) });
       }
     }
+    function handleFileContent(req, res, cwd) {
+      try {
+        const parsedUrl = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
+        const requestedPath = parsedUrl.searchParams.get("path");
+        if (!requestedPath) {
+          sendJson(res, 400, { error: "Missing 'path' query parameter" });
+          return;
+        }
+        const resolvedPath = path.resolve(cwd, requestedPath);
+        if (resolvedPath !== cwd && !resolvedPath.startsWith(cwd + path.sep)) {
+          sendJson(res, 403, { error: "Forbidden" });
+          return;
+        }
+        if (!fs.existsSync(resolvedPath)) {
+          sendJson(res, 404, { error: "File not found" });
+          return;
+        }
+        if (fs.statSync(resolvedPath).isDirectory()) {
+          sendJson(res, 400, { error: "Path is a directory" });
+          return;
+        }
+        const fileContent = fs.readFileSync(resolvedPath, "utf-8");
+        sendJson(res, 200, { path: requestedPath, content: fileContent });
+      } catch (err) {
+        sendJson(res, 500, { error: String(err) });
+      }
+    }
     function handleExecuteAction(res, cwd, actionId) {
       try {
         const result = runGetExecPlan2(cwd, ["--action", actionId]);
@@ -4353,6 +4391,10 @@ var require_server = __commonJS({
       }
       if (urlPath === "/api/activity") {
         handleActivity(res, cwd);
+        return;
+      }
+      if (urlPath === "/api/files") {
+        handleFileContent(req, res, cwd);
         return;
       }
       const actionMatch = urlPath.match(/^\/api\/action\/([^/]+)$/);
