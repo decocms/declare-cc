@@ -338,6 +338,78 @@ function handleWorkflowState(res, cwd) {
 }
 
 /**
+ * Handle POST /api/execution-manifest
+ * Validates and saves an execution manifest to .planning/execution-manifest.json.
+ *
+ * @param {http.IncomingMessage} req
+ * @param {http.ServerResponse} res
+ * @param {string} cwd
+ */
+async function handleSaveManifest(req, res, cwd) {
+  try {
+    const body = await readJsonBody(req);
+
+    // Validate structure
+    if (!body || !Array.isArray(body.waves) || body.waves.length === 0) {
+      sendJson(res, 400, { error: 'waves must be a non-empty array' });
+      return;
+    }
+
+    for (let i = 0; i < body.waves.length; i++) {
+      const wave = body.waves[i];
+      if (!Array.isArray(wave.milestones)) {
+        sendJson(res, 400, { error: `waves[${i}].milestones must be an array` });
+        return;
+      }
+      for (let j = 0; j < wave.milestones.length; j++) {
+        const m = wave.milestones[j];
+        if (typeof m.id !== 'string' || !m.id) {
+          sendJson(res, 400, { error: `waves[${i}].milestones[${j}].id must be a non-empty string` });
+          return;
+        }
+        if (!Array.isArray(m.actions)) {
+          sendJson(res, 400, { error: `waves[${i}].milestones[${j}].actions must be an array` });
+          return;
+        }
+      }
+    }
+
+    const manifest = {
+      waves: body.waves,
+      confirmedAt: new Date().toISOString(),
+    };
+
+    const manifestPath = path.join(cwd, '.planning', 'execution-manifest.json');
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf-8');
+
+    sendJson(res, 200, { ok: true });
+  } catch (err) {
+    sendJson(res, 400, { error: String(err) });
+  }
+}
+
+/**
+ * Handle GET /api/execution-manifest
+ * Returns the current execution manifest or 404 if none exists.
+ *
+ * @param {http.ServerResponse} res
+ * @param {string} cwd
+ */
+function handleGetManifest(res, cwd) {
+  try {
+    const manifestPath = path.join(cwd, '.planning', 'execution-manifest.json');
+    if (!fs.existsSync(manifestPath)) {
+      sendJson(res, 404, { error: 'No execution manifest found' });
+      return;
+    }
+    const data = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+    sendJson(res, 200, data);
+  } catch (err) {
+    sendJson(res, 500, { error: String(err) });
+  }
+}
+
+/**
  * Handle GET /api/readiness
  * Returns the readiness state map for all milestones.
  *
@@ -1614,6 +1686,11 @@ function route(req, res, cwd) {
       return;
     }
 
+    if (urlPath === '/api/execution-manifest') {
+      handleSaveManifest(req, res, cwd);
+      return;
+    }
+
     sendJson(res, 404, { error: `Route not found: ${urlPath}` });
     return;
   }
@@ -1699,6 +1776,11 @@ function route(req, res, cwd) {
 
   if (urlPath === '/api/readiness') {
     handleReadiness(res, cwd);
+    return;
+  }
+
+  if (urlPath === '/api/execution-manifest') {
+    handleGetManifest(res, cwd);
     return;
   }
 
