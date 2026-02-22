@@ -807,6 +807,140 @@ async function handleUpdateReviewState(req, res, cwd, nodeId) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Annotation helpers and handlers
+// ---------------------------------------------------------------------------
+
+/**
+ * Get the path to the annotations JSON file for a given node.
+ * @param {string} cwd
+ * @param {string} nodeId
+ * @returns {string}
+ */
+function getAnnotationsPath(cwd, nodeId) {
+  return path.join(cwd, '.planning', 'annotations', `${nodeId.toUpperCase()}.json`);
+}
+
+/**
+ * Read annotations for a node. Returns default structure if file is missing.
+ * @param {string} cwd
+ * @param {string} nodeId
+ * @returns {{ nodeId: string, annotations: Array<{id: string, line: number, text: string, timestamp: string, resolved: boolean}> }}
+ */
+function readAnnotations(cwd, nodeId) {
+  const filePath = getAnnotationsPath(cwd, nodeId);
+  if (!fs.existsSync(filePath)) {
+    return { nodeId: nodeId.toUpperCase(), annotations: [] };
+  }
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+  } catch (_) {
+    return { nodeId: nodeId.toUpperCase(), annotations: [] };
+  }
+}
+
+/**
+ * Write annotations data for a node.
+ * @param {string} cwd
+ * @param {string} nodeId
+ * @param {{ nodeId: string, annotations: Array<any> }} data
+ */
+function writeAnnotations(cwd, nodeId, data) {
+  const filePath = getAnnotationsPath(cwd, nodeId);
+  const dir = path.dirname(filePath);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+}
+
+/**
+ * Handle GET /api/node/:id/annotations
+ * Returns all annotations for the given node.
+ *
+ * @param {http.ServerResponse} res
+ * @param {string} cwd
+ * @param {string} nodeId
+ */
+function handleGetAnnotations(res, cwd, nodeId) {
+  try {
+    const data = readAnnotations(cwd, nodeId);
+    sendJson(res, 200, data);
+  } catch (err) {
+    sendJson(res, 500, { error: String(err) });
+  }
+}
+
+/**
+ * Handle POST /api/node/:id/annotations
+ * Creates a new annotation on the given node.
+ *
+ * @param {http.IncomingMessage} req
+ * @param {http.ServerResponse} res
+ * @param {string} cwd
+ * @param {string} nodeId
+ */
+async function handleAddAnnotation(req, res, cwd, nodeId) {
+  try {
+    const body = await readJsonBody(req);
+    const { line, text } = body;
+
+    if (typeof line !== 'number' || line < 1) {
+      sendJson(res, 400, { error: 'line must be a number >= 1' });
+      return;
+    }
+    if (typeof text !== 'string' || text.trim().length === 0) {
+      sendJson(res, 400, { error: 'text must be a non-empty string' });
+      return;
+    }
+
+    const id = 'ann-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+    const annotation = {
+      id,
+      line,
+      text: text.trim(),
+      timestamp: new Date().toISOString(),
+      resolved: false,
+    };
+
+    const data = readAnnotations(cwd, nodeId);
+    data.annotations.push(annotation);
+    writeAnnotations(cwd, nodeId, data);
+    broadcastChange();
+
+    sendJson(res, 201, annotation);
+  } catch (err) {
+    sendJson(res, 400, { error: String(err) });
+  }
+}
+
+/**
+ * Handle DELETE /api/node/:id/annotations/:annotationId
+ * Removes a specific annotation from the given node.
+ *
+ * @param {http.ServerResponse} res
+ * @param {string} cwd
+ * @param {string} nodeId
+ * @param {string} annotationId
+ */
+function handleDeleteAnnotation(res, cwd, nodeId, annotationId) {
+  try {
+    const data = readAnnotations(cwd, nodeId);
+    const before = data.annotations.length;
+    data.annotations = data.annotations.filter(a => a.id !== annotationId);
+
+    if (data.annotations.length === before) {
+      sendJson(res, 404, { error: 'Annotation not found' });
+      return;
+    }
+
+    writeAnnotations(cwd, nodeId, data);
+    broadcastChange();
+
+    sendJson(res, 200, { ok: true, id: annotationId });
+  } catch (err) {
+    sendJson(res, 500, { error: String(err) });
+  }
+}
+
 /** @type {Set<http.ServerResponse>} Active SSE clients */
 const sseClients = new Set();
 
@@ -1000,6 +1134,27 @@ function route(req, res, cwd) {
       sendJson(res, 200, { id: declId, ref: decl.ref || null });
       broadcastChange();
     }).catch(err => sendJson(res, 400, { error: String(err) }));
+    return;
+  }
+
+  // GET /api/node/:id/annotations
+  const getAnnotationsMatch = method === 'GET' && urlPath.match(/^\/api\/node\/([^/]+)\/annotations$/);
+  if (getAnnotationsMatch) {
+    handleGetAnnotations(res, cwd, getAnnotationsMatch[1]);
+    return;
+  }
+
+  // POST /api/node/:id/annotations
+  const postAnnotationsMatch = method === 'POST' && urlPath.match(/^\/api\/node\/([^/]+)\/annotations$/);
+  if (postAnnotationsMatch) {
+    handleAddAnnotation(req, res, cwd, postAnnotationsMatch[1]);
+    return;
+  }
+
+  // DELETE /api/node/:id/annotations/:annotationId
+  const deleteAnnotationMatch = method === 'DELETE' && urlPath.match(/^\/api\/node\/([^/]+)\/annotations\/([^/]+)$/);
+  if (deleteAnnotationMatch) {
+    handleDeleteAnnotation(res, cwd, deleteAnnotationMatch[1], deleteAnnotationMatch[2]);
     return;
   }
 
