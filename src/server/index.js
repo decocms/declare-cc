@@ -31,6 +31,8 @@ const { runLoadGraph } = require('../commands/load-graph');
 const { runStatus } = require('../commands/status');
 const { runGetExecPlan } = require('../commands/get-exec-plan');
 const { createProcessManager } = require('./process-manager');
+const { buildDagFromDisk } = require('../commands/build-dag');
+const { computeWorkabilityPath } = require('../graph/engine');
 
 /** @type {Record<string, string>} */
 const MIME_TYPES = {
@@ -184,6 +186,37 @@ function handleMilestone(res, cwd, milestoneId) {
       milestone,
       actions: milestoneActions,
     });
+  } catch (err) {
+    sendJson(res, 500, { error: String(err) });
+  }
+}
+
+/**
+ * Handle GET /api/workability/:id
+ * Returns the workability path for a given node.
+ *
+ * @param {http.ServerResponse} res
+ * @param {string} cwd
+ * @param {string} nodeId
+ */
+function handleWorkability(res, cwd, nodeId) {
+  try {
+    const result = buildDagFromDisk(cwd);
+    if ('error' in result && !('dag' in result)) {
+      sendJson(res, 500, { error: result.error });
+      return;
+    }
+
+    const { dag } = result;
+    const normalizedId = nodeId.toUpperCase();
+
+    if (!dag.getNode(normalizedId)) {
+      sendJson(res, 404, { error: `Node '${nodeId}' not found` });
+      return;
+    }
+
+    const path = computeWorkabilityPath(dag, normalizedId);
+    sendJson(res, 200, path);
   } catch (err) {
     sendJson(res, 500, { error: String(err) });
   }
@@ -384,6 +417,12 @@ function route(req, res, cwd) {
 
   if (urlPath === '/api/status') {
     handleStatus(res, cwd);
+    return;
+  }
+
+  const workabilityMatch = urlPath.match(/^\/api\/workability\/([^/]+)$/);
+  if (workabilityMatch) {
+    handleWorkability(res, cwd, workabilityMatch[1]);
     return;
   }
 

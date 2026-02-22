@@ -994,7 +994,82 @@ var require_engine = __commonJS({
     function computeWholeness(dag) {
       return dag.computeWholeness();
     }
-    module2.exports = { DeclareDag, COMPLETED_STATUSES, isCompleted, findOrphans, computeWholeness };
+    function computeWorkabilityPath(dag, nodeId) {
+      if (!dag.getNode(nodeId)) {
+        throw new Error(`Node not found: ${nodeId}`);
+      }
+      const wholenessMap = dag.computeWholeness();
+      const nodeWholeness = wholenessMap.get(nodeId);
+      if (nodeWholeness === "whole") {
+        return { nodeId, wholeness: "whole", steps: [] };
+      }
+      const brokenActions = [];
+      const visited = /* @__PURE__ */ new Set();
+      function walkDown(id) {
+        if (visited.has(id)) return;
+        visited.add(id);
+        const node = dag.getNode(id);
+        if (!node) return;
+        if (node.type === "action" && wholenessMap.get(id) === "broken") {
+          brokenActions.push(node);
+          return;
+        }
+        const children = dag.downEdges.get(id);
+        if (!children) return;
+        for (const childId of children) {
+          if (wholenessMap.get(childId) !== "whole") {
+            walkDown(childId);
+          }
+        }
+      }
+      walkDown(nodeId);
+      const steps = brokenActions.map((action) => {
+        const ancestors = /* @__PURE__ */ new Set();
+        const ancestorVisited = /* @__PURE__ */ new Set();
+        function walkUp(id) {
+          if (ancestorVisited.has(id)) return;
+          ancestorVisited.add(id);
+          const upTargets = dag.upEdges.get(id);
+          if (!upTargets) return;
+          for (const targetId of upTargets) {
+            ancestors.add(targetId);
+            walkUp(targetId);
+          }
+        }
+        walkUp(action.id);
+        let nonWholeCount = 0;
+        for (const ancestorId of ancestors) {
+          if (wholenessMap.get(ancestorId) !== "whole") {
+            nonWholeCount++;
+          }
+        }
+        let impact;
+        if (nonWholeCount >= 3) {
+          impact = "high";
+        } else if (nonWholeCount >= 1) {
+          impact = "medium";
+        } else {
+          impact = "low";
+        }
+        const upstream = dag.getUpstream(action.id);
+        const milestone = upstream.find((n) => n.type === "milestone");
+        const milestoneId = milestone ? milestone.id : "";
+        return {
+          actionId: action.id,
+          title: action.title,
+          milestoneId,
+          impact
+        };
+      });
+      const impactOrder = { high: 0, medium: 1, low: 2 };
+      steps.sort((a, b) => {
+        const impactDiff = impactOrder[a.impact] - impactOrder[b.impact];
+        if (impactDiff !== 0) return impactDiff;
+        return a.actionId.localeCompare(b.actionId);
+      });
+      return { nodeId, wholeness: nodeWholeness, steps };
+    }
+    module2.exports = { DeclareDag, COMPLETED_STATUSES, isCompleted, findOrphans, computeWholeness, computeWorkabilityPath };
   }
 });
 
@@ -4005,6 +4080,8 @@ var require_server = __commonJS({
     var { runStatus: runStatus2 } = require_status();
     var { runGetExecPlan: runGetExecPlan2 } = require_get_exec_plan();
     var { createProcessManager } = require_process_manager();
+    var { buildDagFromDisk } = require_build_dag();
+    var { computeWorkabilityPath } = require_engine();
     var MIME_TYPES = {
       ".html": "text/html; charset=utf-8",
       ".js": "application/javascript; charset=utf-8",
@@ -4097,6 +4174,25 @@ var require_server = __commonJS({
           milestone,
           actions: milestoneActions
         });
+      } catch (err) {
+        sendJson(res, 500, { error: String(err) });
+      }
+    }
+    function handleWorkability(res, cwd, nodeId) {
+      try {
+        const result = buildDagFromDisk(cwd);
+        if ("error" in result && !("dag" in result)) {
+          sendJson(res, 500, { error: result.error });
+          return;
+        }
+        const { dag } = result;
+        const normalizedId = nodeId.toUpperCase();
+        if (!dag.getNode(normalizedId)) {
+          sendJson(res, 404, { error: `Node '${nodeId}' not found` });
+          return;
+        }
+        const path2 = computeWorkabilityPath(dag, normalizedId);
+        sendJson(res, 200, path2);
       } catch (err) {
         sendJson(res, 500, { error: String(err) });
       }
@@ -4240,6 +4336,11 @@ var require_server = __commonJS({
       }
       if (urlPath === "/api/status") {
         handleStatus(res, cwd);
+        return;
+      }
+      const workabilityMatch = urlPath.match(/^\/api\/workability\/([^/]+)$/);
+      if (workabilityMatch) {
+        handleWorkability(res, cwd, workabilityMatch[1]);
         return;
       }
       const milestoneMatch = urlPath.match(/^\/api\/milestone\/([^/]+)$/);
