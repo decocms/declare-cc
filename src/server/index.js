@@ -700,6 +700,99 @@ async function handleActionDeriveAccept(req, res, cwd, milestoneId) {
 }
 
 /**
+ * Set the review state of any D, M, or A node by writing to the appropriate artifact file.
+ * Reusable helper — called by both the review-state PUT endpoint and the annotation handler.
+ *
+ * @param {string} cwd
+ * @param {string} nodeId
+ * @param {string} reviewState
+ * @returns {{ ok: true, id: string, reviewState: string } | { error: string, status?: number }}
+ */
+function setReviewState(cwd, nodeId, reviewState) {
+  if (!reviewState || !VALID_REVIEW_STATES.has(reviewState)) {
+    return { error: `Invalid reviewState. Must be one of: ${[...VALID_REVIEW_STATES].join(', ')}`, status: 400 };
+  }
+
+  const id = nodeId.toUpperCase();
+  const prefix = id.split('-')[0];
+  const planningDir = path.join(cwd, '.planning');
+
+  if (prefix === 'D') {
+    const futurePath = path.join(planningDir, 'FUTURE.md');
+    if (!fs.existsSync(futurePath)) return { error: 'FUTURE.md not found', status: 404 };
+    const content = fs.readFileSync(futurePath, 'utf-8');
+    const declarations = parseFutureFile(content);
+    const decl = declarations.find(d => d.id === id);
+    if (!decl) return { error: `Declaration ${id} not found`, status: 404 };
+    decl.reviewState = reviewState;
+    const headerMatch = content.match(/^# Future: (.+)/m);
+    const projectName = headerMatch ? headerMatch[1].trim() : 'Project';
+    fs.writeFileSync(futurePath, writeFutureFile(declarations, projectName), 'utf-8');
+
+  } else if (prefix === 'M') {
+    const milestonesPath = path.join(planningDir, 'MILESTONES.md');
+    if (!fs.existsSync(milestonesPath)) return { error: 'MILESTONES.md not found', status: 404 };
+    const content = fs.readFileSync(milestonesPath, 'utf-8');
+    const { milestones } = parseMilestonesFile(content);
+    const mile = milestones.find(m => m.id === id);
+    if (!mile) return { error: `Milestone ${id} not found`, status: 404 };
+    mile.reviewState = reviewState;
+    const nameMatch = content.match(/^# Milestones:\s*(.+)/m);
+    const pName = nameMatch ? nameMatch[1].trim() : 'Project';
+    fs.writeFileSync(milestonesPath, writeMilestonesFile(milestones, pName), 'utf-8');
+
+  } else if (prefix === 'A') {
+    const milestonesDir = path.join(planningDir, 'milestones');
+    if (!fs.existsSync(milestonesDir)) return { error: 'No milestones directory', status: 404 };
+    let found = false;
+    const entries = fs.readdirSync(milestonesDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name.startsWith('_')) continue;
+      const planPath = path.join(milestonesDir, entry.name, 'PLAN.md');
+      if (!fs.existsSync(planPath)) continue;
+      const content = fs.readFileSync(planPath, 'utf-8');
+      const parsed = parsePlanFile(content);
+      const action = parsed.actions.find(a => a.id === id);
+      if (!action) continue;
+      const lines = content.split('\n');
+      let inSection = false;
+      let patched = false;
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].startsWith('### ')) {
+          inSection = lines[i].startsWith(`### ${id}:`);
+        }
+        if (inSection && !patched && /^\*\*Review:\*\*/i.test(lines[i].trim())) {
+          lines[i] = `**Review:** ${reviewState}`;
+          patched = true;
+          break;
+        }
+        if (inSection && !patched && /^\*\*Status:\*\*/i.test(lines[i].trim())) {
+          if (i + 1 < lines.length && /^\*\*Review:\*\*/i.test(lines[i + 1].trim())) {
+            lines[i + 1] = `**Review:** ${reviewState}`;
+            patched = true;
+          } else {
+            lines.splice(i + 1, 0, `**Review:** ${reviewState}`);
+            patched = true;
+          }
+          break;
+        }
+      }
+      if (patched) {
+        fs.writeFileSync(planPath, lines.join('\n'), 'utf-8');
+        found = true;
+      }
+      break;
+    }
+    if (!found) return { error: `Action ${id} not found in any PLAN.md`, status: 404 };
+
+  } else {
+    return { error: `Unknown node type prefix: ${prefix}`, status: 400 };
+  }
+
+  return { ok: true, id, reviewState };
+}
+
+/**
  * Handle PUT /api/node/:id/review-state
  * Updates the review state of any D, M, or A node by writing to the appropriate artifact file.
  *
@@ -711,96 +804,14 @@ async function handleActionDeriveAccept(req, res, cwd, milestoneId) {
 async function handleUpdateReviewState(req, res, cwd, nodeId) {
   try {
     const body = await readJsonBody(req);
-    const reviewState = body.reviewState;
+    const result = setReviewState(cwd, nodeId, body.reviewState);
 
-    if (!reviewState || !VALID_REVIEW_STATES.has(reviewState)) {
-      sendJson(res, 400, { error: `Invalid reviewState. Must be one of: ${[...VALID_REVIEW_STATES].join(', ')}` });
+    if ('error' in result) {
+      sendJson(res, result.status || 500, { error: result.error });
       return;
     }
 
-    const id = nodeId.toUpperCase();
-    const prefix = id.split('-')[0];
-    const planningDir = path.join(cwd, '.planning');
-
-    if (prefix === 'D') {
-      // Update declaration in FUTURE.md
-      const futurePath = path.join(planningDir, 'FUTURE.md');
-      if (!fs.existsSync(futurePath)) { sendJson(res, 404, { error: 'FUTURE.md not found' }); return; }
-      const content = fs.readFileSync(futurePath, 'utf-8');
-      const declarations = parseFutureFile(content);
-      const decl = declarations.find(d => d.id === id);
-      if (!decl) { sendJson(res, 404, { error: `Declaration ${id} not found` }); return; }
-      decl.reviewState = reviewState;
-      const headerMatch = content.match(/^# Future: (.+)/m);
-      const projectName = headerMatch ? headerMatch[1].trim() : 'Project';
-      fs.writeFileSync(futurePath, writeFutureFile(declarations, projectName), 'utf-8');
-
-    } else if (prefix === 'M') {
-      // Update milestone in MILESTONES.md
-      const milestonesPath = path.join(planningDir, 'MILESTONES.md');
-      if (!fs.existsSync(milestonesPath)) { sendJson(res, 404, { error: 'MILESTONES.md not found' }); return; }
-      const content = fs.readFileSync(milestonesPath, 'utf-8');
-      const { milestones } = parseMilestonesFile(content);
-      const mile = milestones.find(m => m.id === id);
-      if (!mile) { sendJson(res, 404, { error: `Milestone ${id} not found` }); return; }
-      mile.reviewState = reviewState;
-      const nameMatch = content.match(/^# Milestones:\s*(.+)/m);
-      const pName = nameMatch ? nameMatch[1].trim() : 'Project';
-      fs.writeFileSync(milestonesPath, writeMilestonesFile(milestones, pName), 'utf-8');
-
-    } else if (prefix === 'A') {
-      // Update action in its milestone's PLAN.md
-      const milestonesDir = path.join(planningDir, 'milestones');
-      if (!fs.existsSync(milestonesDir)) { sendJson(res, 404, { error: 'No milestones directory' }); return; }
-      let found = false;
-      const entries = fs.readdirSync(milestonesDir, { withFileTypes: true });
-      for (const entry of entries) {
-        if (!entry.isDirectory() || entry.name.startsWith('_')) continue;
-        const planPath = path.join(milestonesDir, entry.name, 'PLAN.md');
-        if (!fs.existsSync(planPath)) continue;
-        const content = fs.readFileSync(planPath, 'utf-8');
-        const parsed = parsePlanFile(content);
-        const action = parsed.actions.find(a => a.id === id);
-        if (!action) continue;
-        // Found the action — update its reviewState via line-level patch
-        const lines = content.split('\n');
-        let inSection = false;
-        let patched = false;
-        for (let i = 0; i < lines.length; i++) {
-          if (lines[i].startsWith('### ')) {
-            inSection = lines[i].startsWith(`### ${id}:`);
-          }
-          if (inSection && !patched && /^\*\*Review:\*\*/i.test(lines[i].trim())) {
-            lines[i] = `**Review:** ${reviewState}`;
-            patched = true;
-            break;
-          }
-          // If we hit Status without finding Review, insert after Status
-          if (inSection && !patched && /^\*\*Status:\*\*/i.test(lines[i].trim())) {
-            if (i + 1 < lines.length && /^\*\*Review:\*\*/i.test(lines[i + 1].trim())) {
-              lines[i + 1] = `**Review:** ${reviewState}`;
-              patched = true;
-            } else {
-              lines.splice(i + 1, 0, `**Review:** ${reviewState}`);
-              patched = true;
-            }
-            break;
-          }
-        }
-        if (patched) {
-          fs.writeFileSync(planPath, lines.join('\n'), 'utf-8');
-          found = true;
-        }
-        break;
-      }
-      if (!found) { sendJson(res, 404, { error: `Action ${id} not found in any PLAN.md` }); return; }
-
-    } else {
-      sendJson(res, 400, { error: `Unknown node type prefix: ${prefix}` });
-      return;
-    }
-
-    sendJson(res, 200, { ok: true, id, reviewState });
+    sendJson(res, 200, result);
     broadcastChange();
   } catch (err) {
     sendJson(res, 500, { error: String(err) });
@@ -904,6 +915,10 @@ async function handleAddAnnotation(req, res, cwd, nodeId) {
     const data = readAnnotations(cwd, nodeId);
     data.annotations.push(annotation);
     writeAnnotations(cwd, nodeId, data);
+
+    // Auto-transition node to revision_needed when an annotation is added
+    setReviewState(cwd, nodeId, 'revision_needed');
+
     broadcastChange();
 
     sendJson(res, 201, annotation);
