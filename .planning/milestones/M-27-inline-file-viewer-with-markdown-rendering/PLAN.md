@@ -2,15 +2,15 @@
 
 **Milestone:** M-27
 **Realizes:** D-08
-**Status:** PENDING
+**Status:** DONE
 **Derived:** 2026-02-21
 
 ## Actions
 
 ### A-57: Add file content API endpoint
-**Status:** PENDING
+**Status:** DONE
 **Produces:** GET /api/files?path=... serving raw file content for produced artifacts
 
 ### A-58: Build inline file viewer component
-**Status:** PENDING
+**Status:** DONE
 **Produces:** Modal/panel with full CommonMark rendering for produced artifacts

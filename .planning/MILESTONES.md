@@ -4,8 +4,8 @@
 
 | ID   | Title                                        | Description                                                                | Status  | Realizes | Plan |
 |------|----------------------------------------------|----------------------------------------------------------------------------|---------|----------|------|
-| M-18 | Browser-based declaration capture            | Capture and edit declarations directly in the browser dashboard            | PENDING | D-06     | YES  |
-| M-19 | Browser-based milestone derivation           | Derive milestones from declarations via agent invocation in the browser    | PENDING | D-06     | YES  |
+| M-18 | Browser-based declaration capture            | Capture and edit declarations directly in the browser dashboard            | DONE    | D-06     | YES  |
+| M-19 | Browser-based milestone derivation           | Derive milestones from declarations via agent invocation in the browser    | DONE    | D-06     | YES  |
 | M-20 | Browser-based action derivation              | Derive actions per milestone via scoped agent invocation in the browser    | PENDING | D-06     | YES  |
 | M-21 | UI workflow state machine                    | State machine driving the D-M-A workflow progression in the UI            | PENDING | D-06     | YES  |
 | M-22 | Milestone classification in planning         | Classify milestones as agent-time or human-bound during planning           | PENDING | D-07     | YES  |
@@ -13,9 +13,9 @@
 | M-24 | Readiness state per milestone                | Compute and display readiness state based on dependency completion         | PENDING | D-07     | YES  |
 | M-25 | Play action for autonomous execution         | One-click execution of all ready agent-time milestones in dependency order | PENDING | D-07     | YES  |
 | M-26 | Real-time agent output streaming             | Stream agent output in real-time to the dashboard during execution         | PENDING | D-08     | YES  |
-| M-27 | Inline file viewer with markdown rendering   | View produced files inline with full markdown rendering                    | PENDING | D-08     | YES  |
-| M-28 | Commit and output linking per action         | Link commit SHAs and output files to each action in the dashboard         | PENDING | D-08     | YES  |
-| M-29 | Execution log per milestone                  | Persistent timestamped execution log per milestone                        | PENDING | D-08     | YES  |
+| M-27 | Inline file viewer with markdown rendering   | View produced files inline with full markdown rendering                    | DONE    | D-08     | YES  |
+| M-28 | Commit and output linking per action         | Link commit SHAs and output files to each action in the dashboard         | DONE    | D-08     | YES  |
+| M-29 | Execution log per milestone                  | Persistent timestamped execution log per milestone                        | DONE    | D-08     | YES  |
 | M-30 | Reference field on declare nodes             | Reference external projects by URL or path from any declaration node      | PENDING | D-09     | YES  |
 | M-31 | Wholeness state computed per node            | Compute wholeness state (whole/partial/broken) for every DAG node         | DONE    | D-10     | YES  |
 | M-32 | Integrity visualization in the dashboard     | Visualize integrity with colored borders, dots, and percentage in status bar | DONE  | D-10     | YES  |
