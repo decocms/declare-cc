@@ -215,6 +215,7 @@ var require_future = __commonJS({
         const status = rawStatus.toUpperCase().trim();
         const rawMilestones = extractField(lines, "Milestones");
         const milestones = rawMilestones ? rawMilestones.split(",").map((s) => s.trim()).filter(Boolean) : [];
+        const reviewState = extractField(lines, "Review") || "draft";
         const rawRef = extractField(lines, "Ref");
         let ref;
         if (rawRef) {
@@ -224,7 +225,7 @@ var require_future = __commonJS({
           if (urlMatch) ref.url = urlMatch[1];
           if (pathMatch) ref.path = pathMatch[1];
         }
-        const decl = { id, title: title.trim(), statement, status, milestones };
+        const decl = { id, title: title.trim(), statement, status, milestones, reviewState };
         if (ref) decl.ref = ref;
         declarations.push(decl);
       }
@@ -236,6 +237,7 @@ var require_future = __commonJS({
         lines.push(`## ${d.id}: ${d.title}`);
         lines.push(`**Statement:** ${d.statement}`);
         lines.push(`**Status:** ${d.status}`);
+        lines.push(`**Review:** ${d.reviewState || "draft"}`);
         lines.push(`**Milestones:** ${d.milestones.join(", ")}`);
         if (d.ref && (d.ref.url || d.ref.path)) {
           const parts = [];
@@ -324,7 +326,8 @@ var require_milestones = __commonJS({
         realizes: splitMultiValue(row["Realizes"] || ""),
         hasPlan: (row["Plan"] || "").trim().toUpperCase() === "YES",
         classification: (row["Classification"] || "agent").trim().toLowerCase() === "human" ? "human" : "agent",
-        dependsOn: splitMultiValue(row["Depends On"] || "")
+        dependsOn: splitMultiValue(row["Depends On"] || ""),
+        reviewState: (row["Review"] || "draft").trim() || "draft"
       })).filter((m) => m.id);
       return { milestones };
     }
@@ -340,13 +343,13 @@ var require_milestones = __commonJS({
       const hasDependsOn = milestones.some((m) => m.dependsOn && m.dependsOn.length > 0);
       const mHeaders = ["ID", "Title"];
       if (hasDescriptions) mHeaders.push("Description");
-      mHeaders.push("Status", "Realizes", "Plan");
+      mHeaders.push("Status", "Realizes", "Plan", "Review");
       if (hasClassification) mHeaders.push("Classification");
       if (hasDependsOn) mHeaders.push("Depends On");
       const mRows = milestones.map((m) => {
         const row = [m.id, m.title];
         if (hasDescriptions) row.push(m.description || "");
-        row.push(m.status, m.realizes.join(", "), m.hasPlan ? "YES" : "NO");
+        row.push(m.status, m.realizes.join(", "), m.hasPlan ? "YES" : "NO", m.reviewState || "draft");
         if (hasClassification) row.push(m.classification || "agent");
         if (hasDependsOn) row.push((m.dependsOn || []).join(", "));
         return row;
@@ -473,8 +476,9 @@ var require_plan = __commonJS({
         const [, id, title] = actionHeaderMatch;
         const actionStatus = (extractField(lines, "Status") || "PENDING").toUpperCase();
         const produces = extractField(lines, "Produces") || "";
+        const reviewState = extractField(lines, "Review") || "draft";
         const description = lines.slice(1).filter((l) => !l.trim().startsWith("**")).map((l) => l.trim()).filter(Boolean).join("\n");
-        return { id, title: title.trim(), status: actionStatus, produces, description };
+        return { id, title: title.trim(), status: actionStatus, produces, description, reviewState };
       }).filter(Boolean);
       return { milestone, realizes, status, derived, actions };
     }
@@ -497,6 +501,7 @@ var require_plan = __commonJS({
         const produces = action.produces || "";
         lines.push(`### ${id}: ${action.title}`);
         lines.push(`**Status:** ${status}`);
+        lines.push(`**Review:** ${action.reviewState || "draft"}`);
         if (produces) {
           lines.push(`**Produces:** ${produces}`);
         }
@@ -588,6 +593,7 @@ var require_engine = __commonJS({
       return COMPLETED_STATUSES.has(status);
     }
     var VALID_TYPES = /* @__PURE__ */ new Set(["declaration", "milestone", "action"]);
+    var VALID_REVIEW_STATES = /* @__PURE__ */ new Set(["draft", "in_review", "revision_needed", "approved"]);
     var VALID_EDGE_DIRECTIONS = {
       action: "milestone",
       milestone: "declaration"
@@ -1097,7 +1103,7 @@ var require_engine = __commonJS({
       });
       return { nodeId, wholeness: nodeWholeness, steps };
     }
-    module2.exports = { DeclareDag, COMPLETED_STATUSES, isCompleted, findOrphans, computeWholeness, computeWorkabilityPath };
+    module2.exports = { DeclareDag, VALID_REVIEW_STATES, COMPLETED_STATUSES, isCompleted, findOrphans, computeWholeness, computeWorkabilityPath };
   }
 });
 
@@ -1128,6 +1134,7 @@ var require_build_dag = __commonJS({
             title: action.title,
             status: action.status,
             produces: action.produces,
+            reviewState: action.reviewState || "draft",
             causes: milestone ? [milestone] : []
           });
         }
@@ -1148,7 +1155,7 @@ var require_build_dag = __commonJS({
       const actions = loadActionsFromFolders(planningDir);
       const dag = new DeclareDag();
       for (const d of declarations) {
-        const meta = {};
+        const meta = { reviewState: d.reviewState || "draft" };
         if (d.ref) meta.ref = d.ref;
         dag.addNode(d.id, "declaration", d.title, d.status || "PENDING", meta);
       }
@@ -1156,11 +1163,12 @@ var require_build_dag = __commonJS({
         dag.addNode(m.id, "milestone", m.title, m.status || "PENDING", {
           description: m.description || "",
           classification: m.classification || "agent",
-          dependsOn: m.dependsOn || []
+          dependsOn: m.dependsOn || [],
+          reviewState: m.reviewState || "draft"
         });
       }
       for (const a of actions) {
-        dag.addNode(a.id, "action", a.title, a.status || "PENDING");
+        dag.addNode(a.id, "action", a.title, a.status || "PENDING", { reviewState: a.reviewState || "draft" });
       }
       for (const m of milestones) {
         for (const declId of m.realizes) {
