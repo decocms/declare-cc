@@ -1,6 +1,6 @@
 # Future: declare-cc
 
-## D-06: Test CLI Update
+## D-06: UI as Primary Surface
 **Statement:** The Declare workflow is experienced entirely through the browser UI — declarations emerge in-view as you work, you accept or adjust them inline, milestones derive and appear next, then actions — the process drives you forward without ever switching to a terminal.
 **Status:** PENDING
 **Milestones:** M-18, M-19, M-20, M-21, M-39
