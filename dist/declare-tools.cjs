@@ -215,7 +215,18 @@ var require_future = __commonJS({
         const status = rawStatus.toUpperCase().trim();
         const rawMilestones = extractField(lines, "Milestones");
         const milestones = rawMilestones ? rawMilestones.split(",").map((s) => s.trim()).filter(Boolean) : [];
-        declarations.push({ id, title: title.trim(), statement, status, milestones });
+        const rawRef = extractField(lines, "Ref");
+        let ref;
+        if (rawRef) {
+          ref = {};
+          const urlMatch = rawRef.match(/url=(\S+)/);
+          const pathMatch = rawRef.match(/path=(\S+)/);
+          if (urlMatch) ref.url = urlMatch[1];
+          if (pathMatch) ref.path = pathMatch[1];
+        }
+        const decl = { id, title: title.trim(), statement, status, milestones };
+        if (ref) decl.ref = ref;
+        declarations.push(decl);
       }
       return declarations;
     }
@@ -226,6 +237,12 @@ var require_future = __commonJS({
         lines.push(`**Statement:** ${d.statement}`);
         lines.push(`**Status:** ${d.status}`);
         lines.push(`**Milestones:** ${d.milestones.join(", ")}`);
+        if (d.ref && (d.ref.url || d.ref.path)) {
+          const parts = [];
+          if (d.ref.url) parts.push(`url=${d.ref.url}`);
+          if (d.ref.path) parts.push(`path=${d.ref.path}`);
+          lines.push(`**Ref:** ${parts.join(" ")}`);
+        }
         lines.push("");
       }
       return lines.join("\n");
@@ -305,7 +322,9 @@ var require_milestones = __commonJS({
         description: (row["Description"] || "").trim(),
         status: (row["Status"] || "PENDING").trim().toUpperCase(),
         realizes: splitMultiValue(row["Realizes"] || ""),
-        hasPlan: (row["Plan"] || "").trim().toUpperCase() === "YES"
+        hasPlan: (row["Plan"] || "").trim().toUpperCase() === "YES",
+        classification: (row["Classification"] || "agent").trim().toLowerCase() === "human" ? "human" : "agent",
+        dependsOn: splitMultiValue(row["Depends On"] || "")
       })).filter((m) => m.id);
       return { milestones };
     }
@@ -317,10 +336,21 @@ var require_milestones = __commonJS({
       const lines = [`# Milestones: ${projectName}`, ""];
       lines.push("## Milestones", "");
       const hasDescriptions = milestones.some((m) => m.description);
-      const mHeaders = hasDescriptions ? ["ID", "Title", "Description", "Status", "Realizes", "Plan"] : ["ID", "Title", "Status", "Realizes", "Plan"];
-      const mRows = milestones.map(
-        (m) => hasDescriptions ? [m.id, m.title, m.description || "", m.status, m.realizes.join(", "), m.hasPlan ? "YES" : "NO"] : [m.id, m.title, m.status, m.realizes.join(", "), m.hasPlan ? "YES" : "NO"]
-      );
+      const hasClassification = milestones.some((m) => m.classification && m.classification !== "agent");
+      const hasDependsOn = milestones.some((m) => m.dependsOn && m.dependsOn.length > 0);
+      const mHeaders = ["ID", "Title"];
+      if (hasDescriptions) mHeaders.push("Description");
+      mHeaders.push("Status", "Realizes", "Plan");
+      if (hasClassification) mHeaders.push("Classification");
+      if (hasDependsOn) mHeaders.push("Depends On");
+      const mRows = milestones.map((m) => {
+        const row = [m.id, m.title];
+        if (hasDescriptions) row.push(m.description || "");
+        row.push(m.status, m.realizes.join(", "), m.hasPlan ? "YES" : "NO");
+        if (hasClassification) row.push(m.classification || "agent");
+        if (hasDependsOn) row.push((m.dependsOn || []).join(", "));
+        return row;
+      });
       lines.push(...formatTable(mHeaders, mRows));
       lines.push("");
       return lines.join("\n");
@@ -1118,10 +1148,16 @@ var require_build_dag = __commonJS({
       const actions = loadActionsFromFolders(planningDir);
       const dag = new DeclareDag();
       for (const d of declarations) {
-        dag.addNode(d.id, "declaration", d.title, d.status || "PENDING");
+        const meta = {};
+        if (d.ref) meta.ref = d.ref;
+        dag.addNode(d.id, "declaration", d.title, d.status || "PENDING", meta);
       }
       for (const m of milestones) {
-        dag.addNode(m.id, "milestone", m.title, m.status || "PENDING", { description: m.description || "" });
+        dag.addNode(m.id, "milestone", m.title, m.status || "PENDING", {
+          description: m.description || "",
+          classification: m.classification || "agent",
+          dependsOn: m.dependsOn || []
+        });
       }
       for (const a of actions) {
         dag.addNode(a.id, "action", a.title, a.status || "PENDING");
@@ -1861,7 +1897,12 @@ var require_load_graph = __commonJS({
       const wholeness = dag.computeWholeness();
       return {
         declarations: declarations.map((d) => ({ ...d, wholeness: wholeness.get(d.id) || "broken" })),
-        milestones: milestones.map((m) => ({ ...m, wholeness: wholeness.get(m.id) || "broken" })),
+        milestones: milestones.map((m) => ({
+          ...m,
+          classification: m.classification || "agent",
+          dependsOn: m.dependsOn || [],
+          wholeness: wholeness.get(m.id) || "broken"
+        })),
         actions: actions.map((a) => ({ ...a, wholeness: wholeness.get(a.id) || "broken" })),
         stats: dag.stats(),
         validation: dag.validate()
@@ -4345,6 +4386,239 @@ data: ${JSON.stringify(data)}
   }
 });
 
+// src/server/action-derivation-runner.js
+var require_action_derivation_runner = __commonJS({
+  "src/server/action-derivation-runner.js"(exports2, module2) {
+    "use strict";
+    var { spawn } = require("node:child_process");
+    function buildActionPrompt(milestone, existingActions) {
+      let prompt = `You are deriving actions for a Declare project milestone. An action is a concrete piece of work that causes (moves toward) a milestone. Given this milestone, propose 2-5 actions by asking "What work must be done to achieve this?" Output ONLY a JSON array with no markdown fencing: [{"title": "action title", "produces": "what this action delivers", "reason": "why this is needed"}]. 
+
+Milestone:
+- ${milestone.id}: ${milestone.title} (realizes: ${milestone.realizes.join(", ")})`;
+      if (existingActions.length > 0) {
+        prompt += "\n\nExisting actions for this milestone (do NOT duplicate these):\n";
+        for (const a of existingActions) {
+          prompt += `- ${a.id}: ${a.title}`;
+          if (a.produces) prompt += ` (produces: ${a.produces})`;
+          prompt += "\n";
+        }
+      }
+      return prompt;
+    }
+    function createActionDerivationRunner(sseClients, cwd) {
+      let current = null;
+      function broadcast(event, data) {
+        const payload = `event: ${event}
+data: ${JSON.stringify(data)}
+
+`;
+        for (const client of sseClients) {
+          try {
+            client.write(payload);
+          } catch (_) {
+            sseClients.delete(client);
+          }
+        }
+      }
+      function createLineHandler(sessionId, streamName, accumulator) {
+        let buffer = "";
+        return (chunk) => {
+          const text = chunk.toString();
+          if (streamName === "stdout") {
+            accumulator.text += text;
+          }
+          buffer += text;
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+          for (const line of lines) {
+            broadcast("action-derivation-output", {
+              sessionId,
+              text: line,
+              stream: streamName
+            });
+          }
+        };
+      }
+      function derive(milestone, existingActions) {
+        if (current) {
+          return { error: "busy", status: 409 };
+        }
+        const sessionId = `action-deriv-${Date.now()}`;
+        const prompt = buildActionPrompt(milestone, existingActions);
+        const proc = spawn("claude", ["-p", prompt, "--output-format", "text", "--no-input"], {
+          cwd,
+          env: { ...process.env, FORCE_COLOR: "0" }
+        });
+        current = { sessionId, milestoneId: milestone.id, proc };
+        const stdout = { text: "" };
+        if (proc.stdout) {
+          proc.stdout.on("data", createLineHandler(sessionId, "stdout", stdout));
+        }
+        if (proc.stderr) {
+          proc.stderr.on("data", createLineHandler(sessionId, "stderr", stdout));
+        }
+        proc.on("close", (exitCode) => {
+          let actions = null;
+          if (exitCode === 0) {
+            try {
+              actions = JSON.parse(stdout.text.trim());
+            } catch (_) {
+            }
+          }
+          current = null;
+          broadcast("action-derivation-complete", {
+            sessionId,
+            exitCode: exitCode ?? -1,
+            actions
+          });
+        });
+        proc.on("error", (_err) => {
+          current = null;
+          broadcast("action-derivation-complete", {
+            sessionId,
+            exitCode: -1,
+            actions: null
+          });
+        });
+        return { ok: true, sessionId };
+      }
+      function stop() {
+        if (!current) {
+          return { error: "not_running", status: 404 };
+        }
+        current.proc.kill("SIGTERM");
+        return { ok: true };
+      }
+      function running() {
+        return current ? current.sessionId : null;
+      }
+      return { derive, stop, running };
+    }
+    if (require.main === module2) {
+      const runner = createActionDerivationRunner(/* @__PURE__ */ new Set(), ".");
+      console.log("derive:", typeof runner.derive);
+      console.log("stop:", typeof runner.stop);
+      console.log("running:", typeof runner.running);
+      console.log("OK");
+    }
+    module2.exports = { createActionDerivationRunner };
+  }
+});
+
+// src/commands/workflow-state.js
+var require_workflow_state = __commonJS({
+  "src/commands/workflow-state.js"(exports2, module2) {
+    "use strict";
+    var DONE_STATUSES = /* @__PURE__ */ new Set(["DONE", "KEPT", "HONORED"]);
+    var EXECUTING_STATUSES = /* @__PURE__ */ new Set(["EXECUTING", "IN_PROGRESS", "RUNNING"]);
+    function computeWorkflowState(graph, runningActionIds) {
+      const declarations = graph.declarations || [];
+      const milestones = graph.milestones || [];
+      const actions = graph.actions || [];
+      const running = runningActionIds || /* @__PURE__ */ new Set();
+      const actionsDone = actions.filter((a) => DONE_STATUSES.has((a.status || "").toUpperCase())).length;
+      const actionsExecuting = actions.filter(
+        (a) => EXECUTING_STATUSES.has((a.status || "").toUpperCase()) || running.has(a.id)
+      ).length;
+      const totalActions = actions.length;
+      const percentage = totalActions > 0 ? Math.round(actionsDone / totalActions * 100) : 0;
+      const progress = {
+        declarations: declarations.length,
+        milestones: milestones.length,
+        actions: totalActions,
+        actionsDone,
+        actionsExecuting,
+        percentage
+      };
+      if (declarations.length === 0) {
+        return {
+          state: "empty",
+          nextStep: {
+            label: "Create your first declaration",
+            action: "create-declaration"
+          },
+          progress
+        };
+      }
+      if (milestones.length === 0) {
+        return {
+          state: "declarations_only",
+          nextStep: {
+            label: "Derive milestones from declarations",
+            action: "derive-milestones"
+          },
+          progress
+        };
+      }
+      const milestonesWithActions = /* @__PURE__ */ new Set();
+      for (const a of actions) {
+        if (Array.isArray(a.causes)) {
+          for (const mId of a.causes) {
+            milestonesWithActions.add(mId.toUpperCase());
+          }
+        }
+      }
+      const pendingMilestones = milestones.filter((m) => {
+        const mStatus = (m.status || "").toUpperCase();
+        if (DONE_STATUSES.has(mStatus)) return false;
+        return !milestonesWithActions.has(m.id.toUpperCase());
+      });
+      if (pendingMilestones.length > 0) {
+        const target = pendingMilestones[0];
+        return {
+          state: "milestones_pending",
+          nextStep: {
+            label: `Derive actions for ${target.id}`,
+            action: "derive-actions",
+            targetId: target.id
+          },
+          progress
+        };
+      }
+      if (actionsExecuting > 0) {
+        const executingAction = actions.find(
+          (a) => EXECUTING_STATUSES.has((a.status || "").toUpperCase()) || running.has(a.id)
+        );
+        return {
+          state: "executing",
+          nextStep: {
+            label: executingAction ? `Executing ${executingAction.id}` : "Execution in progress",
+            action: "view-execution",
+            targetId: executingAction ? executingAction.id : void 0
+          },
+          progress
+        };
+      }
+      if (totalActions > 0 && actionsDone === totalActions) {
+        return {
+          state: "complete",
+          nextStep: {
+            label: "All actions complete",
+            action: "view-summary"
+          },
+          progress
+        };
+      }
+      const pendingActions = actions.filter((a) => {
+        const s = (a.status || "").toUpperCase();
+        return !DONE_STATUSES.has(s) && !EXECUTING_STATUSES.has(s);
+      });
+      const nextAction = pendingActions[0];
+      return {
+        state: "actions_pending",
+        nextStep: {
+          label: nextAction ? `Execute ${nextAction.id}` : "Plan next actions",
+          action: nextAction ? "execute-action" : "plan-actions",
+          targetId: nextAction ? nextAction.id : void 0
+        },
+        progress
+      };
+    }
+    module2.exports = { computeWorkflowState };
+  }
+});
+
 // src/server/index.js
 var require_server = __commonJS({
   "src/server/index.js"(exports2, module2) {
@@ -4361,10 +4635,14 @@ var require_server = __commonJS({
     var { runDeleteDeclaration: runDeleteDeclaration2 } = require_delete_declaration();
     var { createProcessManager } = require_process_manager();
     var { createDerivationRunner } = require_derivation_runner();
+    var { createActionDerivationRunner } = require_action_derivation_runner();
     var { runAddMilestonesBatch: runAddMilestonesBatch2 } = require_add_milestones_batch();
     var { buildDagFromDisk } = require_build_dag();
     var { computeWorkabilityPath } = require_engine();
     var { findMilestoneFolder } = require_milestone_folders();
+    var { parseFutureFile, writeFutureFile } = require_future();
+    var { parsePlanFile, writePlanFile } = require_plan();
+    var { computeWorkflowState } = require_workflow_state();
     var MIME_TYPES = {
       ".html": "text/html; charset=utf-8",
       ".js": "application/javascript; charset=utf-8",
@@ -4530,6 +4808,21 @@ var require_server = __commonJS({
         sendJson(res, 500, { error: String(err) });
       }
     }
+    function handleWorkflowState(res, cwd) {
+      try {
+        const graph = runLoadGraph2(cwd);
+        if ("error" in graph) {
+          sendJson(res, 500, { error: graph.error });
+          return;
+        }
+        const pm = getProcessManager(cwd);
+        const runningIds = new Set(pm.running());
+        const result = computeWorkflowState(graph, runningIds);
+        sendJson(res, 200, result);
+      } catch (err) {
+        sendJson(res, 500, { error: String(err) });
+      }
+    }
     function handleActivity(res, cwd) {
       const activityFile = path.join(cwd, ".planning", "activity.jsonl");
       if (!fs.existsSync(activityFile)) {
@@ -4646,6 +4939,118 @@ var require_server = __commonJS({
         sendJson(res, 400, { error: String(err) });
       }
     }
+    function handleActionDerive(res, cwd, milestoneId) {
+      try {
+        const graph = runLoadGraph2(cwd);
+        if ("error" in graph) {
+          sendJson(res, 500, { error: graph.error });
+          return;
+        }
+        const normalizedId = milestoneId.toUpperCase();
+        const milestone = graph.milestones.find(
+          (m) => m.id.toUpperCase() === normalizedId
+        );
+        if (!milestone) {
+          sendJson(res, 404, { error: `Milestone '${milestoneId}' not found` });
+          return;
+        }
+        const existingActions = graph.actions.filter(
+          (a) => (a.causes || []).some((c) => c.toUpperCase() === normalizedId)
+        );
+        const adr = getActionDerivationRunner(cwd);
+        const result = adr.derive(
+          { id: milestone.id, title: milestone.title, status: milestone.status, realizes: milestone.realizes || [] },
+          existingActions.map((a) => ({ id: a.id, title: a.title, status: a.status, produces: a.produces || "" }))
+        );
+        if (result.error) {
+          sendJson(res, result.status || 500, { error: result.error });
+          return;
+        }
+        sendJson(res, 202, { ok: true, sessionId: result.sessionId });
+      } catch (err) {
+        sendJson(res, 500, { error: String(err) });
+      }
+    }
+    function handleActionDeriveStop(res, cwd) {
+      const adr = getActionDerivationRunner(cwd);
+      const result = adr.stop();
+      if (result.error) {
+        sendJson(res, result.status || 500, { error: result.error });
+      } else {
+        sendJson(res, 200, { ok: true });
+      }
+    }
+    async function handleActionDeriveAccept(req, res, cwd, milestoneId) {
+      try {
+        const body = await readJsonBody(req);
+        if (!body.actions || !Array.isArray(body.actions) || body.actions.length === 0) {
+          sendJson(res, 400, { error: "Missing or empty actions array" });
+          return;
+        }
+        const graph = runLoadGraph2(cwd);
+        if ("error" in graph) {
+          sendJson(res, 500, { error: graph.error });
+          return;
+        }
+        const normalizedId = milestoneId.toUpperCase();
+        const milestone = graph.milestones.find(
+          (m) => m.id.toUpperCase() === normalizedId
+        );
+        if (!milestone) {
+          sendJson(res, 404, { error: `Milestone '${milestoneId}' not found` });
+          return;
+        }
+        const planningDir = path.join(cwd, ".planning");
+        const milestoneFolder = findMilestoneFolder(planningDir, milestone.id);
+        let existingActions = [];
+        let planContent = "";
+        const planPath = milestoneFolder ? path.join(milestoneFolder, "PLAN.md") : null;
+        if (planPath && fs.existsSync(planPath)) {
+          planContent = fs.readFileSync(planPath, "utf-8");
+          const parsed = parsePlanFile(planContent);
+          existingActions = parsed.actions || [];
+        }
+        let maxActionNum = 0;
+        for (const a of graph.actions) {
+          const num = parseInt(a.id.split("-")[1], 10);
+          if (!isNaN(num) && num > maxActionNum) maxActionNum = num;
+        }
+        const newActions = [];
+        for (const input of body.actions) {
+          maxActionNum++;
+          const id = `A-${maxActionNum < 10 ? "0" + maxActionNum : maxActionNum}`;
+          newActions.push({
+            id,
+            title: input.title,
+            status: "PENDING",
+            produces: input.produces || ""
+          });
+        }
+        const allActions = [...existingActions, ...newActions];
+        const { ensureMilestoneFolder } = require_milestone_folders();
+        const folder = ensureMilestoneFolder(planningDir, milestone.id, milestone.title);
+        const targetPlanPath = path.join(folder, "PLAN.md");
+        const realizes = milestone.realizes || [];
+        const output = writePlanFile(milestone.id, milestone.title, realizes, allActions);
+        fs.writeFileSync(targetPlanPath, output, "utf-8");
+        const milestonesPath = path.join(planningDir, "MILESTONES.md");
+        if (fs.existsSync(milestonesPath)) {
+          let milestonesContent = fs.readFileSync(milestonesPath, "utf-8");
+          const rowPattern = new RegExp(`(\\|\\s*${milestone.id}\\s*\\|.*?)\\s*NO\\s*\\|\\s*$`, "m");
+          if (rowPattern.test(milestonesContent)) {
+            milestonesContent = milestonesContent.replace(rowPattern, "$1 YES |");
+            fs.writeFileSync(milestonesPath, milestonesContent, "utf-8");
+          }
+        }
+        sendJson(res, 200, {
+          actions: newActions,
+          milestoneId: milestone.id
+        });
+        broadcastChange();
+      } catch (err) {
+        sendJson(res, 400, { error: String(err) });
+      }
+    }
     var sseClients = /* @__PURE__ */ new Set();
     var processManager = null;
     function getProcessManager(cwd) {
@@ -4656,6 +5061,11 @@ var require_server = __commonJS({
     function getDerivationRunner(cwd) {
       if (!derivationRunner) derivationRunner = createDerivationRunner(sseClients, cwd);
       return derivationRunner;
+    }
+    var actionDerivationRunner = null;
+    function getActionDerivationRunner(cwd) {
+      if (!actionDerivationRunner) actionDerivationRunner = createActionDerivationRunner(sseClients, cwd);
+      return actionDerivationRunner;
     }
     function broadcastChange() {
       for (const client of sseClients) {
@@ -4730,6 +5140,36 @@ var require_server = __commonJS({
         }).catch((err) => sendJson(res, 400, { error: String(err) }));
         return;
       }
+      const declRefPutMatch = method === "PUT" && urlPath.match(/^\/api\/declarations\/([^/]+)\/ref$/);
+      if (declRefPutMatch) {
+        readJsonBody(req).then((body) => {
+          const declId = declRefPutMatch[1].toUpperCase();
+          const planningDir = path.join(cwd, ".planning");
+          const futurePath = path.join(planningDir, "FUTURE.md");
+          if (!fs.existsSync(futurePath)) {
+            sendJson(res, 404, { error: "FUTURE.md not found" });
+            return;
+          }
+          const futureContent = fs.readFileSync(futurePath, "utf-8");
+          const declarations = parseFutureFile(futureContent);
+          const decl = declarations.find((d) => d.id === declId);
+          if (!decl) {
+            sendJson(res, 404, { error: `Declaration not found: ${declId}` });
+            return;
+          }
+          const ref = {};
+          if (body.url != null) ref.url = body.url || void 0;
+          if (body.path != null) ref.path = body.path || void 0;
+          decl.ref = ref.url || ref.path ? ref : void 0;
+          const headerMatch = futureContent.match(/^# Future: (.+)/m);
+          const projectName = headerMatch ? headerMatch[1].trim() : "Project";
+          const content = writeFutureFile(declarations, projectName);
+          fs.writeFileSync(futurePath, content, "utf-8");
+          sendJson(res, 200, { id: declId, ref: decl.ref || null });
+          broadcastChange();
+        }).catch((err) => sendJson(res, 400, { error: String(err) }));
+        return;
+      }
       const declPutMatch = method === "PUT" && urlPath.match(/^\/api\/declarations\/([^/]+)$/);
       if (declPutMatch) {
         readJsonBody(req).then((body) => {
@@ -4755,6 +5195,78 @@ var require_server = __commonJS({
           }
           sendJson(res, 200, result);
           broadcastChange();
+        }).catch((err) => sendJson(res, 400, { error: String(err) }));
+        return;
+      }
+      const classifyMatch = method === "PUT" && urlPath.match(/^\/api\/milestones\/([^/]+)\/classify$/);
+      if (classifyMatch) {
+        readJsonBody(req).then((body) => {
+          const milestoneId = classifyMatch[1].toUpperCase();
+          const newClassification = body.classification === "human" ? "human" : "agent";
+          try {
+            const milestonesPath = path.join(cwd, ".planning", "MILESTONES.md");
+            if (!fs.existsSync(milestonesPath)) {
+              sendJson(res, 404, { error: "MILESTONES.md not found" });
+              return;
+            }
+            const { parseMilestonesFile: parseMF, writeMilestonesFile: writeMF } = require_milestones();
+            const content = fs.readFileSync(milestonesPath, "utf-8");
+            const { milestones: allM } = parseMF(content);
+            const target = allM.find((m) => m.id.toUpperCase() === milestoneId);
+            if (!target) {
+              sendJson(res, 404, { error: `Milestone '${milestoneId}' not found` });
+              return;
+            }
+            target.classification = newClassification;
+            const nameMatch = content.match(/^# Milestones:\s*(.+)/m);
+            const pName = nameMatch ? nameMatch[1].trim() : "Project";
+            fs.writeFileSync(milestonesPath, writeMF(allM, pName));
+            sendJson(res, 200, { ok: true, id: target.id, classification: newClassification });
+            broadcastChange();
+          } catch (err) {
+            sendJson(res, 500, { error: String(err) });
+          }
+        }).catch((err) => sendJson(res, 400, { error: String(err) }));
+        return;
+      }
+      const depsMatch = method === "PUT" && urlPath.match(/^\/api\/milestones\/([^/]+)\/depends-on$/);
+      if (depsMatch) {
+        readJsonBody(req).then((body) => {
+          const milestoneId = depsMatch[1].toUpperCase();
+          const deps = Array.isArray(body.dependsOn) ? body.dependsOn.map((d) => d.toUpperCase()) : [];
+          try {
+            const milestonesPath = path.join(cwd, ".planning", "MILESTONES.md");
+            if (!fs.existsSync(milestonesPath)) {
+              sendJson(res, 404, { error: "MILESTONES.md not found" });
+              return;
+            }
+            const { parseMilestonesFile: parseMF, writeMilestonesFile: writeMF } = require_milestones();
+            const content = fs.readFileSync(milestonesPath, "utf-8");
+            const { milestones: allM } = parseMF(content);
+            const target = allM.find((m) => m.id.toUpperCase() === milestoneId);
+            if (!target) {
+              sendJson(res, 404, { error: `Milestone '${milestoneId}' not found` });
+              return;
+            }
+            for (const depId of deps) {
+              if (!allM.find((m) => m.id.toUpperCase() === depId)) {
+                sendJson(res, 400, { error: `Dependency '${depId}' not found` });
+                return;
+              }
+            }
+            if (deps.includes(milestoneId)) {
+              sendJson(res, 400, { error: "Cannot depend on self" });
+              return;
+            }
+            target.dependsOn = deps;
+            const nameMatch = content.match(/^# Milestones:\s*(.+)/m);
+            const pName = nameMatch ? nameMatch[1].trim() : "Project";
+            fs.writeFileSync(milestonesPath, writeMF(allM, pName));
+            sendJson(res, 200, { ok: true, id: target.id, dependsOn: deps });
+            broadcastChange();
+          } catch (err) {
+            sendJson(res, 500, { error: String(err) });
+          }
         }).catch((err) => sendJson(res, 400, { error: String(err) }));
         return;
       }
@@ -4797,6 +5309,21 @@ var require_server = __commonJS({
         }
         if (urlPath === "/api/milestones/derive/accept") {
           handleDeriveAccept(req, res, cwd);
+          return;
+        }
+        const actionDeriveMatch = urlPath.match(/^\/api\/milestones\/([^/]+)\/actions\/derive$/);
+        if (actionDeriveMatch) {
+          handleActionDerive(res, cwd, actionDeriveMatch[1]);
+          return;
+        }
+        const actionDeriveStopMatch = urlPath.match(/^\/api\/milestones\/([^/]+)\/actions\/derive\/stop$/);
+        if (actionDeriveStopMatch) {
+          handleActionDeriveStop(res, cwd);
+          return;
+        }
+        const actionDeriveAcceptMatch = urlPath.match(/^\/api\/milestones\/([^/]+)\/actions\/derive\/accept$/);
+        if (actionDeriveAcceptMatch) {
+          handleActionDeriveAccept(req, res, cwd, actionDeriveAcceptMatch[1]);
           return;
         }
         sendJson(res, 404, { error: `Route not found: ${urlPath}` });
@@ -4845,6 +5372,16 @@ var require_server = __commonJS({
       if (urlPath === "/api/derivation/running") {
         const dr = getDerivationRunner(cwd);
         sendJson(res, 200, { running: dr.running() });
+        return;
+      }
+      const actionDeriveRunningMatch = urlPath.match(/^\/api\/milestones\/([^/]+)\/actions\/derive\/running$/);
+      if (actionDeriveRunningMatch) {
+        const adr = getActionDerivationRunner(cwd);
+        sendJson(res, 200, { running: adr.running() });
+        return;
+      }
+      if (urlPath === "/api/workflow/state") {
+        handleWorkflowState(res, cwd);
         return;
       }
       if (urlPath === "/api/activity") {

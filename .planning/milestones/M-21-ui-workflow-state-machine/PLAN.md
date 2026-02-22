@@ -2,19 +2,19 @@
 
 **Milestone:** M-21
 **Realizes:** D-06
-**Status:** PENDING
+**Status:** DONE
 **Derived:** 2026-02-21
 
 ## Actions
 
 ### A-42: Define workflow state machine spec
-**Status:** PENDING
+**Status:** DONE
 **Produces:** State diagram for D→M→A progression with valid transitions and entry conditions
 
 ### A-43: Implement state machine in frontend
-**Status:** PENDING
+**Status:** DONE
 **Produces:** State-driven UI always showing the contextual next step
 
 ### A-44: Persist workflow state via API
-**Status:** PENDING
-**Produces:** GET/POST /api/workflow/state backed by config JSON
+**Status:** DONE
+**Produces:** GET /api/workflow/state computed from DAG state

@@ -68,6 +68,13 @@ let derivationSessionId = null;
 /** @type {Array<{title: string, realizes: string, reason: string}> | null} */
 let derivationProposals = null;
 
+/** @type {string | null} Active action derivation session ID */
+let actionDerivationSessionId = null;
+/** @type {string | null} Milestone ID for the current action derivation */
+let actionDerivationMilestoneId = null;
+/** @type {Array<{title: string, produces: string, reason: string}> | null} */
+let actionDerivationProposals = null;
+
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
 
@@ -106,6 +113,16 @@ const $canvasWrap    = document.getElementById('canvas-wrap');
 const $declFormContainer = document.getElementById('decl-form-container');
 const $colDeclAddBtn     = document.getElementById('col-decl-add-btn');
 const $newDeclBtn        = document.getElementById('new-decl-btn');
+
+const $workflowBanner   = document.getElementById('workflow-banner');
+const $wfStateLabel      = document.getElementById('wf-state-label');
+const $wfProgressFill    = document.getElementById('wf-progress-fill');
+const $wfPct             = document.getElementById('wf-pct');
+const $wfNextLabel       = document.getElementById('wf-next-label');
+const $wfActionBtn       = document.getElementById('wf-action-btn');
+
+/** @type {{ state: string, nextStep: { label: string, action: string, targetId?: string }, progress: { percentage: number, declarations: number, milestones: number, actions: number, actionsDone: number } } | null} */
+let workflowState = null;
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
@@ -204,6 +221,7 @@ async function loadData() {
     renderColumnBrowser();
     updateLastUpdated();
     checkProjectComplete(graph);
+    loadWorkflowState();
 
     // Apply persisted view mode (shows correct container, hides the other)
     switchView(viewMode);
@@ -431,8 +449,23 @@ function buildNodeEl(item, type, derived = {}) {
     // If none of the above matched, no dot shown (pending/not-computable)
   }
 
+  // Classification icon for milestones (robot for agent, person for human)
+  let classIconHtml = '';
+  if (type === 'milestone' && item.classification) {
+    const isHuman = item.classification === 'human';
+    const icon = isHuman ? '\u{1F464}' : '\u{1F916}';
+    const label = isHuman ? 'Human' : 'Agent';
+    classIconHtml = `<span class="class-icon" title="${label}">${icon}</span>`;
+  }
+
+  // Dependency indicator for milestones
+  let depIndicatorHtml = '';
+  if (type === 'milestone' && item.dependsOn && item.dependsOn.length > 0) {
+    depIndicatorHtml = `<span class="dep-indicator" title="Blocked by: ${item.dependsOn.join(', ')}">&#8592; ${item.dependsOn.length}</span>`;
+  }
+
   el.innerHTML = `
-    <div class="node-id">${item.id}</div>
+    <div class="node-id">${classIconHtml}${item.id}${depIndicatorHtml}</div>
     <div class="node-title">${truncate(title, 55)}</div>
     <span class="status-badge">${badgeLabel}</span>${integrityDotHtml}
     ${progressHtml}
@@ -1391,6 +1424,9 @@ function renderPanelChain(item, type) {
           html += chainTagSection('Milestones', realizedBy, 'milestone');
         }
 
+        // Reference section — display and editor
+        html += renderRefSection(s.item);
+
         // Delete confirmation (shown inline if deleteConfirmId matches)
         if (deleteConfirmId === s.item.id) {
           html += `<div class="delete-confirm">
@@ -1420,6 +1456,43 @@ function renderPanelChain(item, type) {
       if (s.type === 'milestone') {
         const causedBy = actions.filter(a => (a.causes || []).includes(s.item.id));
         if (causedBy.length) html += chainTagSection('Actions', causedBy, 'action');
+
+        // Classification toggle (agent vs human)
+        const mCls = s.item.classification || 'agent';
+        const mIsHuman = mCls === 'human';
+        html += `<div class="detail-section">
+          <div class="detail-label">Classification</div>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
+            <button class="classify-btn${mIsHuman ? '' : ' active'}" id="classify-agent-btn" data-cls="agent" title="Agent (automated)">\u{1F916} Agent</button>
+            <button class="classify-btn${mIsHuman ? ' active' : ''}" id="classify-human-btn" data-cls="human" title="Human (requires person)">\u{1F464} Human</button>
+          </div>
+        </div>`;
+
+        // Dependency editor
+        const mDeps = s.item.dependsOn || [];
+        const mOthers = milestones.filter(m => m.id !== s.item.id);
+        html += `<div class="detail-section" id="dep-editor-section"><div class="detail-label">Dependencies</div>`;
+        if (mDeps.length > 0) {
+          html += `<div class="dep-list" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px">`;
+          mDeps.forEach(dId => {
+            const dM = milestones.find(m => m.id === dId);
+            html += `<span class="dep-tag" data-dep-id="${dId}" title="${escHtml(dM ? dM.title : dId)}">${escHtml(dId)}<span class="dep-remove" data-remove-dep="${dId}">&times;</span></span>`;
+          });
+          html += `</div>`;
+        } else {
+          html += `<div style="margin-top:6px;font-size:11px;color:var(--text-dim);opacity:0.5">No dependencies</div>`;
+        }
+        const mAvailDeps = mOthers.filter(m => !mDeps.includes(m.id));
+        if (mAvailDeps.length > 0) {
+          html += `<div style="margin-top:8px;display:flex;gap:6px;align-items:center">
+            <select id="dep-add-select" style="flex:1;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:4px 8px;font-size:11px">
+              <option value="">Add dependency...</option>
+              ${mAvailDeps.map(m => `<option value="${m.id}">${m.id}: ${escHtml(truncate(m.title, 30))}</option>`).join('')}
+            </select>
+            <button id="dep-add-btn" class="classify-btn" style="padding:3px 10px;font-size:10px">Add</button>
+          </div>`;
+        }
+        html += `</div>`;
       }
       if (s.type === 'action') {
         if (s.item.produces) {
@@ -1466,6 +1539,13 @@ function renderPanelChain(item, type) {
       }
 
       if (s.type === 'milestone') {
+        // Action derivation panel — derive actions for this milestone
+        html += `<div class="derivation-panel" id="action-derivation-panel">`;
+        html += `<button class="derive-btn" id="action-derive-btn">Derive Actions</button>`;
+        html += `<div id="action-derivation-log" class="output-log" style="display:none"></div>`;
+        html += `<div id="action-derivation-proposals" style="display:none"></div>`;
+        html += `</div>`;
+
         // Execution log viewer — filled asynchronously after render
         html += `<div style="margin-top:16px;border-top:1px solid var(--border);padding-top:12px">
           <div class="detail-label" style="display:flex;align-items:center;justify-content:space-between">
@@ -1533,8 +1613,41 @@ function renderPanelChain(item, type) {
     }
   }
 
-  // If a milestone is focused, fetch and render its execution log
+  // If a milestone is focused, wire action derive button and fetch log
   if (focusSection && focusSection.type === 'milestone') {
+    const actionDeriveBtn = document.getElementById('action-derive-btn');
+    if (actionDeriveBtn) {
+      actionDeriveBtn.addEventListener('click', () => startActionDerivation(focusSection.item.id));
+    }
+
+    // Wire classification toggle buttons
+    const classAgentBtn = document.getElementById('classify-agent-btn');
+    const classHumanBtn = document.getElementById('classify-human-btn');
+    if (classAgentBtn) classAgentBtn.addEventListener('click', () => setClassification(focusSection.item.id, 'agent'));
+    if (classHumanBtn) classHumanBtn.addEventListener('click', () => setClassification(focusSection.item.id, 'human'));
+
+    // Wire dependency editor
+    const depAddBtn = document.getElementById('dep-add-btn');
+    if (depAddBtn) {
+      depAddBtn.addEventListener('click', () => {
+        const sel = document.getElementById('dep-add-select');
+        if (sel && sel.value) addDependency(focusSection.item.id, sel.value);
+      });
+    }
+    // Wire remove buttons on existing deps
+    $panelBody.querySelectorAll('.dep-remove').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        removeDependency(focusSection.item.id, btn.dataset.removeDep);
+      });
+    });
+    // Wire dep tag clicks to navigate to that milestone
+    $panelBody.querySelectorAll('.dep-tag').forEach(tag => {
+      tag.addEventListener('click', () => {
+        selectNode(tag.dataset.depId, 'milestone');
+      });
+    });
+
     loadMilestoneLog(focusSection.item.id);
     const refreshLogBtn = document.getElementById('refresh-log-btn');
     if (refreshLogBtn) {
@@ -3072,6 +3185,112 @@ async function loadActivity() {
     clearTimeout($activityPulse._timer);
     $activityPulse._timer = setTimeout(() => $activityPulse.classList.remove('live'), 3000);
   } catch (_) {}
+}
+
+// ─── Workflow state banner ────────────────────────────────────────────────────
+
+const STATE_DISPLAY = {
+  empty:              'Get Started',
+  declarations_only:  'Declarations',
+  milestones_pending: 'Milestones',
+  actions_pending:    'Actions',
+  executing:          'Executing',
+  complete:           'Complete',
+};
+
+const STATE_BTN_LABEL = {
+  'create-declaration': '+ Declaration',
+  'derive-milestones':  'Derive Milestones',
+  'derive-actions':     'Derive Actions',
+  'execute-action':     'Execute',
+  'plan-actions':       'Plan Actions',
+  'view-execution':     'View Execution',
+  'view-summary':       'All Complete',
+};
+
+/**
+ * Fetch workflow state from API and render the banner.
+ */
+async function loadWorkflowState() {
+  try {
+    const data = await fetchJson('/api/workflow/state');
+    workflowState = data;
+    renderWorkflowBanner();
+  } catch (_) {
+    // Non-critical — hide banner on error
+    if ($workflowBanner) $workflowBanner.classList.remove('visible');
+  }
+}
+
+/**
+ * Render the workflow next-step banner from current workflowState.
+ */
+function renderWorkflowBanner() {
+  if (!workflowState || !$workflowBanner) return;
+
+  const { state, nextStep, progress } = workflowState;
+
+  $workflowBanner.classList.add('visible');
+
+  // State label
+  $wfStateLabel.textContent = STATE_DISPLAY[state] || state;
+
+  // Progress bar
+  $wfProgressFill.style.width = `${progress.percentage}%`;
+  $wfProgressFill.className = `wf-progress-fill state-${state}`;
+
+  // Percentage text
+  $wfPct.textContent = progress.actions > 0 ? `${progress.percentage}%` : '';
+
+  // Next step label
+  $wfNextLabel.textContent = nextStep.label;
+
+  // Action button
+  const btnLabel = STATE_BTN_LABEL[nextStep.action] || nextStep.label;
+  $wfActionBtn.textContent = btnLabel;
+  $wfActionBtn.className = `wf-action-btn state-${state}`;
+  $wfActionBtn.dataset.action = nextStep.action;
+  $wfActionBtn.dataset.targetId = nextStep.targetId || '';
+
+  // Hide button for view-only states
+  $wfActionBtn.style.display = (state === 'complete' || state === 'executing') ? 'none' : '';
+}
+
+// Wire up banner action button
+if ($wfActionBtn) {
+  $wfActionBtn.addEventListener('click', () => {
+    const action = $wfActionBtn.dataset.action;
+    const targetId = $wfActionBtn.dataset.targetId;
+
+    switch (action) {
+      case 'create-declaration':
+        // Trigger declaration form in column browser or status bar
+        if ($newDeclBtn) $newDeclBtn.click();
+        break;
+      case 'derive-milestones':
+        // Select first declaration and trigger derive if possible
+        if (graphData && graphData.declarations && graphData.declarations.length > 0) {
+          const declId = graphData.declarations[0].id;
+          selectNode(declId, 'declaration');
+          // Derivation is triggered from the panel — just select the node
+        }
+        break;
+      case 'derive-actions':
+        if (targetId) selectNode(targetId, 'milestone');
+        break;
+      case 'execute-action':
+        if (targetId) selectNode(targetId, 'action');
+        break;
+      case 'plan-actions':
+        // Switch to columns view for easier navigation
+        if (viewMode !== 'columns') {
+          switchView('columns');
+        }
+        break;
+      default:
+        break;
+    }
+  });
 }
 
 // ─── Live updates via Server-Sent Events ─────────────────────────────────────
