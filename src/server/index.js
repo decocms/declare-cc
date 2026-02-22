@@ -1363,7 +1363,8 @@ function route(req, res, cwd) {
       const pr = getPlayRunner(cwd);
       const result = pr.start();
       if (result.error) {
-        sendJson(res, 409, { error: result.error });
+        const status = result.unapproved ? 403 : 409;
+        sendJson(res, status, { error: result.error, ...(result.unapproved && { unapproved: result.unapproved }) });
       } else {
         sendJson(res, 202, { ok: true, waves: result.waves });
       }

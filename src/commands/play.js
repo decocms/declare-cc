@@ -142,7 +142,7 @@ function appendLog(logPath, line) {
  *
  * @param {Set<import('http').ServerResponse>} sseClients
  * @param {string} cwd
- * @returns {{ start: () => { ok?: boolean, error?: string, waves?: number }, stop: () => { ok?: boolean, error?: string }, running: () => boolean, status: () => object | null }}
+ * @returns {{ start: () => { ok?: boolean, error?: string, waves?: number, unapproved?: Array<{id: string, title: string, reviewState: string}> }, stop: () => { ok?: boolean, error?: string }, running: () => boolean, status: () => object | null }}
  */
 function createPlayRunner(sseClients, cwd) {
   /** @type {boolean} */
@@ -249,6 +249,24 @@ function createPlayRunner(sseClients, cwd) {
     const { waves } = computePlayOrder(graph);
     if (waves.length === 0) {
       return { error: 'No ready agent milestones with pending actions' };
+    }
+
+    // Approval gate: reject if any in-scope action is not approved
+    const allActions = [];
+    for (const wave of waves) {
+      for (const entry of wave) {
+        for (const actionId of entry.actions) {
+          const action = (graph.actions || []).find(a => a.id.toUpperCase() === actionId.toUpperCase());
+          if (action) allActions.push(action);
+        }
+      }
+    }
+    const unapprovedActions = allActions.filter(a => a.reviewState !== 'approved');
+    if (unapprovedActions.length > 0) {
+      return {
+        error: 'Cannot play: unapproved actions exist',
+        unapproved: unapprovedActions.map(a => ({ id: a.id, title: a.title, reviewState: a.reviewState || 'draft' })),
+      };
     }
 
     isRunning = true;
