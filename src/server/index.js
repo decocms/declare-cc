@@ -38,6 +38,7 @@ const { runDeleteDeclaration } = require('../commands/delete-declaration');
 const { createProcessManager } = require('./process-manager');
 const { createDerivationRunner } = require('./derivation-runner');
 const { createActionDerivationRunner } = require('./action-derivation-runner');
+const { createRevisionRunner } = require('./revision-runner');
 const { runAddMilestonesBatch } = require('../commands/add-milestones-batch');
 const { buildDagFromDisk } = require('../commands/build-dag');
 const { computeWorkabilityPath, VALID_REVIEW_STATES } = require('../graph/engine');
@@ -1047,6 +1048,24 @@ function getPlayRunner(cwd) {
   return playRunner;
 }
 
+/** @type {ReturnType<typeof createRevisionRunner> | null} */
+let revisionRunner = null;
+
+/**
+ * Get or create the revision runner singleton.
+ * @param {string} cwd
+ * @returns {ReturnType<typeof createRevisionRunner>}
+ */
+function getRevisionRunner(cwd) {
+  if (!revisionRunner) {
+    revisionRunner = createRevisionRunner(sseClients, cwd, (nodeId) => {
+      setReviewState(cwd, nodeId, 'in_review');
+      broadcastChange();
+    });
+  }
+  return revisionRunner;
+}
+
 /**
  * Notify all connected SSE clients that .planning/ changed.
  */
@@ -1096,6 +1115,97 @@ function watchPlanning(cwd) {
     });
   } catch (_) {
     // fs.watch may not support recursive on all platforms — fail silently
+  }
+}
+
+/**
+ * Handle POST /api/node/:id/revise
+ * Triggers a revision subprocess that sends open annotations to Claude CLI
+ * for plan revision. Versions current artifact and overwrites on success.
+ *
+ * @param {http.IncomingMessage} req
+ * @param {http.ServerResponse} res
+ * @param {string} cwd
+ * @param {string} nodeId
+ */
+async function handleRevise(req, res, cwd, nodeId) {
+  try {
+    const id = nodeId.toUpperCase();
+    const prefix = id.split('-')[0];
+    const planningDir = path.join(cwd, '.planning');
+
+    // Determine artifact path based on node type
+    let artifactPath = null;
+    if (prefix === 'D') {
+      artifactPath = path.join(planningDir, 'FUTURE.md');
+    } else if (prefix === 'M') {
+      const folder = findMilestoneFolder(planningDir, id);
+      if (folder) artifactPath = path.join(folder, 'PLAN.md');
+    } else if (prefix === 'A') {
+      // Find the milestone this action belongs to
+      const graph = runLoadGraph(cwd);
+      if (!('error' in graph)) {
+        const action = graph.actions.find(a => a.id.toUpperCase() === id);
+        if (action) {
+          const milestoneId = (action.causes || [])[0];
+          if (milestoneId) {
+            const folder = findMilestoneFolder(planningDir, milestoneId);
+            if (folder) {
+              const aNum = id.replace(/^A-/, '');
+              artifactPath = path.join(folder, `A-${aNum}-EXEC-PLAN.md`);
+              // If exec-plan doesn't exist, try PLAN.md as fallback
+              if (!fs.existsSync(artifactPath)) {
+                artifactPath = path.join(folder, 'PLAN.md');
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (!artifactPath || !fs.existsSync(artifactPath)) {
+      sendJson(res, 404, { error: 'Artifact not found for node ' + id });
+      return;
+    }
+
+    const artifactContent = fs.readFileSync(artifactPath, 'utf-8');
+
+    // Read open annotations
+    const annData = readAnnotations(cwd, id);
+    const annotations = annData.annotations || [];
+
+    if (annotations.length === 0) {
+      sendJson(res, 400, { error: 'no_annotations' });
+      return;
+    }
+
+    const rr = getRevisionRunner(cwd);
+    const result = rr.revise(id, artifactPath, artifactContent, annotations);
+    if (result.error) {
+      sendJson(res, result.status || 500, { error: result.error });
+      return;
+    }
+
+    sendJson(res, 202, { ok: true, sessionId: result.sessionId });
+  } catch (err) {
+    sendJson(res, 500, { error: String(err) });
+  }
+}
+
+/**
+ * Handle POST /api/revise/stop
+ * Stops the running revision process.
+ *
+ * @param {http.ServerResponse} res
+ * @param {string} cwd
+ */
+function handleReviseStop(res, cwd) {
+  const rr = getRevisionRunner(cwd);
+  const result = rr.stop();
+  if (result.error) {
+    sendJson(res, result.status || 500, { error: result.error });
+  } else {
+    sendJson(res, 200, { ok: true });
   }
 }
 
@@ -1408,6 +1518,18 @@ function route(req, res, cwd) {
       } else {
         sendJson(res, 200, { ok: true });
       }
+      return;
+    }
+
+    // Revision routes: POST /api/node/:id/revise, POST /api/revise/stop
+    const reviseMatch = urlPath.match(/^\/api\/node\/([^/]+)\/revise$/);
+    if (reviseMatch) {
+      handleRevise(req, res, cwd, reviseMatch[1]);
+      return;
+    }
+
+    if (urlPath === '/api/revise/stop') {
+      handleReviseStop(res, cwd);
       return;
     }
 
