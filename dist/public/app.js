@@ -39,6 +39,14 @@ let colSelectedDecl = null;
 /** @type {string | null} Currently selected milestone in column browser */
 let colSelectedMile = null;
 
+/** @type {number} Column browser keyboard focus column (0=decl, 1=mile, 2=act) */
+let kbColumn = 0;
+/** @type {number} Column browser keyboard focus item index within the focused column */
+let kbIndex = 0;
+
+/** @type {'dag'|'columns'} Current view mode, persisted in localStorage */
+let viewMode = localStorage.getItem('declare-view-mode') || 'dag';
+
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
 
@@ -69,6 +77,10 @@ const $colBrowser    = document.getElementById('column-browser');
 const $colDeclList   = document.getElementById('col-decl-list');
 const $colMileList   = document.getElementById('col-mile-list');
 const $colActList    = document.getElementById('col-act-list');
+
+const $viewToggle    = document.getElementById('view-toggle');
+const $viewToggleLabel = document.getElementById('view-toggle-label');
+const $canvasWrap    = document.getElementById('canvas-wrap');
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
@@ -167,6 +179,9 @@ async function loadData() {
     renderColumnBrowser();
     updateLastUpdated();
     checkProjectComplete(graph);
+
+    // Apply persisted view mode (shows correct container, hides the other)
+    switchView(viewMode);
 
     // Re-apply selection highlight if node still exists
     if (selectedNodeId) {
@@ -483,8 +498,11 @@ function renderColumnBrowser() {
     el.addEventListener('click', () => {
       colSelectedDecl = d.id;
       colSelectedMile = null;
+      kbColumn = 0;
+      kbIndex = enrichedDeclarations.indexOf(d);
       renderColumnBrowser();
       selectNode(d.id, 'declaration');
+      updateKbFocus();
     });
 
     $colDeclList.appendChild(el);
@@ -523,8 +541,11 @@ function renderColumnBrowser() {
 
         el.addEventListener('click', () => {
           colSelectedMile = m.id;
+          kbColumn = 1;
+          kbIndex = filtered.indexOf(m);
           renderColumnBrowser();
           selectNode(m.id, 'milestone');
+          updateKbFocus();
         });
 
         $colMileList.appendChild(el);
@@ -559,14 +580,174 @@ function renderColumnBrowser() {
         `;
 
         el.addEventListener('click', () => {
+          kbColumn = 2;
+          kbIndex = filtered.indexOf(a);
           selectNode(a.id, 'action');
+          updateKbFocus();
         });
 
         $colActList.appendChild(el);
       });
     }
   }
+
+  // Restore keyboard focus after DOM rebuild (if column browser is active)
+  if (isColumnBrowserActive()) {
+    updateKbFocus();
+  }
 }
+
+// ─── Column browser keyboard navigation ──────────────────────────────────────
+
+// Inject kb-focus CSS rule
+(function injectKbFocusStyle() {
+  const style = document.createElement('style');
+  style.textContent = `
+    .col-item.kb-focus {
+      outline: 2px solid currentColor;
+      outline-offset: -2px;
+      background: var(--surface2);
+    }
+  `;
+  document.head.appendChild(style);
+})();
+
+/**
+ * Check if the column browser view is currently active.
+ * @returns {boolean}
+ */
+function isColumnBrowserActive() {
+  return $colBrowser && $colBrowser.classList.contains('active');
+}
+
+/**
+ * Get the list of .col-item elements in a given column index.
+ * @param {number} col 0=declarations, 1=milestones, 2=actions
+ * @returns {HTMLElement[]}
+ */
+function getColumnItems(col) {
+  const lists = [$colDeclList, $colMileList, $colActList];
+  const list = lists[col];
+  if (!list) return [];
+  return Array.from(list.querySelectorAll('.col-item'));
+}
+
+/**
+ * Remove kb-focus from all column browser items, then apply it to the
+ * item at (kbColumn, kbIndex). Scrolls the focused item into view.
+ */
+function updateKbFocus() {
+  // Remove all existing kb-focus
+  document.querySelectorAll('.col-item.kb-focus').forEach(el => el.classList.remove('kb-focus'));
+
+  const items = getColumnItems(kbColumn);
+  if (items.length === 0) return;
+
+  // Clamp index
+  if (kbIndex >= items.length) kbIndex = items.length - 1;
+  if (kbIndex < 0) kbIndex = 0;
+
+  const target = items[kbIndex];
+  if (target) {
+    target.classList.add('kb-focus');
+    target.scrollIntoView({ block: 'nearest' });
+  }
+}
+
+/**
+ * Initialize keyboard focus when column browser becomes active.
+ */
+function initColumnBrowserKbFocus() {
+  kbColumn = 0;
+  kbIndex = 0;
+  updateKbFocus();
+}
+
+/**
+ * Clear all kb-focus classes (when column browser is deactivated).
+ */
+function clearColumnBrowserKbFocus() {
+  document.querySelectorAll('.col-item.kb-focus').forEach(el => el.classList.remove('kb-focus'));
+}
+
+/**
+ * Keyboard handler for column browser navigation.
+ * Only processes keys when column browser is the active view.
+ * @param {KeyboardEvent} e
+ */
+function handleColumnKeydown(e) {
+  if (!isColumnBrowserActive()) return;
+
+  const key = e.key;
+
+  if (key === 'ArrowDown') {
+    e.preventDefault();
+    const items = getColumnItems(kbColumn);
+    if (items.length === 0) return;
+    kbIndex = (kbIndex + 1) % items.length;
+    updateKbFocus();
+    return;
+  }
+
+  if (key === 'ArrowUp') {
+    e.preventDefault();
+    const items = getColumnItems(kbColumn);
+    if (items.length === 0) return;
+    kbIndex = (kbIndex - 1 + items.length) % items.length;
+    updateKbFocus();
+    return;
+  }
+
+  if (key === 'ArrowRight') {
+    e.preventDefault();
+    if (kbColumn >= 2) return;
+    // Check if the next column has items before moving
+    const nextItems = getColumnItems(kbColumn + 1);
+    if (nextItems.length === 0) return;
+    kbColumn++;
+    kbIndex = 0;
+    updateKbFocus();
+    return;
+  }
+
+  if (key === 'ArrowLeft') {
+    e.preventDefault();
+    if (kbColumn <= 0) return;
+    kbColumn--;
+    // Try to find the parent item index (the selected item in the column we're moving to)
+    const items = getColumnItems(kbColumn);
+    const selectedItem = items.findIndex(el => el.classList.contains('col-selected'));
+    kbIndex = selectedItem >= 0 ? selectedItem : 0;
+    updateKbFocus();
+    return;
+  }
+
+  if (key === 'Enter') {
+    e.preventDefault();
+    const items = getColumnItems(kbColumn);
+    if (items.length === 0 || kbIndex >= items.length) return;
+    // Simulate click on the focused item
+    items[kbIndex].click();
+    return;
+  }
+
+  if (key === 'Escape') {
+    if (kbColumn > 0) {
+      e.preventDefault();
+      // Move back one column (same as ArrowLeft)
+      kbColumn--;
+      const items = getColumnItems(kbColumn);
+      const selectedItem = items.findIndex(el => el.classList.contains('col-selected'));
+      kbIndex = selectedItem >= 0 ? selectedItem : 0;
+      updateKbFocus();
+    }
+    // If kbColumn === 0, let the event propagate (don't interfere with DAG Escape)
+    return;
+  }
+}
+
+// Register the column browser keyboard handler
+document.addEventListener('keydown', handleColumnKeydown);
 
 // ─── Edge drawing ─────────────────────────────────────────────────────────────
 
@@ -1691,14 +1872,57 @@ function drawEdgesForSubtree(subtree) {
   $edgesSvg.appendChild(fragment);
 }
 
+// ─── View switching (DAG / Column browser) ───────────────────────────────────
+
+/**
+ * Switch between DAG and column browser views.
+ * @param {'dag'|'columns'} mode
+ */
+function switchView(mode) {
+  viewMode = mode;
+  localStorage.setItem('declare-view-mode', mode);
+
+  if (mode === 'dag') {
+    $canvasWrap.style.display = '';
+    $colBrowser.classList.remove('active');
+    if ($viewToggle) {
+      $viewToggle.classList.remove('active');
+      $viewToggleLabel.textContent = 'Columns';
+    }
+    // Redraw edges since layout changed
+    requestAnimationFrame(() => drawEdges());
+  } else {
+    // Exit focus mode before switching to columns
+    if (focusNodeId) exitFocusMode();
+    $canvasWrap.style.display = 'none';
+    $colBrowser.classList.add('active');
+    if ($viewToggle) {
+      $viewToggle.classList.add('active');
+      $viewToggleLabel.textContent = 'Graph';
+    }
+    // Refresh column browser data
+    renderColumnBrowser();
+  }
+}
+
 // ─── Event wiring ─────────────────────────────────────────────────────────────
+
+// View toggle button
+if ($viewToggle) {
+  $viewToggle.addEventListener('click', () => {
+    switchView(viewMode === 'dag' ? 'columns' : 'dag');
+  });
+}
 
 $refreshBtn.addEventListener('click', () => {
   loadData();
 });
 
-// ESC to exit focus mode; arrow keys to navigate between declarations
+// ESC to exit focus mode; arrow keys to navigate between declarations (DAG view only)
 document.addEventListener('keydown', (e) => {
+  // Skip DAG keyboard handling when column browser is active
+  if (isColumnBrowserActive()) return;
+
   if (e.key === 'Escape' && focusNodeId) {
     document.querySelectorAll('.node.selected').forEach(el => el.classList.remove('selected'));
     selectedNodeId = null;
