@@ -12,6 +12,7 @@
  *   GET /api/status         - graph health and performance metrics
  *   GET /api/milestone/:id  - single milestone with full action details
  *   GET /api/milestone/:id/log - execution log for a milestone (plain text)
+ *   GET /api/readiness         - readiness state map for all milestones
  *   GET /events             - SSE stream; pushes 'change' event when .planning/ changes
  *   GET /                   - serve src/server/public/index.html
  *   GET /public/*           - serve static files from src/server/public/
@@ -44,6 +45,8 @@ const { findMilestoneFolder } = require('../artifacts/milestone-folders');
 const { parseFutureFile, writeFutureFile } = require('../artifacts/future');
 const { parsePlanFile, writePlanFile } = require('../artifacts/plan');
 const { computeWorkflowState } = require('../commands/workflow-state');
+const { createPlayRunner } = require('../commands/play');
+const { computeReadiness } = require('../commands/readiness');
 
 /** @type {Record<string, string>} */
 const MIME_TYPES = {
@@ -327,6 +330,26 @@ function handleWorkflowState(res, cwd) {
 
     const result = computeWorkflowState(graph, runningIds);
     sendJson(res, 200, result);
+  } catch (err) {
+    sendJson(res, 500, { error: String(err) });
+  }
+}
+
+/**
+ * Handle GET /api/readiness
+ * Returns the readiness state map for all milestones.
+ *
+ * @param {http.ServerResponse} res
+ * @param {string} cwd
+ */
+function handleReadiness(res, cwd) {
+  try {
+    const graph = runLoadGraph(cwd);
+    if ('error' in graph) {
+      sendJson(res, 500, { error: graph.error });
+      return;
+    }
+    sendJson(res, 200, graph.readiness || {});
   } catch (err) {
     sendJson(res, 500, { error: String(err) });
   }
@@ -717,6 +740,19 @@ function getActionDerivationRunner(cwd) {
   return actionDerivationRunner;
 }
 
+/** @type {ReturnType<typeof createPlayRunner> | null} */
+let playRunner = null;
+
+/**
+ * Get or create the play runner singleton.
+ * @param {string} cwd
+ * @returns {ReturnType<typeof createPlayRunner>}
+ */
+function getPlayRunner(cwd) {
+  if (!playRunner) playRunner = createPlayRunner(sseClients, cwd);
+  return playRunner;
+}
+
 /**
  * Notify all connected SSE clients that .planning/ changed.
  */
@@ -1022,6 +1058,29 @@ function route(req, res, cwd) {
       return;
     }
 
+    // Play routes: POST /api/play, POST /api/play/stop
+    if (urlPath === '/api/play') {
+      const pr = getPlayRunner(cwd);
+      const result = pr.start();
+      if (result.error) {
+        sendJson(res, 409, { error: result.error });
+      } else {
+        sendJson(res, 202, { ok: true, waves: result.waves });
+      }
+      return;
+    }
+
+    if (urlPath === '/api/play/stop') {
+      const pr = getPlayRunner(cwd);
+      const result = pr.stop();
+      if (result.error) {
+        sendJson(res, 400, { error: result.error });
+      } else {
+        sendJson(res, 200, { ok: true });
+      }
+      return;
+    }
+
     sendJson(res, 404, { error: `Route not found: ${urlPath}` });
     return;
   }
@@ -1075,6 +1134,12 @@ function route(req, res, cwd) {
     return;
   }
 
+  if (urlPath === '/api/play/status') {
+    const pr = getPlayRunner(cwd);
+    sendJson(res, 200, { running: pr.running(), status: pr.status() });
+    return;
+  }
+
   if (urlPath === '/api/derivation/running') {
     const dr = getDerivationRunner(cwd);
     sendJson(res, 200, { running: dr.running() });
@@ -1096,6 +1161,11 @@ function route(req, res, cwd) {
 
   if (urlPath === '/api/activity') {
     handleActivity(res, cwd);
+    return;
+  }
+
+  if (urlPath === '/api/readiness') {
+    handleReadiness(res, cwd);
     return;
   }
 

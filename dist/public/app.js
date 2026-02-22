@@ -467,10 +467,25 @@ function buildNodeEl(item, type, derived = {}) {
     depIndicatorHtml = `<span class="dep-indicator" title="Blocked by: ${item.dependsOn.join(', ')}">&#8592; ${item.dependsOn.length}</span>`;
   }
 
+  // Readiness badge for milestones
+  let readinessBadgeHtml = '';
+  if (type === 'milestone' && item.readiness) {
+    const rs = item.readiness.state;
+    if (rs === 'ready') {
+      readinessBadgeHtml = '<span class="readiness-badge readiness-ready">READY</span>';
+    } else if (rs === 'blocked') {
+      const blockers = (item.readiness.blockedBy || []).join(', ');
+      readinessBadgeHtml = `<span class="readiness-badge readiness-blocked" title="Blocked by: ${blockers}">BLOCKED</span>`;
+    } else if (rs === 'no-actions') {
+      readinessBadgeHtml = '<span class="readiness-badge readiness-no-actions">NO ACTIONS</span>';
+    }
+    // done state: no badge needed (status already shows DONE)
+  }
+
   el.innerHTML = `
     <div class="node-id">${classIconHtml}${item.id}${depIndicatorHtml}</div>
     <div class="node-title">${truncate(title, 55)}</div>
-    <span class="status-badge">${badgeLabel}</span>${integrityDotHtml}
+    <span class="status-badge">${badgeLabel}</span>${readinessBadgeHtml}${integrityDotHtml}
     ${progressHtml}
   `;
 
@@ -508,7 +523,15 @@ function renderGraph() {
     $nodesDecls.appendChild(buildNodeEl(d, 'declaration', { displayStatus: d.displayStatus }));
   });
 
-  enrichedMilestones.forEach(m => {
+  // Sort milestones: ready first, then no-actions, then blocked, then done
+  const readinessOrder = { ready: 0, 'no-actions': 1, blocked: 2, done: 3 };
+  const sortedMilestones = [...enrichedMilestones].sort((a, b) => {
+    const aState = (a.readiness && a.readiness.state) || 'blocked';
+    const bState = (b.readiness && b.readiness.state) || 'blocked';
+    return (readinessOrder[aState] ?? 2) - (readinessOrder[bState] ?? 2);
+  });
+
+  sortedMilestones.forEach(m => {
     $nodesMiles.appendChild(buildNodeEl(m, 'milestone', {
       displayStatus: m.displayStatus,
       doneCount:     m.doneCount,
@@ -731,7 +754,14 @@ function renderColumnBrowser() {
   if (!colSelectedDecl) {
     $colMileList.innerHTML = '<div class="col-empty">Select a declaration</div>';
   } else {
-    const filtered = enrichedMilestones.filter(m => (m.realizes || []).includes(colSelectedDecl));
+    const readinessSort = { ready: 0, 'no-actions': 1, blocked: 2, done: 3 };
+    const filtered = enrichedMilestones
+      .filter(m => (m.realizes || []).includes(colSelectedDecl))
+      .sort((a, b) => {
+        const aS = (a.readiness && a.readiness.state) || 'blocked';
+        const bS = (b.readiness && b.readiness.state) || 'blocked';
+        return (readinessSort[aS] ?? 2) - (readinessSort[bS] ?? 2);
+      });
     if (filtered.length === 0) {
       $colMileList.innerHTML = '<div class="col-empty">No milestones</div>';
     } else {
@@ -752,12 +782,27 @@ function renderColumnBrowser() {
         const desc = m.description ? `<span class="col-item-desc">${escHtml(truncate(m.description, 80))}</span>` : '';
         const clsIcon = m.classification === 'human' ? '\u{1F464}' : '\u{1F916}';
         const depInfo = (m.dependsOn && m.dependsOn.length > 0) ? `<span class="dep-indicator">\u2190 ${m.dependsOn.join(', ')}</span>` : '';
+
+        // Readiness badge for column browser
+        let colReadinessBadge = '';
+        if (m.readiness) {
+          const rs = m.readiness.state;
+          if (rs === 'ready') {
+            colReadinessBadge = '<span class="readiness-badge readiness-ready">READY</span>';
+          } else if (rs === 'blocked') {
+            const blockers = (m.readiness.blockedBy || []).join(', ');
+            colReadinessBadge = `<span class="readiness-badge readiness-blocked" title="Blocked by: ${blockers}">BLOCKED</span>`;
+          } else if (rs === 'no-actions') {
+            colReadinessBadge = '<span class="readiness-badge readiness-no-actions">NO ACTIONS</span>';
+          }
+        }
+
         el.innerHTML = `
           <span class="col-item-id"><span class="class-icon">${clsIcon}</span>${escHtml(m.id)}${depInfo}</span>
           <span class="col-item-title">${escHtml(truncate(title, 55))}</span>
           ${desc}
           <div class="col-item-meta">
-            <span class="status-badge">${escHtml(badgeLabel)}</span>
+            <span class="status-badge">${escHtml(badgeLabel)}</span>${colReadinessBadge}
           </div>
         `;
 
@@ -1225,6 +1270,25 @@ function renderPanelContent(item, type) {
       const decls = (graphData.declarations || []).filter(d => item.realizes.includes(d.id));
       html += tagSection('Realizes', decls.length ? decls : item.realizes.map(id => ({ id })), 'declaration');
     }
+    // Readiness state
+    if (item.readiness) {
+      const rs = item.readiness.state;
+      let readinessLabel = rs.toUpperCase();
+      if (rs === 'no-actions') readinessLabel = 'NO ACTIONS';
+      html += section('Readiness', `<span class="readiness-badge readiness-${rs === 'no-actions' ? 'no-actions' : rs}">${readinessLabel}</span>`);
+
+      if (rs === 'blocked' && item.readiness.blockedBy && item.readiness.blockedBy.length > 0) {
+        const blockerMilestones = (graphData.milestones || []).filter(m =>
+          item.readiness.blockedBy.includes(m.id)
+        );
+        if (blockerMilestones.length > 0) {
+          html += tagSection('Blocked by', blockerMilestones, 'milestone');
+        } else {
+          html += section('Blocked by', escHtml(item.readiness.blockedBy.join(', ')));
+        }
+      }
+    }
+
     // Actions that cause this milestone
     const causedBy = (graphData.actions || []).filter(a =>
       (a.causes || []).some(c => c === item.id)

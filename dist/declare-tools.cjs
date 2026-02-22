@@ -1885,25 +1885,91 @@ var require_add_action = __commonJS({
   }
 });
 
+// src/commands/readiness.js
+var require_readiness = __commonJS({
+  "src/commands/readiness.js"(exports2, module2) {
+    "use strict";
+    var COMPLETED = /* @__PURE__ */ new Set(["DONE", "KEPT", "HONORED"]);
+    function computeReadiness(graph) {
+      const { milestones, actions } = graph;
+      const milestoneStatus = {};
+      for (const m of milestones) {
+        milestoneStatus[m.id] = (m.status || "PENDING").toUpperCase();
+      }
+      const actionCounts = {};
+      for (const m of milestones) {
+        actionCounts[m.id] = { done: 0, total: 0 };
+      }
+      for (const a of actions) {
+        const causes = a.causes || [];
+        for (const mId of causes) {
+          if (!actionCounts[mId]) continue;
+          actionCounts[mId].total++;
+          if (COMPLETED.has((a.status || "").toUpperCase())) {
+            actionCounts[mId].done++;
+          }
+        }
+      }
+      const readiness = {};
+      for (const m of milestones) {
+        const status = milestoneStatus[m.id];
+        const progress = actionCounts[m.id] || { done: 0, total: 0 };
+        if (COMPLETED.has(status)) {
+          readiness[m.id] = { state: "done", blockedBy: [], progress };
+          continue;
+        }
+        const deps = m.dependsOn || [];
+        const blockedBy = [];
+        for (const depId of deps) {
+          const depStatus = milestoneStatus[depId];
+          if (!depStatus || !COMPLETED.has(depStatus)) {
+            blockedBy.push(depId);
+          }
+        }
+        if (blockedBy.length > 0) {
+          readiness[m.id] = { state: "blocked", blockedBy, progress };
+        } else if (progress.total === 0 && !m.hasPlan) {
+          readiness[m.id] = { state: "no-actions", blockedBy: [], progress };
+        } else {
+          readiness[m.id] = { state: "ready", blockedBy: [], progress };
+        }
+      }
+      return readiness;
+    }
+    module2.exports = { computeReadiness };
+  }
+});
+
 // src/commands/load-graph.js
 var require_load_graph = __commonJS({
   "src/commands/load-graph.js"(exports2, module2) {
     "use strict";
     var { buildDagFromDisk, loadActionsFromFolders } = require_build_dag();
+    var { computeReadiness } = require_readiness();
     function runLoadGraph2(cwd) {
       const graphResult = buildDagFromDisk(cwd);
       if (graphResult.error) return graphResult;
       const { dag, declarations, milestones, actions } = graphResult;
       const wholeness = dag.computeWholeness();
+      const enrichedMilestones = milestones.map((m) => ({
+        ...m,
+        classification: m.classification || "agent",
+        dependsOn: m.dependsOn || [],
+        wholeness: wholeness.get(m.id) || "broken"
+      }));
+      const enrichedActions = actions.map((a) => ({ ...a, wholeness: wholeness.get(a.id) || "broken" }));
+      const readiness = computeReadiness({
+        milestones: enrichedMilestones,
+        actions: enrichedActions
+      });
       return {
         declarations: declarations.map((d) => ({ ...d, wholeness: wholeness.get(d.id) || "broken" })),
-        milestones: milestones.map((m) => ({
+        milestones: enrichedMilestones.map((m) => ({
           ...m,
-          classification: m.classification || "agent",
-          dependsOn: m.dependsOn || [],
-          wholeness: wholeness.get(m.id) || "broken"
+          readiness: readiness[m.id] || { state: "blocked", blockedBy: [], progress: { done: 0, total: 0 } }
         })),
-        actions: actions.map((a) => ({ ...a, wholeness: wholeness.get(a.id) || "broken" })),
+        actions: enrichedActions,
+        readiness,
         stats: dag.stats(),
         validation: dag.validate()
       };
@@ -4619,6 +4685,274 @@ var require_workflow_state = __commonJS({
   }
 });
 
+// src/commands/play.js
+var require_play = __commonJS({
+  "src/commands/play.js"(exports2, module2) {
+    "use strict";
+    var { spawn } = require("node:child_process");
+    var fs = require("node:fs");
+    var path = require("node:path");
+    var { runLoadGraph: runLoadGraph2 } = require_load_graph();
+    var { runGetExecPlan: runGetExecPlan2 } = require_get_exec_plan();
+    var { findMilestoneFolder } = require_milestone_folders();
+    var DONE_STATUSES = /* @__PURE__ */ new Set(["DONE", "KEPT", "HONORED", "RENEGOTIATED"]);
+    function computePlayOrder(graph) {
+      const milestones = graph.milestones || [];
+      const actions = graph.actions || [];
+      const candidates = milestones.filter(
+        (m) => (m.classification || "agent") === "agent" && !DONE_STATUSES.has((m.status || "").toUpperCase())
+      );
+      if (candidates.length === 0) {
+        return { waves: [] };
+      }
+      const candidateIds = new Set(candidates.map((m) => m.id.toUpperCase()));
+      const deps = /* @__PURE__ */ new Map();
+      for (const m of candidates) {
+        const mId = m.id.toUpperCase();
+        const mDeps = (m.dependsOn || []).map((d) => d.toUpperCase()).filter((d) => candidateIds.has(d));
+        deps.set(mId, mDeps);
+      }
+      const waves = [];
+      const placed = /* @__PURE__ */ new Set();
+      while (placed.size < candidates.length) {
+        const wave = [];
+        for (const m of candidates) {
+          const mId = m.id.toUpperCase();
+          if (placed.has(mId)) continue;
+          const mDeps = deps.get(mId) || [];
+          const allDepsMet = mDeps.every(
+            (d) => placed.has(d) || !candidateIds.has(d)
+          );
+          if (!allDepsMet) continue;
+          const milestoneActions = actions.filter(
+            (a) => (a.causes || []).some((c) => c.toUpperCase() === mId) && !DONE_STATUSES.has((a.status || "").toUpperCase())
+          ).map((a) => a.id);
+          if (milestoneActions.length > 0) {
+            wave.push({ milestoneId: m.id, actions: milestoneActions });
+          }
+        }
+        if (wave.length === 0) {
+          let progress = false;
+          for (const m of candidates) {
+            const mId = m.id.toUpperCase();
+            if (placed.has(mId)) continue;
+            const mDeps = deps.get(mId) || [];
+            const allDepsMet = mDeps.every(
+              (d) => placed.has(d) || !candidateIds.has(d)
+            );
+            if (allDepsMet) {
+              placed.add(mId);
+              progress = true;
+            }
+          }
+          if (!progress) break;
+          continue;
+        }
+        waves.push(wave);
+        for (const entry of wave) {
+          placed.add(entry.milestoneId.toUpperCase());
+        }
+        for (const m of candidates) {
+          const mId = m.id.toUpperCase();
+          if (placed.has(mId)) continue;
+          const mDeps = deps.get(mId) || [];
+          if (mDeps.every((d) => placed.has(d) || !candidateIds.has(d))) {
+            placed.add(mId);
+          }
+        }
+      }
+      return { waves };
+    }
+    function appendLog(logPath, line) {
+      if (!logPath) return;
+      try {
+        fs.appendFileSync(logPath, line + "\n", "utf-8");
+      } catch (_) {
+      }
+    }
+    function createPlayRunner(sseClients, cwd) {
+      let isRunning = false;
+      let stopRequested = false;
+      const activeProcesses = /* @__PURE__ */ new Map();
+      let playState = null;
+      function broadcast(event, data) {
+        const payload = `event: ${event}
+data: ${JSON.stringify(data)}
+
+`;
+        for (const client of sseClients) {
+          try {
+            client.write(payload);
+          } catch (_) {
+            sseClients.delete(client);
+          }
+        }
+      }
+      function executeAction(actionId, milestoneId) {
+        return new Promise((resolve) => {
+          const prompt = `Run /declare:execute ${milestoneId} for action ${actionId} only. Do not ask questions, execute autonomously.`;
+          const proc = spawn("claude", ["-p", prompt, "--no-input"], {
+            cwd,
+            env: { ...process.env, FORCE_COLOR: "0" }
+          });
+          activeProcesses.set(actionId, proc);
+          const planningDir = path.join(cwd, ".planning");
+          const milestoneFolder = findMilestoneFolder(planningDir, milestoneId);
+          const logPath = milestoneFolder ? path.join(milestoneFolder, "execution.log") : void 0;
+          appendLog(logPath, `
+=== START ${actionId} (play) @ ${(/* @__PURE__ */ new Date()).toISOString()} ===`);
+          let stdoutBuf = "";
+          let stderrBuf = "";
+          if (proc.stdout) {
+            proc.stdout.on("data", (chunk) => {
+              stdoutBuf += chunk.toString();
+              const lines = stdoutBuf.split("\n");
+              stdoutBuf = lines.pop() || "";
+              for (const line of lines) {
+                broadcast("action-output", { actionId, text: line, stream: "stdout" });
+                appendLog(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] [${actionId}] [stdout] ${line}`);
+              }
+            });
+          }
+          if (proc.stderr) {
+            proc.stderr.on("data", (chunk) => {
+              stderrBuf += chunk.toString();
+              const lines = stderrBuf.split("\n");
+              stderrBuf = lines.pop() || "";
+              for (const line of lines) {
+                broadcast("action-output", { actionId, text: line, stream: "stderr" });
+                appendLog(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] [${actionId}] [stderr] ${line}`);
+              }
+            });
+          }
+          proc.on("close", (exitCode) => {
+            const code = exitCode ?? -1;
+            appendLog(logPath, `=== END ${actionId} (play) @ ${(/* @__PURE__ */ new Date()).toISOString()} exit=${code} ===
+`);
+            activeProcesses.delete(actionId);
+            broadcast("action-complete", { actionId, exitCode: code });
+            resolve({ actionId, exitCode: code });
+          });
+          proc.on("error", (_err) => {
+            appendLog(logPath, `=== ERROR ${actionId} (play) @ ${(/* @__PURE__ */ new Date()).toISOString()} ===
+`);
+            activeProcesses.delete(actionId);
+            broadcast("action-complete", { actionId, exitCode: -1 });
+            resolve({ actionId, exitCode: -1 });
+          });
+        });
+      }
+      function start() {
+        if (isRunning) {
+          return { error: "Play is already running" };
+        }
+        const graph = runLoadGraph2(cwd);
+        if ("error" in graph) {
+          return { error: graph.error };
+        }
+        const { waves } = computePlayOrder(graph);
+        if (waves.length === 0) {
+          return { error: "No ready agent milestones with pending actions" };
+        }
+        isRunning = true;
+        stopRequested = false;
+        playState = {
+          currentWave: 0,
+          totalWaves: waves.length,
+          waveItems: [],
+          completedActions: [],
+          failedActions: []
+        };
+        broadcast("play-start", {
+          totalWaves: waves.length,
+          waves: waves.map((w, i) => ({
+            wave: i + 1,
+            milestones: w.map((e) => ({ milestoneId: e.milestoneId, actions: e.actions }))
+          }))
+        });
+        (async () => {
+          for (let wi = 0; wi < waves.length; wi++) {
+            if (stopRequested) break;
+            const wave = waves[wi];
+            playState.currentWave = wi + 1;
+            playState.waveItems = wave;
+            broadcast("play-wave-start", {
+              wave: wi + 1,
+              totalWaves: waves.length,
+              milestones: wave.map((e) => ({ milestoneId: e.milestoneId, actions: e.actions }))
+            });
+            const promises = [];
+            for (const entry of wave) {
+              for (const actionId of entry.actions) {
+                if (stopRequested) break;
+                promises.push(executeAction(actionId, entry.milestoneId));
+              }
+              if (stopRequested) break;
+            }
+            const results = await Promise.all(promises);
+            for (const r of results) {
+              if (r.exitCode === 0) {
+                playState.completedActions.push(r.actionId);
+              } else {
+                playState.failedActions.push(r.actionId);
+              }
+            }
+            broadcast("play-wave-complete", {
+              wave: wi + 1,
+              totalWaves: waves.length,
+              completed: results.filter((r) => r.exitCode === 0).map((r) => r.actionId),
+              failed: results.filter((r) => r.exitCode !== 0).map((r) => r.actionId)
+            });
+          }
+          const finalState = { ...playState };
+          isRunning = false;
+          playState = null;
+          broadcast("play-complete", {
+            completed: finalState.completedActions,
+            failed: finalState.failedActions,
+            stopped: stopRequested
+          });
+          stopRequested = false;
+        })().catch((_err) => {
+          isRunning = false;
+          playState = null;
+          broadcast("play-complete", { completed: [], failed: [], stopped: false, error: String(_err) });
+        });
+        return { ok: true, waves: waves.length };
+      }
+      function stop() {
+        if (!isRunning) {
+          return { error: "Play is not running" };
+        }
+        stopRequested = true;
+        for (const [, proc] of activeProcesses) {
+          try {
+            proc.kill("SIGTERM");
+          } catch (_) {
+          }
+        }
+        return { ok: true };
+      }
+      function running() {
+        return isRunning;
+      }
+      function status() {
+        if (!playState) return null;
+        return {
+          running: isRunning,
+          currentWave: playState.currentWave,
+          totalWaves: playState.totalWaves,
+          activeActions: [...activeProcesses.keys()],
+          completedActions: playState.completedActions,
+          failedActions: playState.failedActions
+        };
+      }
+      return { start, stop, running, status };
+    }
+    module2.exports = { computePlayOrder, createPlayRunner };
+  }
+});
+
 // src/server/index.js
 var require_server = __commonJS({
   "src/server/index.js"(exports2, module2) {
@@ -4643,6 +4977,8 @@ var require_server = __commonJS({
     var { parseFutureFile, writeFutureFile } = require_future();
     var { parsePlanFile, writePlanFile } = require_plan();
     var { computeWorkflowState } = require_workflow_state();
+    var { createPlayRunner } = require_play();
+    var { computeReadiness } = require_readiness();
     var MIME_TYPES = {
       ".html": "text/html; charset=utf-8",
       ".js": "application/javascript; charset=utf-8",
@@ -4819,6 +5155,18 @@ var require_server = __commonJS({
         const runningIds = new Set(pm.running());
         const result = computeWorkflowState(graph, runningIds);
         sendJson(res, 200, result);
+      } catch (err) {
+        sendJson(res, 500, { error: String(err) });
+      }
+    }
+    function handleReadiness(res, cwd) {
+      try {
+        const graph = runLoadGraph2(cwd);
+        if ("error" in graph) {
+          sendJson(res, 500, { error: graph.error });
+          return;
+        }
+        sendJson(res, 200, graph.readiness || {});
       } catch (err) {
         sendJson(res, 500, { error: String(err) });
       }
@@ -5066,6 +5414,11 @@ var require_server = __commonJS({
     function getActionDerivationRunner(cwd) {
       if (!actionDerivationRunner) actionDerivationRunner = createActionDerivationRunner(sseClients, cwd);
       return actionDerivationRunner;
+    }
+    var playRunner = null;
+    function getPlayRunner(cwd) {
+      if (!playRunner) playRunner = createPlayRunner(sseClients, cwd);
+      return playRunner;
     }
     function broadcastChange() {
       for (const client of sseClients) {
@@ -5326,6 +5679,26 @@ var require_server = __commonJS({
           handleActionDeriveAccept(req, res, cwd, actionDeriveAcceptMatch[1]);
           return;
         }
+        if (urlPath === "/api/play") {
+          const pr = getPlayRunner(cwd);
+          const result = pr.start();
+          if (result.error) {
+            sendJson(res, 409, { error: result.error });
+          } else {
+            sendJson(res, 202, { ok: true, waves: result.waves });
+          }
+          return;
+        }
+        if (urlPath === "/api/play/stop") {
+          const pr = getPlayRunner(cwd);
+          const result = pr.stop();
+          if (result.error) {
+            sendJson(res, 400, { error: result.error });
+          } else {
+            sendJson(res, 200, { ok: true });
+          }
+          return;
+        }
         sendJson(res, 404, { error: `Route not found: ${urlPath}` });
         return;
       }
@@ -5369,6 +5742,11 @@ var require_server = __commonJS({
         sendJson(res, 200, { running: pm.running() });
         return;
       }
+      if (urlPath === "/api/play/status") {
+        const pr = getPlayRunner(cwd);
+        sendJson(res, 200, { running: pr.running(), status: pr.status() });
+        return;
+      }
       if (urlPath === "/api/derivation/running") {
         const dr = getDerivationRunner(cwd);
         sendJson(res, 200, { running: dr.running() });
@@ -5386,6 +5764,10 @@ var require_server = __commonJS({
       }
       if (urlPath === "/api/activity") {
         handleActivity(res, cwd);
+        return;
+      }
+      if (urlPath === "/api/readiness") {
+        handleReadiness(res, cwd);
         return;
       }
       if (urlPath === "/api/files") {
