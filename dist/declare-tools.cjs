@@ -4862,6 +4862,22 @@ data: ${JSON.stringify(data)}
         if (waves.length === 0) {
           return { error: "No ready agent milestones with pending actions" };
         }
+        const allActions = [];
+        for (const wave of waves) {
+          for (const entry of wave) {
+            for (const actionId of entry.actions) {
+              const action = (graph.actions || []).find((a) => a.id.toUpperCase() === actionId.toUpperCase());
+              if (action) allActions.push(action);
+            }
+          }
+        }
+        const unapprovedActions = allActions.filter((a) => a.reviewState !== "approved");
+        if (unapprovedActions.length > 0) {
+          return {
+            error: "Cannot play: unapproved actions exist",
+            unapproved: unapprovedActions.map((a) => ({ id: a.id, title: a.title, reviewState: a.reviewState || "draft" }))
+          };
+        }
         isRunning = true;
         stopRequested = false;
         playState = {
@@ -5233,6 +5249,18 @@ var require_server = __commonJS({
         if (result.error || !result.execPlan) {
           sendJson(res, 400, { error: "Action not found or no exec-plan" });
           return;
+        }
+        const graph = runLoadGraph2(cwd);
+        if (!("error" in graph)) {
+          const normalizedId = actionId.toUpperCase();
+          const action = graph.actions.find((a) => a.id.toUpperCase() === normalizedId);
+          if (action && action.reviewState !== "approved") {
+            sendJson(res, 403, {
+              error: "Action not approved for execution",
+              unapproved: [{ id: action.id, title: action.title, reviewState: action.reviewState || "draft" }]
+            });
+            return;
+          }
         }
         const pm = getProcessManager(cwd);
         const execResult = pm.execute(actionId, result.milestoneId);
@@ -5877,7 +5905,8 @@ var require_server = __commonJS({
           const pr = getPlayRunner(cwd);
           const result = pr.start();
           if (result.error) {
-            sendJson(res, 409, { error: result.error });
+            const status = result.unapproved ? 403 : 409;
+            sendJson(res, status, { error: result.error, ...result.unapproved && { unapproved: result.unapproved } });
           } else {
             sendJson(res, 202, { ok: true, waves: result.waves });
           }
