@@ -45,7 +45,7 @@ let kbColumn = 0;
 let kbIndex = 0;
 
 /** @type {'dag'|'columns'} Current view mode, persisted in localStorage */
-let viewMode = localStorage.getItem('declare-view-mode') || 'dag';
+let viewMode = localStorage.getItem('declare-view-mode') || 'columns';
 
 /** @type {boolean} Whether the declaration input form is visible */
 let declFormVisible = false;

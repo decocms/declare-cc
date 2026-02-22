@@ -2158,8 +2158,8 @@
   <button id="new-decl-btn" class="new-decl-btn">+ Declaration</button>
   <button id="play-btn" class="play-btn" title="Execute all ready agent milestones in dependency order">Play All</button>
   <span id="last-updated"></span>
-  <button id="view-toggle" title="Switch view">
-    <span id="view-toggle-label">Columns</span>
+  <button id="view-toggle" class="active" title="Switch view">
+    <span id="view-toggle-label">Graph</span>
   </button>
   <button id="refresh-btn">Refresh</button>
 </div>
@@ -2182,7 +2182,7 @@
 
 <!-- Main -->
 <div id="main">
-  <div id="canvas-wrap">
+  <div id="canvas-wrap" style="display:none">
     <div id="canvas-container">
       <svg id="edges-svg"></svg>
       <div class="layer-section" id="layer-declarations">
@@ -2201,7 +2201,7 @@
   </div>
 
   <!-- Column browser — Finder-style D→M→A navigation (hidden until toggled) -->
-  <div id="column-browser">
+  <div id="column-browser" class="active">
     <div class="col-panel col-panel-decl" id="col-declarations">
       <div class="col-panel-header" style="display:flex;align-items:center;gap:8px">
         <span>Declarations</span>
