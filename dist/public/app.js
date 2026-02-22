@@ -163,6 +163,11 @@ const $execStopBtn      = document.getElementById('exec-stop-btn');
 const $execExitBtn      = document.getElementById('exec-exit-btn');
 const $execProgressFill = document.getElementById('exec-progress-fill');
 const $execProgressPct  = document.getElementById('exec-progress-pct');
+const $execFailureOverlay = document.getElementById('exec-failure-overlay');
+const $execFailureDetails = document.getElementById('exec-failure-details');
+const $execFailureView    = document.getElementById('exec-failure-view');
+const $execFailureSkip    = document.getElementById('exec-failure-skip');
+const $execFailureStop    = document.getElementById('exec-failure-stop');
 
 const $declFormContainer = document.getElementById('decl-form-container');
 const $colDeclAddBtn     = document.getElementById('col-decl-add-btn');
@@ -3718,6 +3723,34 @@ function handlePlayWaveComplete(e) {
   } catch (_) {}
 }
 
+// ─── Failure modal ────────────────────────────────────────────────────────────
+
+/** @type {string | null} */
+let failedActionId = null;
+
+/**
+ * Show the failure modal when pipeline pauses on a failed action.
+ * @param {string} actionId
+ * @param {number} exitCode
+ * @param {number} wave
+ * @param {number} totalWaves
+ */
+function showFailureModal(actionId, exitCode, wave, totalWaves) {
+  failedActionId = actionId;
+  if ($execFailureDetails) {
+    $execFailureDetails.textContent = 'Action ' + actionId + ' exited with code ' + exitCode + '\nWave ' + wave + '/' + totalWaves;
+  }
+  if ($execFailureOverlay) $execFailureOverlay.style.display = '';
+}
+
+/**
+ * Hide the failure modal.
+ */
+function hideFailureModal() {
+  if ($execFailureOverlay) $execFailureOverlay.style.display = 'none';
+  failedActionId = null;
+}
+
 /**
  * Handle play-complete SSE event.
  * @param {MessageEvent} e
@@ -3726,6 +3759,7 @@ function handlePlayComplete(e) {
   try {
     const data = JSON.parse(e.data);
     playRunning = false;
+    hideFailureModal();
     // Show 100% if pipeline completed (not stopped)
     if (!(data.stopped && data.stopped.length > 0)) {
       if ($execProgressFill) $execProgressFill.style.width = '100%';
@@ -5054,6 +5088,26 @@ if ($execStopBtn) {
   $execStopBtn.addEventListener('click', () => stopPlay());
 }
 
+// Failure modal buttons
+if ($execFailureView) {
+  $execFailureView.addEventListener('click', () => {
+    if (failedActionId) selectExecAction(failedActionId, true);
+    hideFailureModal();
+  });
+}
+if ($execFailureSkip) {
+  $execFailureSkip.addEventListener('click', () => {
+    fetch('/api/pipeline/skip-action', { method: 'POST' });
+    hideFailureModal();
+  });
+}
+if ($execFailureStop) {
+  $execFailureStop.addEventListener('click', () => {
+    fetch('/api/play/stop', { method: 'POST' });
+    hideFailureModal();
+  });
+}
+
 // Declaration form triggers
 if ($colDeclAddBtn) {
   $colDeclAddBtn.addEventListener('click', () => {
@@ -5532,6 +5586,15 @@ function connectSSE() {
   es.addEventListener('pipeline-wave-start', handlePlayWaveStart);
   es.addEventListener('pipeline-wave-complete', handlePlayWaveComplete);
   es.addEventListener('pipeline-complete', handlePlayComplete);
+  es.addEventListener('pipeline-paused', function(e) {
+    try {
+      const data = JSON.parse(e.data);
+      showFailureModal(data.actionId, data.exitCode, data.wave, data.totalWaves);
+    } catch (_) {}
+  });
+  es.addEventListener('pipeline-resumed', function(e) {
+    hideFailureModal();
+  });
   es.addEventListener('error', () => {
     // Connection dropped — reconnect after 3s
     es.close();

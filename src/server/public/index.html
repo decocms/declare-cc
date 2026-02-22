@@ -2494,6 +2494,66 @@
       letter-spacing: -3px;
     }
 
+    /* ── Failure modal ── */
+    .exec-failure-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .exec-failure-modal {
+      background: var(--bg-card, #1e1e1e);
+      border: 1px solid var(--border, #333);
+      border-radius: 8px;
+      padding: 24px;
+      max-width: 420px;
+      width: 90%;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    }
+    .exec-failure-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: #ff6b6b;
+      margin-bottom: 12px;
+    }
+    .exec-failure-details {
+      font-size: 13px;
+      color: var(--text-dim);
+      margin-bottom: 20px;
+      font-family: monospace;
+      white-space: pre-line;
+    }
+    .exec-failure-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .exec-failure-btn {
+      padding: 8px 16px;
+      border-radius: 4px;
+      border: none;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+    }
+    .exec-failure-btn.view-output {
+      background: transparent;
+      color: var(--accent, #4a9eff);
+      border: 1px solid var(--accent, #4a9eff);
+    }
+    .exec-failure-btn.skip {
+      background: #e8a838;
+      color: #000;
+    }
+    .exec-failure-btn.stop {
+      background: #ff4444;
+      color: #fff;
+    }
+    .exec-failure-btn:hover { opacity: 0.85; }
+
   </style>
 </head>
 <body>
@@ -2596,6 +2656,17 @@
       <div class="exec-output-panel">
         <div class="exec-output-header" id="exec-output-header">No action selected</div>
         <pre class="exec-output-log" id="exec-output-log"></pre>
+      </div>
+    </div>
+    <div class="exec-failure-overlay" id="exec-failure-overlay" style="display:none;">
+      <div class="exec-failure-modal">
+        <div class="exec-failure-title">Action Failed</div>
+        <div class="exec-failure-details" id="exec-failure-details"></div>
+        <div class="exec-failure-actions">
+          <button class="exec-failure-btn view-output" id="exec-failure-view">View Output</button>
+          <button class="exec-failure-btn skip" id="exec-failure-skip">Skip &amp; Continue</button>
+          <button class="exec-failure-btn stop" id="exec-failure-stop">Stop Pipeline</button>
+        </div>
       </div>
     </div>
   </div>

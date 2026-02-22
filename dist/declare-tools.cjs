@@ -5187,6 +5187,8 @@ var require_pipeline_runner = __commonJS({
     var fs = require("node:fs");
     var path = require("node:path");
     var { findMilestoneFolder } = require_milestone_folders();
+    var STATE_FILE = ".planning/pipeline-state.json";
+    var OUTPUT_BUFFER_MAX = 5e4;
     function appendLog(logPath, line) {
       if (!logPath) return;
       try {
@@ -5257,6 +5259,36 @@ ${rows}
       const activeProcesses = /* @__PURE__ */ new Map();
       let results = [];
       let pipelineState = null;
+      let pausedOnFailure = null;
+      let skipResolve = null;
+      const outputBuffers = {};
+      let totalActionCount = 0;
+      function persistState() {
+        if (!pipelineState) {
+          try {
+            fs.unlinkSync(path.join(cwd, STATE_FILE));
+          } catch (_) {
+          }
+          return;
+        }
+        const state = {
+          running: isRunning,
+          currentWave: pipelineState.currentWave,
+          totalWaves: pipelineState.totalWaves,
+          totalActions: totalActionCount,
+          completedActions: pipelineState.completedActions,
+          failedActions: pipelineState.failedActions,
+          stoppedActions: pipelineState.stoppedActions,
+          activeActions: [...activeProcesses.keys()],
+          outputBuffers,
+          pausedOnFailure,
+          timestamp: Date.now()
+        };
+        try {
+          fs.writeFileSync(path.join(cwd, STATE_FILE), JSON.stringify(state, null, 2));
+        } catch (_) {
+        }
+      }
       function broadcast(event, data) {
         const payload = `event: ${event}
 data: ${JSON.stringify(data)}
@@ -5327,6 +5359,11 @@ data: ${JSON.stringify(data)}
               for (const line of lines) {
                 broadcast("action-output", { actionId, text: line, stream: "stdout" });
                 appendLog(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] [${actionId}] [stdout] ${line}`);
+                if (!outputBuffers[actionId]) outputBuffers[actionId] = "";
+                outputBuffers[actionId] += line + "\n";
+                if (outputBuffers[actionId].length > OUTPUT_BUFFER_MAX) {
+                  outputBuffers[actionId] = outputBuffers[actionId].slice(-OUTPUT_BUFFER_MAX);
+                }
               }
             });
           }
@@ -5340,6 +5377,11 @@ data: ${JSON.stringify(data)}
               for (const line of lines) {
                 broadcast("action-output", { actionId, text: line, stream: "stderr" });
                 appendLog(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] [${actionId}] [stderr] ${line}`);
+                if (!outputBuffers[actionId]) outputBuffers[actionId] = "";
+                outputBuffers[actionId] += line + "\n";
+                if (outputBuffers[actionId].length > OUTPUT_BUFFER_MAX) {
+                  outputBuffers[actionId] = outputBuffers[actionId].slice(-OUTPUT_BUFFER_MAX);
+                }
               }
             });
           }
@@ -5381,7 +5423,8 @@ data: ${JSON.stringify(data)}
           totalWaves: waves.length,
           completedActions: [],
           failedActions: [],
-          stoppedActions: []
+          stoppedActions: [],
+          skippedActions: []
         };
         let totalActions = 0;
         for (const wave of waves) {
@@ -5389,6 +5432,8 @@ data: ${JSON.stringify(data)}
             totalActions += m.actions.length;
           }
         }
+        totalActionCount = totalActions;
+        persistState();
         broadcast("pipeline-start", {
           totalWaves: waves.length,
           totalActions,
@@ -5408,6 +5453,7 @@ data: ${JSON.stringify(data)}
             if (stopRequested) break;
             const wave = waves[wi];
             pipelineState.currentWave = wi + 1;
+            persistState();
             broadcast("pipeline-wave-start", {
               wave: wi + 1,
               totalWaves: waves.length,
@@ -5445,12 +5491,40 @@ data: ${JSON.stringify(data)}
                 pipelineState.failedActions.push(r.actionId);
               }
             }
+            persistState();
             broadcast("pipeline-wave-complete", {
               wave: wi + 1,
               totalWaves: waves.length,
               completed: waveResults.filter((r) => r.exitCode === 0).map((r) => r.actionId),
               failed: waveResults.filter((r) => r.exitCode !== 0).map((r) => r.actionId)
             });
+            const failedInWave = waveResults.filter((r) => r.exitCode !== 0);
+            if (failedInWave.length > 0 && !stopRequested) {
+              const firstFailed = failedInWave[0];
+              pausedOnFailure = { actionId: firstFailed.actionId, exitCode: firstFailed.exitCode, waveIndex: wi };
+              persistState();
+              broadcast("pipeline-paused", {
+                actionId: firstFailed.actionId,
+                exitCode: firstFailed.exitCode,
+                wave: wi + 1,
+                totalWaves: waves.length,
+                failedActions: failedInWave.map((r) => r.actionId)
+              });
+              const decision = await new Promise((resolve) => {
+                skipResolve = resolve;
+              });
+              skipResolve = null;
+              if (decision === "stop") {
+                stopRequested = true;
+                pausedOnFailure = null;
+                break;
+              }
+              for (const f of failedInWave) {
+                pipelineState.skippedActions.push(f.actionId);
+              }
+              pausedOnFailure = null;
+              broadcast("pipeline-resumed", { wave: wi + 1, skipped: failedInWave.map((r) => r.actionId) });
+            }
           }
           const finalState = { ...pipelineState };
           const finalResults = [...results];
@@ -5472,10 +5546,14 @@ data: ${JSON.stringify(data)}
             reportPath: reportPath ? ".planning/execution-report.md" : null
           });
           stopRequested = false;
+          pausedOnFailure = null;
           pipelineState = null;
+          persistState();
         })().catch((_err) => {
           isRunning = false;
+          pausedOnFailure = null;
           pipelineState = null;
+          persistState();
           broadcast("pipeline-complete", {
             completed: [],
             failed: [],
@@ -5491,12 +5569,17 @@ data: ${JSON.stringify(data)}
           return { error: "Pipeline is not running" };
         }
         stopRequested = true;
+        if (pausedOnFailure && skipResolve) {
+          skipResolve("stop");
+          skipResolve = null;
+        }
         for (const [, proc] of activeProcesses) {
           try {
             proc.kill("SIGTERM");
           } catch (_) {
           }
         }
+        persistState();
         return { ok: true };
       }
       function running() {
@@ -5514,7 +5597,34 @@ data: ${JSON.stringify(data)}
           results
         };
       }
-      return { start, stop, running, status };
+      function skip() {
+        if (!pausedOnFailure) {
+          return { error: "Pipeline is not paused" };
+        }
+        if (skipResolve) {
+          skipResolve("skip");
+          skipResolve = null;
+        }
+        return { ok: true };
+      }
+      function paused() {
+        return pausedOnFailure;
+      }
+      function getFullState() {
+        if (!isRunning && !pausedOnFailure) return null;
+        return {
+          running: isRunning,
+          currentWave: pipelineState ? pipelineState.currentWave : 0,
+          totalWaves: pipelineState ? pipelineState.totalWaves : 0,
+          totalActions: totalActionCount,
+          completedActions: pipelineState ? pipelineState.completedActions : [],
+          failedActions: pipelineState ? pipelineState.failedActions : [],
+          activeActions: [...activeProcesses.keys()],
+          outputBuffers,
+          pausedOnFailure
+        };
+      }
+      return { start, stop, skip, running, paused, status, getFullState };
     }
     module2.exports = { createPipelineRunner };
   }
@@ -6229,6 +6339,11 @@ var require_server = __commonJS({
       if (!playRunner) playRunner = createPlayRunner(sseClients, cwd);
       return playRunner;
     }
+    var pipelineRunnerInstance = null;
+    function getPipelineRunner(cwd) {
+      if (!pipelineRunnerInstance) pipelineRunnerInstance = createPipelineRunner(sseClients, cwd);
+      return pipelineRunnerInstance;
+    }
     var revisionRunner = null;
     function getRevisionRunner(cwd) {
       if (!revisionRunner) {
@@ -6653,6 +6768,18 @@ var require_server = __commonJS({
         if (urlPath === "/api/play/stop") {
           const pr = getPlayRunner(cwd);
           const result = pr.stop();
+          const plr = getPipelineRunner(cwd);
+          if (plr.running()) plr.stop();
+          if (result.error && !plr.running()) {
+            sendJson(res, 400, { error: result.error });
+          } else {
+            sendJson(res, 200, { ok: true });
+          }
+          return;
+        }
+        if (urlPath === "/api/pipeline/skip-action") {
+          const plr = getPipelineRunner(cwd);
+          const result = plr.skip();
           if (result.error) {
             sendJson(res, 400, { error: result.error });
           } else {
@@ -6718,7 +6845,18 @@ var require_server = __commonJS({
       }
       if (urlPath === "/api/play/status") {
         const pr = getPlayRunner(cwd);
-        sendJson(res, 200, { running: pr.running(), status: pr.status() });
+        const plr = getPipelineRunner(cwd);
+        sendJson(res, 200, { running: pr.running() || plr.running(), paused: plr.paused(), status: pr.status() || plr.status() });
+        return;
+      }
+      if (urlPath === "/api/pipeline/state") {
+        const plr = getPipelineRunner(cwd);
+        const state = plr.getFullState();
+        if (state) {
+          sendJson(res, 200, { active: true, ...state });
+        } else {
+          sendJson(res, 200, { active: false });
+        }
         return;
       }
       if (urlPath === "/api/derivation/running") {
