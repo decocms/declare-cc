@@ -10,8 +10,8 @@
 | M-21 | UI workflow state machine                    | State machine driving the D-M-A workflow progression in the UI            | DONE    | D-06     | YES  |
 | M-22 | Milestone classification in planning         | Classify milestones as agent-time or human-bound during planning           | DONE    | D-07     | YES  |
 | M-23 | Milestone dependency graph                   | Declare and visualize dependencies between milestones in the DAG          | DONE    | D-07     | YES  |
-| M-24 | Readiness state per milestone                | Compute and display readiness state based on dependency completion         | PENDING | D-07     | YES  |
-| M-25 | Play action for autonomous execution         | One-click execution of all ready agent-time milestones in dependency order | PENDING | D-07     | YES  |
+| M-24 | Readiness state per milestone                | Compute and display readiness state based on dependency completion         | DONE    | D-07     | YES  |
+| M-25 | Play action for autonomous execution         | One-click execution of all ready agent-time milestones in dependency order | DONE    | D-07     | YES  |
 | M-26 | Real-time agent output streaming             | Stream agent output in real-time to the dashboard during execution         | DONE    | D-08     | YES  |
 | M-27 | Inline file viewer with markdown rendering   | View produced files inline with full markdown rendering                    | DONE    | D-08     | YES  |
 | M-28 | Commit and output linking per action         | Link commit SHAs and output files to each action in the dashboard         | DONE    | D-08     | YES  |
