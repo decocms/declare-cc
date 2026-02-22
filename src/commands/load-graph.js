@@ -12,6 +12,7 @@
  */
 
 const { buildDagFromDisk, loadActionsFromFolders } = require('./build-dag');
+const { computeReadiness } = require('./readiness');
 
 /**
  * Run the load-graph command.
@@ -27,15 +28,29 @@ function runLoadGraph(cwd) {
 
   const wholeness = dag.computeWholeness();
 
+  const enrichedMilestones = milestones.map(m => ({
+    ...m,
+    classification: m.classification || 'agent',
+    dependsOn: m.dependsOn || [],
+    wholeness: wholeness.get(m.id) || 'broken',
+  }));
+
+  const enrichedActions = actions.map(a => ({ ...a, wholeness: wholeness.get(a.id) || 'broken' }));
+
+  // Compute readiness state for all milestones
+  const readiness = computeReadiness({
+    milestones: enrichedMilestones,
+    actions: enrichedActions,
+  });
+
   return {
     declarations: declarations.map(d => ({ ...d, wholeness: wholeness.get(d.id) || 'broken' })),
-    milestones: milestones.map(m => ({
+    milestones: enrichedMilestones.map(m => ({
       ...m,
-      classification: m.classification || 'agent',
-      dependsOn: m.dependsOn || [],
-      wholeness: wholeness.get(m.id) || 'broken',
+      readiness: readiness[m.id] || { state: 'blocked', blockedBy: [], progress: { done: 0, total: 0 } },
     })),
-    actions: actions.map(a => ({ ...a, wholeness: wholeness.get(a.id) || 'broken' })),
+    actions: enrichedActions,
+    readiness,
     stats: dag.stats(),
     validation: dag.validate(),
   };
