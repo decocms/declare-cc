@@ -5670,5 +5670,5 @@ connectSSE();
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
 
 showLoading();
-loadData();
+loadData().then(() => restoreExecState());
 loadActivity();

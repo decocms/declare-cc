@@ -3512,6 +3512,69 @@ async function stopPlay() {
 }
 
 /**
+ * Restore execution state on page load by fetching persisted pipeline state.
+ * If a pipeline is actively running (or paused on failure), restores the
+ * execution view with correct wave/action statuses and output buffers.
+ */
+async function restoreExecState() {
+  try {
+    const res = await fetch('/api/pipeline/state');
+    const data = await res.json();
+    if (!data.active) return;
+
+    // Restore play state
+    playRunning = data.running;
+    playStatus = {
+      currentWave: data.currentWave,
+      totalWaves: data.totalWaves,
+      activeActions: data.activeActions || [],
+      completedActions: data.completedActions || [],
+      failedActions: data.failedActions || [],
+    };
+
+    // Restore output buffers
+    if (data.outputBuffers) {
+      execOutputBuffers = data.outputBuffers;
+    }
+
+    // Restore progress tracking
+    execTotalActions = data.totalActions || (data.completedActions || []).length + (data.failedActions || []).length + (data.activeActions || []).length;
+    execCompletedActions = (data.completedActions || []).length;
+    execFailedActions = (data.failedActions || []).length;
+
+    // Mark running actions
+    runningActions = new Set(data.activeActions || []);
+
+    // Mark order as confirmed so renderExecutionView shows the live view
+    orderConfirmed = true;
+
+    // Switch to execution view
+    switchView('execution');
+    updatePlayUI();
+    updateExecProgress();
+    updateExecTopbar();
+
+    // If paused on failure and showFailureModal exists, show it
+    if (data.pausedOnFailure && typeof showFailureModal === 'function') {
+      showFailureModal(
+        data.pausedOnFailure.actionId,
+        data.pausedOnFailure.exitCode,
+        data.currentWave,
+        data.totalWaves
+      );
+    }
+
+    // Auto-select first running action for output display
+    if (data.activeActions && data.activeActions.length > 0) {
+      selectExecAction(data.activeActions[0], false);
+    } else if (data.completedActions && data.completedActions.length > 0) {
+      // If no running actions, select the last completed for review
+      selectExecAction(data.completedActions[data.completedActions.length - 1], false);
+    }
+  } catch (_) {}
+}
+
+/**
  * Update play button and banner based on current play state.
  */
 /**
@@ -5607,5 +5670,5 @@ connectSSE();
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
 
 showLoading();
-loadData();
+loadData().then(() => restoreExecState());
 loadActivity();
