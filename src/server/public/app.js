@@ -953,28 +953,40 @@ function renderReadinessBanner() {
   }
 
   if (unapproved.length === 0) {
-    $readinessBanner.innerHTML = `<span class="rb-complete">All ${total} nodes approved</span>`;
-    return;
+    $readinessBanner.innerHTML =
+      `<span class="rb-complete">All ${total} nodes approved</span>` +
+      `<button class="enter-exec-btn" id="enter-exec-btn">Enter Execution Mode</button>`;
+  } else {
+    const MAX_LINKS = 8;
+    const shown = unapproved.slice(0, MAX_LINKS);
+    const remaining = unapproved.length - shown.length;
+
+    let linksHtml = shown.map(n =>
+      `<a class="rb-link" data-node-id="${escHtml(n.id)}" data-node-type="${n._type}">${escHtml(n.id)}</a>`
+    ).join('');
+
+    if (remaining > 0) {
+      linksHtml += `<span class="rb-more">+ ${remaining} more</span>`;
+    }
+
+    $readinessBanner.innerHTML =
+      `<span class="rb-progress">${approvedCount}/${total} approved</span>` +
+      `<span class="rb-remaining">${unapproved.length} need review:</span>` +
+      linksHtml +
+      `<button class="enter-exec-btn" id="enter-exec-btn" disabled title="All nodes must be approved before entering execution mode">Enter Execution Mode</button>`;
   }
 
-  const MAX_LINKS = 8;
-  const shown = unapproved.slice(0, MAX_LINKS);
-  const remaining = unapproved.length - shown.length;
-
-  let linksHtml = shown.map(n =>
-    `<a class="rb-link" data-node-id="${escHtml(n.id)}" data-node-type="${n._type}">${escHtml(n.id)}</a>`
-  ).join('');
-
-  if (remaining > 0) {
-    linksHtml += `<span class="rb-more">+ ${remaining} more</span>`;
+  // Wire enter-execution-mode button
+  const execBtn = document.getElementById('enter-exec-btn');
+  if (execBtn && !execBtn.disabled) {
+    execBtn.addEventListener('click', () => {
+      if (confirm('Enter execution mode? You will not be able to edit plans until you exit.')) {
+        switchView('execution');
+      }
+    });
   }
 
-  $readinessBanner.innerHTML =
-    `<span class="rb-progress">${approvedCount}/${total} approved</span>` +
-    `<span class="rb-remaining">${unapproved.length} need review:</span>` +
-    linksHtml;
-
-  // Wire click handlers on links
+  // Wire click handlers on unapproved-node links
   $readinessBanner.querySelectorAll('.rb-link').forEach(link => {
     link.addEventListener('click', function(e) {
       e.preventDefault();
