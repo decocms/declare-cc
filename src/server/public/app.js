@@ -1299,11 +1299,13 @@ async function renderAnnotationPanel(nodeId, type) {
 
   // Fetch annotations
   let annotations = [];
+  let revisionRound = 0;
   try {
     const annRes = await fetch('/api/node/' + encodeURIComponent(nodeId) + '/annotations');
     if (annRes.ok) {
       const annData = await annRes.json();
       annotations = annData.annotations || [];
+      revisionRound = annData.revisionRound || 0;
     }
   } catch (_) { /* ignore */ }
 
@@ -1340,8 +1342,11 @@ async function renderAnnotationPanel(nodeId, type) {
   el.id = 'annotation-panel';
 
   const commentCount = annotations.length;
+  const roundBadge = revisionRound >= 1
+    ? `<span class="revision-round-badge">Round ${revisionRound}</span>`
+    : '';
   let headerHtml = `<div class="detail-label" style="margin-bottom:10px;display:flex;align-items:center;justify-content:space-between">
-    Annotations
+    Annotations${roundBadge}
     <span class="annotation-count">${commentCount} comment${commentCount !== 1 ? 's' : ''}</span>
   </div>`;
 
