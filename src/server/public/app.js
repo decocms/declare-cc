@@ -120,6 +120,7 @@ const $panelBody     = document.getElementById('panel-body');
 const $panelEmpty    = document.getElementById('panel-empty');
 
 const $colBrowser    = document.getElementById('column-browser');
+const $readinessBanner = document.getElementById('readiness-banner');
 const $colDeclList   = document.getElementById('col-decl-list');
 const $colMileList   = document.getElementById('col-mile-list');
 const $colActList    = document.getElementById('col-act-list');
@@ -897,6 +898,104 @@ function renderColumnBrowser() {
   if (isColumnBrowserActive()) {
     updateKbFocus();
   }
+
+  // Update readiness banner
+  renderReadinessBanner();
+}
+
+// ─── Readiness banner ─────────────────────────────────────────────────────────
+
+/**
+ * Render the global readiness indicator banner showing how many plans are
+ * approved vs total, with clickable links to unapproved nodes.
+ * Called at the end of renderColumnBrowser() so it updates on every SSE refresh.
+ */
+function renderReadinessBanner() {
+  if (!$readinessBanner || !graphData) return;
+
+  // Show banner only in column browser mode
+  if (!isColumnBrowserActive()) {
+    $readinessBanner.classList.remove('active');
+    return;
+  }
+  $readinessBanner.classList.add('active');
+
+  const allNodes = [
+    ...(graphData.declarations || []).map(n => ({ ...n, _type: 'declaration' })),
+    ...(graphData.milestones || []).map(n => ({ ...n, _type: 'milestone' })),
+    ...(graphData.actions || []).map(n => ({ ...n, _type: 'action' })),
+  ];
+
+  const total = allNodes.length;
+  const approved = allNodes.filter(n => n.reviewState === 'approved');
+  const unapproved = allNodes.filter(n => n.reviewState !== 'approved');
+  const approvedCount = approved.length;
+
+  if (total === 0) {
+    $readinessBanner.innerHTML = '<span class="rb-remaining">No nodes to review</span>';
+    return;
+  }
+
+  if (unapproved.length === 0) {
+    $readinessBanner.innerHTML = `<span class="rb-complete">All ${total} nodes approved</span>`;
+    return;
+  }
+
+  const MAX_LINKS = 8;
+  const shown = unapproved.slice(0, MAX_LINKS);
+  const remaining = unapproved.length - shown.length;
+
+  let linksHtml = shown.map(n =>
+    `<a class="rb-link" data-node-id="${escHtml(n.id)}" data-node-type="${n._type}">${escHtml(n.id)}</a>`
+  ).join('');
+
+  if (remaining > 0) {
+    linksHtml += `<span class="rb-more">+ ${remaining} more</span>`;
+  }
+
+  $readinessBanner.innerHTML =
+    `<span class="rb-progress">${approvedCount}/${total} approved</span>` +
+    `<span class="rb-remaining">${unapproved.length} need review:</span>` +
+    linksHtml;
+
+  // Wire click handlers on links
+  $readinessBanner.querySelectorAll('.rb-link').forEach(link => {
+    link.addEventListener('click', function(e) {
+      e.preventDefault();
+      const nodeId = this.dataset.nodeId;
+      const nodeType = this.dataset.nodeType;
+
+      // Navigate the column browser to the clicked node
+      if (nodeType === 'declaration') {
+        colSelectedDecl = nodeId;
+        colSelectedMile = null;
+        renderColumnBrowser();
+        selectNode(nodeId, 'declaration');
+      } else if (nodeType === 'milestone') {
+        // Find the declaration this milestone realizes
+        const milestone = (graphData.milestones || []).find(m => m.id === nodeId);
+        if (milestone && milestone.realizes && milestone.realizes.length) {
+          colSelectedDecl = milestone.realizes[0];
+        }
+        colSelectedMile = nodeId;
+        renderColumnBrowser();
+        selectNode(nodeId, 'milestone');
+      } else if (nodeType === 'action') {
+        // Find the milestone this action belongs to, then its declaration
+        const action = (graphData.actions || []).find(a => a.id === nodeId);
+        if (action && action.causes && action.causes.length) {
+          const mileId = action.causes[0];
+          colSelectedMile = mileId;
+          const milestone = (graphData.milestones || []).find(m => m.id === mileId);
+          if (milestone && milestone.realizes && milestone.realizes.length) {
+            colSelectedDecl = milestone.realizes[0];
+          }
+        }
+        renderColumnBrowser();
+        selectNode(nodeId, 'action');
+      }
+    });
+  });
 }
 
 // ─── Column browser keyboard navigation ──────────────────────────────────────
@@ -4198,6 +4297,7 @@ function switchView(mode) {
   if (mode === 'dag') {
     $canvasWrap.style.display = '';
     $colBrowser.classList.remove('active');
+    if ($readinessBanner) $readinessBanner.classList.remove('active');
     clearColumnBrowserKbFocus();
     if ($viewToggle) {
       $viewToggle.classList.remove('active');
