@@ -2378,7 +2378,7 @@
       font-size: 13px;
       font-weight: 600;
       color: var(--text-bright);
-      flex: 1;
+      flex-shrink: 0;
     }
     .exec-exit-btn {
       padding: 4px 12px;
@@ -2401,6 +2401,29 @@
       font-weight: 600;
     }
     .exec-stop-btn:hover { opacity: 0.85; }
+
+    /* ── Execution progress bar ── */
+    .exec-progress-container {
+      height: 6px;
+      background: var(--bg);
+      border-radius: 3px;
+      flex: 1;
+      margin: 0 16px;
+      min-width: 120px;
+    }
+    .exec-progress-fill {
+      height: 100%;
+      background: var(--decl-color);
+      border-radius: 3px;
+      transition: width 0.3s ease;
+      width: 0;
+    }
+    .exec-progress-pct {
+      font-size: 13px;
+      color: var(--text-dim);
+      min-width: 40px;
+      text-align: right;
+    }
 
     /* ── Pre-execution wave order view ── */
     .exec-preorder-list {
@@ -2554,6 +2577,8 @@
     <div class="exec-topbar">
       <span class="exec-topbar-title" id="exec-topbar-title">Execution Mode</span>
       <span id="exec-wave-status" style="font-size:12px;color:var(--text-dim)"></span>
+      <div class="exec-progress-container"><div class="exec-progress-fill" id="exec-progress-fill"></div></div>
+      <span class="exec-progress-pct" id="exec-progress-pct"></span>
       <button class="exec-stop-btn" id="exec-stop-btn">Stop</button>
       <button class="exec-exit-btn" id="exec-exit-btn">Exit</button>
     </div>

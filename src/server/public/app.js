@@ -112,6 +112,13 @@ let playRunning = false;
 /** @type {{ currentWave: number, totalWaves: number, activeActions: string[], completedActions: string[], failedActions: string[] } | null} */
 let playStatus = null;
 
+/** @type {number} Total actions across all waves for progress tracking */
+let execTotalActions = 0;
+/** @type {number} Actions completed so far */
+let execCompletedActions = 0;
+/** @type {number} Actions failed so far */
+let execFailedActions = 0;
+
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
 
@@ -154,6 +161,8 @@ const $execTopbarTitle  = document.getElementById('exec-topbar-title');
 const $execWaveStatus   = document.getElementById('exec-wave-status');
 const $execStopBtn      = document.getElementById('exec-stop-btn');
 const $execExitBtn      = document.getElementById('exec-exit-btn');
+const $execProgressFill = document.getElementById('exec-progress-fill');
+const $execProgressPct  = document.getElementById('exec-progress-pct');
 
 const $declFormContainer = document.getElementById('decl-form-container');
 const $colDeclAddBtn     = document.getElementById('col-decl-add-btn');
@@ -3426,6 +3435,14 @@ function handleActionComplete(e) {
       currentOutputActionId = null;
     }
 
+    // Update progress counters
+    if (exitCode === 0) {
+      execCompletedActions++;
+    } else {
+      execFailedActions++;
+    }
+    updateExecProgress();
+
     // Update state
     runningActions.delete(actionId);
     updateRunningIndicators();
@@ -3514,6 +3531,18 @@ function updateExecTopbar() {
     if ($execWaveStatus) $execWaveStatus.textContent = '';
     if ($execStopBtn) $execStopBtn.style.display = 'none';
   }
+  updateExecProgress();
+}
+
+/**
+ * Update the execution progress bar and percentage display.
+ */
+function updateExecProgress() {
+  const pct = execTotalActions > 0
+    ? Math.round(((execCompletedActions + execFailedActions) / execTotalActions) * 100)
+    : 0;
+  if ($execProgressFill) $execProgressFill.style.width = pct + '%';
+  if ($execProgressPct) $execProgressPct.textContent = execTotalActions > 0 ? pct + '%' : '';
 }
 
 function updatePlayUI() {
@@ -3594,6 +3623,22 @@ function handlePlayStart(e) {
       completedActions: [],
       failedActions: [],
     };
+    // Reset progress counters
+    execCompletedActions = 0;
+    execFailedActions = 0;
+    // Compute totalActions from data — use top-level field if present, else count from waves
+    if (data.totalActions != null) {
+      execTotalActions = data.totalActions;
+    } else if (data.waves) {
+      execTotalActions = 0;
+      for (const w of data.waves) {
+        for (const m of (w.milestones || [])) {
+          execTotalActions += (m.actions || []).length;
+        }
+      }
+    } else {
+      execTotalActions = 0;
+    }
     // Reset execution view output state for new run
     execOutputBuffers = {};
     execSelectedActionId = null;
@@ -3601,6 +3646,7 @@ function handlePlayStart(e) {
     if ($execOutputHeader) $execOutputHeader.textContent = 'No action selected';
     if ($execOutputLog) $execOutputLog.textContent = '';
     updatePlayUI();
+    updateExecProgress();
     // Auto-switch to execution mode when play starts
     switchView('execution');
   } catch (_) {}
@@ -3680,6 +3726,11 @@ function handlePlayComplete(e) {
   try {
     const data = JSON.parse(e.data);
     playRunning = false;
+    // Show 100% if pipeline completed (not stopped)
+    if (!(data.stopped && data.stopped.length > 0)) {
+      if ($execProgressFill) $execProgressFill.style.width = '100%';
+      if ($execProgressPct) $execProgressPct.textContent = '100%';
+    }
     // Keep playStatus briefly for display, then clear
     setTimeout(() => {
       playStatus = null;
@@ -5476,6 +5527,11 @@ function connectSSE() {
   es.addEventListener('play-wave-start', handlePlayWaveStart);
   es.addEventListener('play-wave-complete', handlePlayWaveComplete);
   es.addEventListener('play-complete', handlePlayComplete);
+  // Pipeline runner events (same shape, reuse handlers)
+  es.addEventListener('pipeline-start', handlePlayStart);
+  es.addEventListener('pipeline-wave-start', handlePlayWaveStart);
+  es.addEventListener('pipeline-wave-complete', handlePlayWaveComplete);
+  es.addEventListener('pipeline-complete', handlePlayComplete);
   es.addEventListener('error', () => {
     // Connection dropped — reconnect after 3s
     es.close();
