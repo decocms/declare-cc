@@ -5028,7 +5028,26 @@ data: ${JSON.stringify(data)}
         if ("error" in graph) {
           return { error: graph.error };
         }
-        const { waves } = computePlayOrder(graph);
+        let waves;
+        const manifest = loadManifest(cwd);
+        if (manifest) {
+          const actionStatusMap = /* @__PURE__ */ new Map();
+          for (const a of graph.actions || []) {
+            actionStatusMap.set(a.id.toUpperCase(), (a.status || "").toUpperCase());
+          }
+          waves = manifest.waves.map((w) => {
+            const milestones = w.milestones.map((m) => {
+              const pendingActions = m.actions.filter((actionId) => {
+                const status2 = actionStatusMap.get(actionId.toUpperCase()) || "";
+                return !DONE_STATUSES.has(status2);
+              });
+              return pendingActions.length > 0 ? { milestoneId: m.id, actions: pendingActions } : null;
+            }).filter(Boolean);
+            return milestones.length > 0 ? milestones : null;
+          }).filter(Boolean);
+        } else {
+          waves = computePlayOrder(graph).waves;
+        }
         if (waves.length === 0) {
           return { error: "No ready agent milestones with pending actions" };
         }
@@ -5143,7 +5162,361 @@ data: ${JSON.stringify(data)}
       }
       return { start, stop, running, status };
     }
-    module2.exports = { computePlayOrder, createPlayRunner };
+    function loadManifest(cwd) {
+      const manifestPath = path.join(cwd, ".planning", "execution-manifest.json");
+      try {
+        const raw = fs.readFileSync(manifestPath, "utf8");
+        const data = JSON.parse(raw);
+        if (data && Array.isArray(data.waves) && data.waves.length > 0) {
+          return data;
+        }
+        return null;
+      } catch (_) {
+        return null;
+      }
+    }
+    module2.exports = { computePlayOrder, createPlayRunner, loadManifest };
+  }
+});
+
+// src/server/pipeline-runner.js
+var require_pipeline_runner = __commonJS({
+  "src/server/pipeline-runner.js"(exports2, module2) {
+    "use strict";
+    var { spawn, execSync } = require("node:child_process");
+    var fs = require("node:fs");
+    var path = require("node:path");
+    var { findMilestoneFolder } = require_milestone_folders();
+    function appendLog(logPath, line) {
+      if (!logPath) return;
+      try {
+        fs.appendFileSync(logPath, line + "\n", "utf-8");
+      } catch (_) {
+      }
+    }
+    function isTransientFailure(exitCode, stderrOutput) {
+      if (exitCode === 124 || exitCode === 137 || exitCode === -1) return true;
+      const patterns = /ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOMEM|SIGKILL|SIGTERM|socket hang up|network timeout/i;
+      return patterns.test(stderrOutput);
+    }
+    function generateExecutionReport(cwd, results, pipelineStartTime, pipelineStopped, startSha) {
+      try {
+        let endSha = "unknown";
+        try {
+          endSha = execSync("git rev-parse --short HEAD", { cwd }).toString().trim();
+        } catch (_) {
+        }
+        const endTime = Date.now();
+        const totalMs = endTime - pipelineStartTime;
+        const totalMin = Math.floor(totalMs / 6e4);
+        const totalSec = Math.floor(totalMs % 6e4 / 1e3);
+        const passed = results.filter((r) => r.exitCode === 0).length;
+        const failed = results.filter((r) => r.exitCode !== 0).length;
+        const overallStatus = pipelineStopped ? "STOPPED" : failed > 0 ? "FAILED" : "SUCCESS";
+        const startedAt = new Date(pipelineStartTime).toISOString();
+        const completedAt = new Date(endTime).toISOString();
+        let rows = "";
+        for (let i = 0; i < results.length; i++) {
+          const r = results[i];
+          const status = r.exitCode === 0 ? "PASS" : "FAIL";
+          const durMin = Math.floor(r.durationMs / 6e4);
+          const durSec = Math.floor(r.durationMs % 6e4 / 1e3);
+          const retried = r.retried ? `Yes (${r.attempts})` : "No";
+          rows += `| ${i + 1} | ${r.actionId} | ${r.milestoneId} | ${status} | ${durMin}m ${durSec}s | ${retried} |
+`;
+        }
+        const report = `# Execution Report
+
+**Status:** ${overallStatus}
+**Started:** ${startedAt}
+**Completed:** ${completedAt}
+**Duration:** ${totalMin}m ${totalSec}s
+**Commits:** ${startSha}..${endSha}
+
+## Results
+
+| # | Action | Milestone | Status | Duration | Retried |
+|---|--------|-----------|--------|----------|---------|
+${rows}
+## Summary
+
+- **Passed:** ${passed}
+- **Failed:** ${failed}
+- **Total:** ${results.length}
+`;
+        const reportPath = path.join(cwd, ".planning", "execution-report.md");
+        fs.writeFileSync(reportPath, report, "utf8");
+        return reportPath;
+      } catch (_) {
+        return null;
+      }
+    }
+    function createPipelineRunner(sseClients, cwd) {
+      let isRunning = false;
+      let stopRequested = false;
+      const activeProcesses = /* @__PURE__ */ new Map();
+      let results = [];
+      let pipelineState = null;
+      function broadcast(event, data) {
+        const payload = `event: ${event}
+data: ${JSON.stringify(data)}
+
+`;
+        for (const client of sseClients) {
+          try {
+            client.write(payload);
+          } catch (_) {
+            sseClients.delete(client);
+          }
+        }
+      }
+      function loadManifest() {
+        const manifestPath = path.join(cwd, ".planning", "execution-manifest.json");
+        if (!fs.existsSync(manifestPath)) {
+          return { error: "Execution manifest not found at .planning/execution-manifest.json" };
+        }
+        try {
+          const raw = fs.readFileSync(manifestPath, "utf8");
+          const data = JSON.parse(raw);
+          if (!data || !Array.isArray(data.waves) || data.waves.length === 0) {
+            return { error: "Execution manifest is malformed: waves must be a non-empty array" };
+          }
+          for (let i = 0; i < data.waves.length; i++) {
+            const wave = data.waves[i];
+            if (!Array.isArray(wave.milestones)) {
+              return { error: `Execution manifest malformed: waves[${i}].milestones must be an array` };
+            }
+            for (let j = 0; j < wave.milestones.length; j++) {
+              const m = wave.milestones[j];
+              if (typeof m.id !== "string" || !m.id) {
+                return { error: `Execution manifest malformed: waves[${i}].milestones[${j}].id must be a non-empty string` };
+              }
+              if (!Array.isArray(m.actions)) {
+                return { error: `Execution manifest malformed: waves[${i}].milestones[${j}].actions must be an array` };
+              }
+            }
+          }
+          return { waves: data.waves };
+        } catch (err) {
+          return { error: `Failed to parse execution manifest: ${String(err)}` };
+        }
+      }
+      function executeAction(actionId, milestoneId) {
+        return new Promise((resolve) => {
+          const startedAt = (/* @__PURE__ */ new Date()).toISOString();
+          const startTime = Date.now();
+          const prompt = `Run /declare:execute ${milestoneId} for action ${actionId} only. Do not ask questions, execute autonomously.`;
+          const proc = spawn("claude", ["-p", prompt, "--no-input"], {
+            cwd,
+            env: { ...process.env, FORCE_COLOR: "0" }
+          });
+          activeProcesses.set(actionId, proc);
+          const planningDir = path.join(cwd, ".planning");
+          const milestoneFolder = findMilestoneFolder(planningDir, milestoneId);
+          const logPath = milestoneFolder ? path.join(milestoneFolder, "execution.log") : void 0;
+          appendLog(logPath, `
+=== START ${actionId} (pipeline) @ ${startedAt} ===`);
+          let stdoutBuf = "";
+          let stderrBuf = "";
+          let stderrFull = "";
+          if (proc.stdout) {
+            proc.stdout.on("data", (chunk) => {
+              stdoutBuf += chunk.toString();
+              const lines = stdoutBuf.split("\n");
+              stdoutBuf = lines.pop() || "";
+              for (const line of lines) {
+                broadcast("action-output", { actionId, text: line, stream: "stdout" });
+                appendLog(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] [${actionId}] [stdout] ${line}`);
+              }
+            });
+          }
+          if (proc.stderr) {
+            proc.stderr.on("data", (chunk) => {
+              const text = chunk.toString();
+              stderrFull += text;
+              stderrBuf += text;
+              const lines = stderrBuf.split("\n");
+              stderrBuf = lines.pop() || "";
+              for (const line of lines) {
+                broadcast("action-output", { actionId, text: line, stream: "stderr" });
+                appendLog(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] [${actionId}] [stderr] ${line}`);
+              }
+            });
+          }
+          proc.on("close", (exitCode) => {
+            const code = exitCode ?? -1;
+            const completedAt = (/* @__PURE__ */ new Date()).toISOString();
+            const durationMs = Date.now() - startTime;
+            appendLog(logPath, `=== END ${actionId} (pipeline) @ ${completedAt} exit=${code} duration=${durationMs}ms ===
+`);
+            activeProcesses.delete(actionId);
+            broadcast("action-complete", { actionId, exitCode: code, durationMs });
+            resolve({ actionId, milestoneId, exitCode: code, stderrOutput: stderrFull, durationMs, startedAt, completedAt, retried: false, attempts: 1 });
+          });
+          proc.on("error", (_err) => {
+            const completedAt = (/* @__PURE__ */ new Date()).toISOString();
+            const durationMs = Date.now() - startTime;
+            appendLog(logPath, `=== ERROR ${actionId} (pipeline) @ ${completedAt} ===
+`);
+            activeProcesses.delete(actionId);
+            broadcast("action-complete", { actionId, exitCode: -1, durationMs });
+            resolve({ actionId, milestoneId, exitCode: -1, stderrOutput: stderrFull, durationMs, startedAt, completedAt, retried: false, attempts: 1 });
+          });
+        });
+      }
+      function start() {
+        if (isRunning) {
+          return { error: "Pipeline is already running" };
+        }
+        const manifest = loadManifest();
+        if ("error" in manifest) {
+          return { error: manifest.error };
+        }
+        const waves = manifest.waves;
+        isRunning = true;
+        stopRequested = false;
+        results = [];
+        pipelineState = {
+          currentWave: 0,
+          totalWaves: waves.length,
+          completedActions: [],
+          failedActions: [],
+          stoppedActions: []
+        };
+        let totalActions = 0;
+        for (const wave of waves) {
+          for (const m of wave.milestones) {
+            totalActions += m.actions.length;
+          }
+        }
+        broadcast("pipeline-start", {
+          totalWaves: waves.length,
+          totalActions,
+          waves: waves.map((w, i) => ({
+            wave: i + 1,
+            milestones: w.milestones.map((m) => ({ id: m.id, actions: m.actions }))
+          }))
+        });
+        (async () => {
+          const pipelineStartTime = Date.now();
+          let startSha = "unknown";
+          try {
+            startSha = execSync("git rev-parse --short HEAD", { cwd }).toString().trim();
+          } catch (_) {
+          }
+          for (let wi = 0; wi < waves.length; wi++) {
+            if (stopRequested) break;
+            const wave = waves[wi];
+            pipelineState.currentWave = wi + 1;
+            broadcast("pipeline-wave-start", {
+              wave: wi + 1,
+              totalWaves: waves.length,
+              milestones: wave.milestones.map((m) => ({ id: m.id, actions: m.actions }))
+            });
+            const promises = [];
+            for (const milestone of wave.milestones) {
+              for (const actionId of milestone.actions) {
+                if (stopRequested) break;
+                promises.push(executeAction(actionId, milestone.id));
+              }
+              if (stopRequested) break;
+            }
+            const waveResults = await Promise.all(promises);
+            for (let ri = 0; ri < waveResults.length; ri++) {
+              const r = waveResults[ri];
+              if (r.exitCode !== 0 && !stopRequested && isTransientFailure(r.exitCode, r.stderrOutput)) {
+                broadcast("action-retry", { actionId: r.actionId, milestoneId: r.milestoneId, attempt: 2, reason: "transient failure detected" });
+                appendLog(
+                  findMilestoneFolder(path.join(cwd, ".planning"), r.milestoneId) ? path.join(findMilestoneFolder(path.join(cwd, ".planning"), r.milestoneId), "execution.log") : void 0,
+                  `
+=== RETRY ${r.actionId} (attempt 2) ===`
+                );
+                const retryResult = await executeAction(r.actionId, r.milestoneId);
+                retryResult.retried = true;
+                retryResult.attempts = 2;
+                waveResults[ri] = retryResult;
+              }
+            }
+            results.push(...waveResults);
+            for (const r of waveResults) {
+              if (r.exitCode === 0) {
+                pipelineState.completedActions.push(r.actionId);
+              } else {
+                pipelineState.failedActions.push(r.actionId);
+              }
+            }
+            broadcast("pipeline-wave-complete", {
+              wave: wi + 1,
+              totalWaves: waves.length,
+              completed: waveResults.filter((r) => r.exitCode === 0).map((r) => r.actionId),
+              failed: waveResults.filter((r) => r.exitCode !== 0).map((r) => r.actionId)
+            });
+          }
+          const finalState = { ...pipelineState };
+          const finalResults = [...results];
+          isRunning = false;
+          if (stopRequested) {
+            for (const actionId of activeProcesses.keys()) {
+              finalState.stoppedActions.push(actionId);
+            }
+          }
+          const reportPath = generateExecutionReport(cwd, finalResults, pipelineStartTime, stopRequested, startSha);
+          if (reportPath) {
+            broadcast("pipeline-report", { path: ".planning/execution-report.md" });
+          }
+          broadcast("pipeline-complete", {
+            completed: finalState.completedActions,
+            failed: finalState.failedActions,
+            stopped: stopRequested ? finalState.stoppedActions : [],
+            results: finalResults,
+            reportPath: reportPath ? ".planning/execution-report.md" : null
+          });
+          stopRequested = false;
+          pipelineState = null;
+        })().catch((_err) => {
+          isRunning = false;
+          pipelineState = null;
+          broadcast("pipeline-complete", {
+            completed: [],
+            failed: [],
+            stopped: [],
+            error: String(_err),
+            results
+          });
+        });
+        return { ok: true, waves: waves.length };
+      }
+      function stop() {
+        if (!isRunning) {
+          return { error: "Pipeline is not running" };
+        }
+        stopRequested = true;
+        for (const [, proc] of activeProcesses) {
+          try {
+            proc.kill("SIGTERM");
+          } catch (_) {
+          }
+        }
+        return { ok: true };
+      }
+      function running() {
+        return isRunning;
+      }
+      function status() {
+        if (!pipelineState) return null;
+        return {
+          running: isRunning,
+          currentWave: pipelineState.currentWave,
+          totalWaves: pipelineState.totalWaves,
+          activeActions: [...activeProcesses.keys()],
+          completedActions: pipelineState.completedActions,
+          failedActions: pipelineState.failedActions,
+          results
+        };
+      }
+      return { start, stop, running, status };
+    }
+    module2.exports = { createPipelineRunner };
   }
 });
 
@@ -5175,6 +5548,7 @@ var require_server = __commonJS({
     var { computeWorkflowState } = require_workflow_state();
     var { createPlayRunner } = require_play();
     var { computeReadiness } = require_readiness();
+    var { createPipelineRunner } = require_pipeline_runner();
     var MIME_TYPES = {
       ".html": "text/html; charset=utf-8",
       ".js": "application/javascript; charset=utf-8",
@@ -5351,6 +5725,55 @@ var require_server = __commonJS({
         const runningIds = new Set(pm.running());
         const result = computeWorkflowState(graph, runningIds);
         sendJson(res, 200, result);
+      } catch (err) {
+        sendJson(res, 500, { error: String(err) });
+      }
+    }
+    async function handleSaveManifest(req, res, cwd) {
+      try {
+        const body = await readJsonBody(req);
+        if (!body || !Array.isArray(body.waves) || body.waves.length === 0) {
+          sendJson(res, 400, { error: "waves must be a non-empty array" });
+          return;
+        }
+        for (let i = 0; i < body.waves.length; i++) {
+          const wave = body.waves[i];
+          if (!Array.isArray(wave.milestones)) {
+            sendJson(res, 400, { error: `waves[${i}].milestones must be an array` });
+            return;
+          }
+          for (let j = 0; j < wave.milestones.length; j++) {
+            const m = wave.milestones[j];
+            if (typeof m.id !== "string" || !m.id) {
+              sendJson(res, 400, { error: `waves[${i}].milestones[${j}].id must be a non-empty string` });
+              return;
+            }
+            if (!Array.isArray(m.actions)) {
+              sendJson(res, 400, { error: `waves[${i}].milestones[${j}].actions must be an array` });
+              return;
+            }
+          }
+        }
+        const manifest = {
+          waves: body.waves,
+          confirmedAt: (/* @__PURE__ */ new Date()).toISOString()
+        };
+        const manifestPath = path.join(cwd, ".planning", "execution-manifest.json");
+        fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), "utf-8");
+        sendJson(res, 200, { ok: true });
+      } catch (err) {
+        sendJson(res, 400, { error: String(err) });
+      }
+    }
+    function handleGetManifest(res, cwd) {
+      try {
+        const manifestPath = path.join(cwd, ".planning", "execution-manifest.json");
+        if (!fs.existsSync(manifestPath)) {
+          sendJson(res, 404, { error: "No execution manifest found" });
+          return;
+        }
+        const data = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+        sendJson(res, 200, data);
       } catch (err) {
         sendJson(res, 500, { error: String(err) });
       }
@@ -6246,6 +6669,10 @@ var require_server = __commonJS({
           handleReviseStop(res, cwd);
           return;
         }
+        if (urlPath === "/api/execution-manifest") {
+          handleSaveManifest(req, res, cwd);
+          return;
+        }
         sendJson(res, 404, { error: `Route not found: ${urlPath}` });
         return;
       }
@@ -6315,6 +6742,10 @@ var require_server = __commonJS({
       }
       if (urlPath === "/api/readiness") {
         handleReadiness(res, cwd);
+        return;
+      }
+      if (urlPath === "/api/execution-manifest") {
+        handleGetManifest(res, cwd);
         return;
       }
       if (urlPath === "/api/files") {

@@ -11,7 +11,7 @@
  * Zero runtime dependencies. CJS module.
  */
 
-const { spawn } = require('node:child_process');
+const { spawn, execSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const { findMilestoneFolder } = require('../artifacts/milestone-folders');
@@ -33,9 +33,12 @@ function appendLog(logPath, line) {
  *   actionId: string,
  *   milestoneId: string,
  *   exitCode: number,
+ *   stderrOutput: string,
  *   durationMs: number,
  *   startedAt: string,
- *   completedAt: string
+ *   completedAt: string,
+ *   retried: boolean,
+ *   attempts: number
  * }} ActionResult
  */
 
@@ -51,6 +54,82 @@ function appendLog(logPath, line) {
  *   status: () => object | null
  * }}
  */
+/**
+ * Detect transient failures that warrant automatic retry.
+ * @param {number} exitCode
+ * @param {string} stderrOutput
+ * @returns {boolean}
+ */
+function isTransientFailure(exitCode, stderrOutput) {
+  // Timeout (124) or OOM kill (137)
+  if (exitCode === 124 || exitCode === 137 || exitCode === -1) return true;
+  const patterns = /ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOMEM|SIGKILL|SIGTERM|socket hang up|network timeout/i;
+  return patterns.test(stderrOutput);
+}
+
+/**
+ * Generate a markdown execution report.
+ * @param {string} cwd
+ * @param {ActionResult[]} results
+ * @param {number} pipelineStartTime
+ * @param {boolean} pipelineStopped
+ * @param {string} startSha
+ */
+function generateExecutionReport(cwd, results, pipelineStartTime, pipelineStopped, startSha) {
+  try {
+    let endSha = 'unknown';
+    try { endSha = execSync('git rev-parse --short HEAD', { cwd }).toString().trim(); } catch (_) {}
+
+    const endTime = Date.now();
+    const totalMs = endTime - pipelineStartTime;
+    const totalMin = Math.floor(totalMs / 60000);
+    const totalSec = Math.floor((totalMs % 60000) / 1000);
+
+    const passed = results.filter(r => r.exitCode === 0).length;
+    const failed = results.filter(r => r.exitCode !== 0).length;
+    const overallStatus = pipelineStopped ? 'STOPPED' : failed > 0 ? 'FAILED' : 'SUCCESS';
+
+    const startedAt = new Date(pipelineStartTime).toISOString();
+    const completedAt = new Date(endTime).toISOString();
+
+    let rows = '';
+    for (let i = 0; i < results.length; i++) {
+      const r = results[i];
+      const status = r.exitCode === 0 ? 'PASS' : 'FAIL';
+      const durMin = Math.floor(r.durationMs / 60000);
+      const durSec = Math.floor((r.durationMs % 60000) / 1000);
+      const retried = r.retried ? `Yes (${r.attempts})` : 'No';
+      rows += `| ${i + 1} | ${r.actionId} | ${r.milestoneId} | ${status} | ${durMin}m ${durSec}s | ${retried} |\n`;
+    }
+
+    const report = `# Execution Report
+
+**Status:** ${overallStatus}
+**Started:** ${startedAt}
+**Completed:** ${completedAt}
+**Duration:** ${totalMin}m ${totalSec}s
+**Commits:** ${startSha}..${endSha}
+
+## Results
+
+| # | Action | Milestone | Status | Duration | Retried |
+|---|--------|-----------|--------|----------|---------|
+${rows}
+## Summary
+
+- **Passed:** ${passed}
+- **Failed:** ${failed}
+- **Total:** ${results.length}
+`;
+
+    const reportPath = path.join(cwd, '.planning', 'execution-report.md');
+    fs.writeFileSync(reportPath, report, 'utf8');
+    return reportPath;
+  } catch (_) {
+    return null;
+  }
+}
+
 function createPipelineRunner(sseClients, cwd) {
   /** @type {boolean} */
   let isRunning = false;
@@ -141,9 +220,10 @@ function createPipelineRunner(sseClients, cwd) {
       const logPath = milestoneFolder ? path.join(milestoneFolder, 'execution.log') : undefined;
       appendLog(logPath, `\n=== START ${actionId} (pipeline) @ ${startedAt} ===`);
 
-      // Line-buffered output
+      // Line-buffered output + full stderr accumulator for retry detection
       let stdoutBuf = '';
       let stderrBuf = '';
+      let stderrFull = '';
 
       if (proc.stdout) {
         proc.stdout.on('data', (chunk) => {
@@ -158,7 +238,9 @@ function createPipelineRunner(sseClients, cwd) {
       }
       if (proc.stderr) {
         proc.stderr.on('data', (chunk) => {
-          stderrBuf += chunk.toString();
+          const text = chunk.toString();
+          stderrFull += text;
+          stderrBuf += text;
           const lines = stderrBuf.split('\n');
           stderrBuf = lines.pop() || '';
           for (const line of lines) {
@@ -175,7 +257,7 @@ function createPipelineRunner(sseClients, cwd) {
         appendLog(logPath, `=== END ${actionId} (pipeline) @ ${completedAt} exit=${code} duration=${durationMs}ms ===\n`);
         activeProcesses.delete(actionId);
         broadcast('action-complete', { actionId, exitCode: code, durationMs });
-        resolve({ actionId, milestoneId, exitCode: code, durationMs, startedAt, completedAt });
+        resolve({ actionId, milestoneId, exitCode: code, stderrOutput: stderrFull, durationMs, startedAt, completedAt, retried: false, attempts: 1 });
       });
 
       proc.on('error', (_err) => {
@@ -184,7 +266,7 @@ function createPipelineRunner(sseClients, cwd) {
         appendLog(logPath, `=== ERROR ${actionId} (pipeline) @ ${completedAt} ===\n`);
         activeProcesses.delete(actionId);
         broadcast('action-complete', { actionId, exitCode: -1, durationMs });
-        resolve({ actionId, milestoneId, exitCode: -1, durationMs, startedAt, completedAt });
+        resolve({ actionId, milestoneId, exitCode: -1, stderrOutput: stderrFull, durationMs, startedAt, completedAt, retried: false, attempts: 1 });
       });
     });
   }
@@ -235,6 +317,10 @@ function createPipelineRunner(sseClients, cwd) {
 
     // Run waves sequentially (async, non-blocking)
     (async () => {
+      const pipelineStartTime = Date.now();
+      let startSha = 'unknown';
+      try { startSha = execSync('git rev-parse --short HEAD', { cwd }).toString().trim(); } catch (_) {}
+
       for (let wi = 0; wi < waves.length; wi++) {
         if (stopRequested) break;
 
@@ -258,6 +344,25 @@ function createPipelineRunner(sseClients, cwd) {
         }
 
         const waveResults = await Promise.all(promises);
+
+        // Retry transient failures once
+        for (let ri = 0; ri < waveResults.length; ri++) {
+          const r = waveResults[ri];
+          if (r.exitCode !== 0 && !stopRequested && isTransientFailure(r.exitCode, r.stderrOutput)) {
+            broadcast('action-retry', { actionId: r.actionId, milestoneId: r.milestoneId, attempt: 2, reason: 'transient failure detected' });
+            appendLog(
+              findMilestoneFolder(path.join(cwd, '.planning'), r.milestoneId)
+                ? path.join(findMilestoneFolder(path.join(cwd, '.planning'), r.milestoneId), 'execution.log')
+                : undefined,
+              `\n=== RETRY ${r.actionId} (attempt 2) ===`
+            );
+            const retryResult = await executeAction(r.actionId, r.milestoneId);
+            retryResult.retried = true;
+            retryResult.attempts = 2;
+            waveResults[ri] = retryResult;
+          }
+        }
+
         results.push(...waveResults);
 
         for (const r of waveResults) {
@@ -287,11 +392,17 @@ function createPipelineRunner(sseClients, cwd) {
         }
       }
 
+      const reportPath = generateExecutionReport(cwd, finalResults, pipelineStartTime, stopRequested, startSha);
+      if (reportPath) {
+        broadcast('pipeline-report', { path: '.planning/execution-report.md' });
+      }
+
       broadcast('pipeline-complete', {
         completed: finalState.completedActions,
         failed: finalState.failedActions,
         stopped: stopRequested ? finalState.stoppedActions : [],
         results: finalResults,
+        reportPath: reportPath ? '.planning/execution-report.md' : null,
       });
 
       stopRequested = false;
