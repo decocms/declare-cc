@@ -34,3 +34,18 @@
 **Statement:** The Declare dashboard runs as a local daemon that registers with the mesh daemon. The mesh UI discovers active declare projects and renders the dashboard inline as a declare plugin — giving cross-project visibility and control from a single surface without leaving mesh.
 **Status:** PENDING
 **Milestones:** M-36, M-37
+
+## D-13: Plan Verification Before Execution
+**Statement:** Every plan artifact — declaration, milestone, action EXEC-PLAN — passes through explicit human review with inline annotation before becoming executable. The UI supports iterative review cycles: generate plan → annotate with corrections → send back for revision → repeat until approved. Nothing runs until the human says the plan is tight. The review state (draft/in-review/revision-needed/approved) is tracked per node and gates execution.
+**Status:** PENDING
+**Milestones:** M-43, M-44, M-45, M-46
+
+## D-14: Planning and Execution Are Distinct UX Modes
+**Statement:** Planning and execution are separate UX modes with an explicit transition. Planning mode uses the column browser as its primary view — you walk D → M → A reviewing and approving each artifact, with the review/annotation panel on the right. When all plans in scope are approved, you transition to Execution mode — a dedicated full-screen view showing the ordered execution pipeline, a single "Go" button, and large progress display. You cannot execute from planning mode; you cannot edit plans from execution mode.
+**Status:** PENDING
+**Milestones:** M-47, M-48, M-49
+
+## D-15: Autonomous Execution to Completion
+**Statement:** Once the plan is verified and the execution order confirmed, a single "Go" runs the entire pipeline to completion without human intervention — because the plan was tight and reviewed. The execution view shows wave progress, live output, and a CI-pipeline-style display. If a critical failure occurs, execution pauses and offers skip-and-continue or stop — but the default path is uninterrupted completion.
+**Status:** PENDING
+**Milestones:** M-50, M-51, M-52
