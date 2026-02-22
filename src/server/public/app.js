@@ -44,7 +44,7 @@ let kbColumn = 0;
 /** @type {number} Column browser keyboard focus item index within the focused column */
 let kbIndex = 0;
 
-/** @type {'dag'|'columns'} Current view mode, persisted in localStorage */
+/** @type {'dag'|'columns'|'execution'} Current view mode, persisted in localStorage */
 let viewMode = localStorage.getItem('declare-view-mode') || 'columns';
 
 /** @type {boolean} Whether the declaration input form is visible */
@@ -128,6 +128,7 @@ const $colActList    = document.getElementById('col-act-list');
 const $viewToggle    = document.getElementById('view-toggle');
 const $viewToggleLabel = document.getElementById('view-toggle-label');
 const $canvasWrap    = document.getElementById('canvas-wrap');
+const $execView      = document.getElementById('execution-view');
 
 const $declFormContainer = document.getElementById('decl-form-container');
 const $colDeclAddBtn     = document.getElementById('col-decl-add-btn');
@@ -3368,6 +3369,9 @@ function handleActionComplete(e) {
     updateRunningIndicators();
     currentOutputActionId = null;
 
+    // Refresh execution view if active
+    if (viewMode === 'execution') renderExecutionView();
+
     // Refresh graph and re-render the panel
     loadData();
     loadExecPlan(actionId);
@@ -3493,6 +3497,8 @@ function handlePlayStart(e) {
       failedActions: [],
     };
     updatePlayUI();
+    // Auto-switch to execution mode when play starts
+    switchView('execution');
   } catch (_) {}
 }
 
@@ -3513,6 +3519,7 @@ function handlePlayWaveStart(e) {
       }
     }
     updatePlayUI();
+    if (viewMode === 'execution') renderExecutionView();
   } catch (_) {}
 }
 
@@ -3533,6 +3540,7 @@ function handlePlayWaveComplete(e) {
       }
     }
     updatePlayUI();
+    if (viewMode === 'execution') renderExecutionView();
     loadData(); // refresh graph after each wave
   } catch (_) {}
 }
@@ -4349,20 +4357,137 @@ function drawEdgesForSubtree(subtree) {
   $edgesSvg.appendChild(fragment);
 }
 
-// ─── View switching (DAG / Column browser) ───────────────────────────────────
+// ─── Execution pipeline view ──────────────────────────────────────────────────
 
 /**
- * Switch between DAG and column browser views.
- * @param {'dag'|'columns'} mode
+ * Render the execution pipeline view — milestones grouped by dependency waves
+ * with nested actions showing status indicators in a CI-pipeline layout.
+ */
+function renderExecutionView() {
+  const $pipeline = document.getElementById('exec-pipeline');
+  if (!$pipeline || !graphData) return;
+
+  const milestones = graphData.milestones || [];
+  const actions = graphData.actions || [];
+
+  // Compute wave ordering using Kahn's algorithm (mirrors play.js logic)
+  // Include ALL milestones (not just agent/non-DONE) for full context
+  const candidateIds = new Set(milestones.map(m => m.id.toUpperCase()));
+
+  /** @type {Map<string, string[]>} */
+  const deps = new Map();
+  for (const m of milestones) {
+    const mId = m.id.toUpperCase();
+    const mDeps = (m.dependsOn || [])
+      .map(d => d.toUpperCase())
+      .filter(d => candidateIds.has(d));
+    deps.set(mId, mDeps);
+  }
+
+  /** @type {Array<Array<{id:string, status:string, title:string, dependsOn?:string[], classification?:string, hasPlan?:boolean}>>} */
+  const waves = [];
+  const placed = new Set();
+
+  while (placed.size < milestones.length) {
+    const wave = [];
+    for (const m of milestones) {
+      const mId = m.id.toUpperCase();
+      if (placed.has(mId)) continue;
+      const mDeps = deps.get(mId) || [];
+      const allDepsMet = mDeps.every(d => placed.has(d) || !candidateIds.has(d));
+      if (allDepsMet) {
+        wave.push(m);
+      }
+    }
+    if (wave.length === 0) {
+      // Circular dependency fallback — add remaining
+      for (const m of milestones) {
+        if (!placed.has(m.id.toUpperCase())) wave.push(m);
+      }
+    }
+    for (const m of wave) placed.add(m.id.toUpperCase());
+    waves.push(wave);
+  }
+
+  // Build HTML
+  let html = '';
+  waves.forEach((wave, waveIdx) => {
+    html += `<div class="exec-wave-label">Wave ${waveIdx + 1}</div>`;
+
+    for (const m of wave) {
+      const mStatus = deriveMilestoneStatus(m, actions);
+      const myActions = actions.filter(a => (a.causes || []).includes(m.id));
+
+      html += `<div class="exec-milestone-group" data-milestone-id="${escHtml(m.id)}">`;
+      html += `<div class="exec-milestone-header">`;
+      html += `<span>${escHtml(m.id)}: ${escHtml(m.title || '')}</span>`;
+      html += `<span class="exec-milestone-status">${escHtml(mStatus.displayStatus)} (${mStatus.doneCount}/${mStatus.totalCount})</span>`;
+      html += `</div>`;
+
+      if (myActions.length > 0) {
+        html += `<div class="exec-action-list">`;
+        for (const a of myActions) {
+          const aStatus = (a.status || '').toUpperCase();
+          const isRunning = runningActions.has(a.id);
+          let dotClass = 'queued';
+          let labelText = aStatus || 'QUEUED';
+
+          if (isRunning) {
+            dotClass = 'running';
+            labelText = 'RUNNING';
+          } else if (COMPLETED.has(aStatus)) {
+            dotClass = 'done';
+          } else if (aStatus === 'BROKEN' || aStatus === 'FAILED') {
+            dotClass = 'failed';
+          }
+
+          const isActive = isRunning ? ' active' : '';
+          html += `<div class="exec-action-item${isActive}" data-action-id="${escHtml(a.id)}">`;
+          html += `<span class="exec-status-dot ${dotClass}"></span>`;
+          html += `<span class="exec-action-title">${escHtml(a.id)}: ${escHtml(a.title || '')}</span>`;
+          html += `<span class="exec-action-status-label">${escHtml(labelText)}</span>`;
+          html += `</div>`;
+        }
+        html += `</div>`;
+      }
+
+      html += `</div>`;
+    }
+  });
+
+  if (waves.length === 0) {
+    html = '<div style="color:var(--text-dim);padding:20px;font-size:13px;">No milestones to display.</div>';
+  }
+
+  $pipeline.innerHTML = html;
+
+  // Wire click handlers for action items
+  $pipeline.querySelectorAll('.exec-action-item').forEach(el => {
+    el.addEventListener('click', () => {
+      const actionId = el.getAttribute('data-action-id');
+      if (actionId) selectNode(actionId, 'action');
+    });
+  });
+}
+
+// ─── View switching (DAG / Column browser / Execution) ────────────────────────
+
+/**
+ * Switch between DAG, column browser, and execution views.
+ * @param {'dag'|'columns'|'execution'} mode
  */
 function switchView(mode) {
   viewMode = mode;
   localStorage.setItem('declare-view-mode', mode);
 
+  // Hide all views first
+  $canvasWrap.style.display = 'none';
+  $colBrowser.classList.remove('active');
+  if ($readinessBanner) $readinessBanner.classList.remove('active');
+  if ($execView) $execView.classList.remove('active');
+
   if (mode === 'dag') {
     $canvasWrap.style.display = '';
-    $colBrowser.classList.remove('active');
-    if ($readinessBanner) $readinessBanner.classList.remove('active');
     clearColumnBrowserKbFocus();
     if ($viewToggle) {
       $viewToggle.classList.remove('active');
@@ -4370,10 +4495,9 @@ function switchView(mode) {
     }
     // Redraw edges since layout changed
     requestAnimationFrame(() => drawEdges());
-  } else {
+  } else if (mode === 'columns') {
     // Exit focus mode before switching to columns
     if (focusNodeId) exitFocusMode();
-    $canvasWrap.style.display = 'none';
     $colBrowser.classList.add('active');
     if ($viewToggle) {
       $viewToggle.classList.add('active');
@@ -4382,6 +4506,14 @@ function switchView(mode) {
     // Refresh column browser data
     renderColumnBrowser();
     initColumnBrowserKbFocus();
+  } else if (mode === 'execution') {
+    if (focusNodeId) exitFocusMode();
+    if ($execView) $execView.classList.add('active');
+    if ($viewToggle) {
+      $viewToggle.classList.add('active');
+      $viewToggleLabel.textContent = 'Columns';
+    }
+    renderExecutionView();
   }
 }
 
@@ -4442,10 +4574,16 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// View toggle button
+// View toggle button — cycles: columns -> dag -> execution -> columns
 if ($viewToggle) {
   $viewToggle.addEventListener('click', () => {
-    switchView(viewMode === 'dag' ? 'columns' : 'dag');
+    if (viewMode === 'columns') {
+      switchView('dag');
+    } else if (viewMode === 'dag') {
+      switchView('execution');
+    } else {
+      switchView('columns');
+    }
   });
 }
 
