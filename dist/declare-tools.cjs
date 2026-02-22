@@ -4980,10 +4980,11 @@ var require_server = __commonJS({
     var { createActionDerivationRunner } = require_action_derivation_runner();
     var { runAddMilestonesBatch: runAddMilestonesBatch2 } = require_add_milestones_batch();
     var { buildDagFromDisk } = require_build_dag();
-    var { computeWorkabilityPath } = require_engine();
+    var { computeWorkabilityPath, VALID_REVIEW_STATES } = require_engine();
     var { findMilestoneFolder } = require_milestone_folders();
     var { parseFutureFile, writeFutureFile } = require_future();
     var { parsePlanFile, writePlanFile } = require_plan();
+    var { parseMilestonesFile, writeMilestonesFile } = require_milestones();
     var { computeWorkflowState } = require_workflow_state();
     var { createPlayRunner } = require_play();
     var { computeReadiness } = require_readiness();
@@ -5407,6 +5408,110 @@ var require_server = __commonJS({
         sendJson(res, 400, { error: String(err) });
       }
     }
+    async function handleUpdateReviewState(req, res, cwd, nodeId) {
+      try {
+        const body = await readJsonBody(req);
+        const reviewState = body.reviewState;
+        if (!reviewState || !VALID_REVIEW_STATES.has(reviewState)) {
+          sendJson(res, 400, { error: `Invalid reviewState. Must be one of: ${[...VALID_REVIEW_STATES].join(", ")}` });
+          return;
+        }
+        const id = nodeId.toUpperCase();
+        const prefix = id.split("-")[0];
+        const planningDir = path.join(cwd, ".planning");
+        if (prefix === "D") {
+          const futurePath = path.join(planningDir, "FUTURE.md");
+          if (!fs.existsSync(futurePath)) {
+            sendJson(res, 404, { error: "FUTURE.md not found" });
+            return;
+          }
+          const content = fs.readFileSync(futurePath, "utf-8");
+          const declarations = parseFutureFile(content);
+          const decl = declarations.find((d) => d.id === id);
+          if (!decl) {
+            sendJson(res, 404, { error: `Declaration ${id} not found` });
+            return;
+          }
+          decl.reviewState = reviewState;
+          const headerMatch = content.match(/^# Future: (.+)/m);
+          const projectName = headerMatch ? headerMatch[1].trim() : "Project";
+          fs.writeFileSync(futurePath, writeFutureFile(declarations, projectName), "utf-8");
+        } else if (prefix === "M") {
+          const milestonesPath = path.join(planningDir, "MILESTONES.md");
+          if (!fs.existsSync(milestonesPath)) {
+            sendJson(res, 404, { error: "MILESTONES.md not found" });
+            return;
+          }
+          const content = fs.readFileSync(milestonesPath, "utf-8");
+          const { milestones } = parseMilestonesFile(content);
+          const mile = milestones.find((m) => m.id === id);
+          if (!mile) {
+            sendJson(res, 404, { error: `Milestone ${id} not found` });
+            return;
+          }
+          mile.reviewState = reviewState;
+          const nameMatch = content.match(/^# Milestones:\s*(.+)/m);
+          const pName = nameMatch ? nameMatch[1].trim() : "Project";
+          fs.writeFileSync(milestonesPath, writeMilestonesFile(milestones, pName), "utf-8");
+        } else if (prefix === "A") {
+          const milestonesDir = path.join(planningDir, "milestones");
+          if (!fs.existsSync(milestonesDir)) {
+            sendJson(res, 404, { error: "No milestones directory" });
+            return;
+          }
+          let found = false;
+          const entries = fs.readdirSync(milestonesDir, { withFileTypes: true });
+          for (const entry of entries) {
+            if (!entry.isDirectory() || entry.name.startsWith("_")) continue;
+            const planPath = path.join(milestonesDir, entry.name, "PLAN.md");
+            if (!fs.existsSync(planPath)) continue;
+            const content = fs.readFileSync(planPath, "utf-8");
+            const parsed = parsePlanFile(content);
+            const action = parsed.actions.find((a) => a.id === id);
+            if (!action) continue;
+            const lines = content.split("\n");
+            let inSection = false;
+            let patched = false;
+            for (let i = 0; i < lines.length; i++) {
+              if (lines[i].startsWith("### ")) {
+                inSection = lines[i].startsWith(`### ${id}:`);
+              }
+              if (inSection && !patched && /^\*\*Review:\*\*/i.test(lines[i].trim())) {
+                lines[i] = `**Review:** ${reviewState}`;
+                patched = true;
+                break;
+              }
+              if (inSection && !patched && /^\*\*Status:\*\*/i.test(lines[i].trim())) {
+                if (i + 1 < lines.length && /^\*\*Review:\*\*/i.test(lines[i + 1].trim())) {
+                  lines[i + 1] = `**Review:** ${reviewState}`;
+                  patched = true;
+                } else {
+                  lines.splice(i + 1, 0, `**Review:** ${reviewState}`);
+                  patched = true;
+                }
+                break;
+              }
+            }
+            if (patched) {
+              fs.writeFileSync(planPath, lines.join("\n"), "utf-8");
+              found = true;
+            }
+            break;
+          }
+          if (!found) {
+            sendJson(res, 404, { error: `Action ${id} not found in any PLAN.md` });
+            return;
+          }
+        } else {
+          sendJson(res, 400, { error: `Unknown node type prefix: ${prefix}` });
+          return;
+        }
+        sendJson(res, 200, { ok: true, id, reviewState });
+        broadcastChange();
+      } catch (err) {
+        sendJson(res, 500, { error: String(err) });
+      }
+    }
     var sseClients = /* @__PURE__ */ new Set();
     var processManager = null;
     function getProcessManager(cwd) {
@@ -5529,6 +5634,11 @@ var require_server = __commonJS({
           sendJson(res, 200, { id: declId, ref: decl.ref || null });
           broadcastChange();
         }).catch((err) => sendJson(res, 400, { error: String(err) }));
+        return;
+      }
+      const reviewStateMatch = method === "PUT" && urlPath.match(/^\/api\/node\/([^/]+)\/review-state$/);
+      if (reviewStateMatch) {
+        handleUpdateReviewState(req, res, cwd, reviewStateMatch[1]);
         return;
       }
       const declPutMatch = method === "PUT" && urlPath.match(/^\/api\/declarations\/([^/]+)$/);
