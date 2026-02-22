@@ -4598,10 +4598,26 @@ function renderExecutionView() {
 // ─── View switching (DAG / Column browser / Execution) ────────────────────────
 
 /**
+ * Check whether all non-DONE actions are approved, allowing execution mode.
+ * Returns true when there are no unapproved actions (or no actions at all).
+ * @returns {boolean}
+ */
+function canEnterExecution() {
+  const actions = (graphData && graphData.actions) || [];
+  const nonDone = actions.filter(a => !COMPLETED.has((a.status || '').toUpperCase()));
+  if (nonDone.length === 0) return true;
+  return nonDone.every(a => a.reviewState === 'approved');
+}
+
+/**
  * Switch between DAG, column browser, and execution views.
  * @param {'dag'|'columns'|'execution'} mode
  */
 function switchView(mode) {
+  if (mode === 'execution' && !canEnterExecution()) {
+    console.warn('Cannot enter execution mode: unapproved actions remain');
+    return;
+  }
   viewMode = mode;
   localStorage.setItem('declare-view-mode', mode);
 
