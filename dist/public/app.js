@@ -1458,6 +1458,50 @@ async function renderWorkabilityPath(nodeId, nodeType) {
 }
 
 /**
+ * Convert an ISO date string to a human-readable relative time like "2d ago".
+ * @param {string} dateStr
+ * @returns {string}
+ */
+function relativeDate(dateStr) {
+  try {
+    const diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
+    if (diff < 60) return 'just now';
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    if (diff < 2592000) return `${Math.floor(diff / 86400)}d ago`;
+    if (diff < 31536000) return `${Math.floor(diff / 2592000)}mo ago`;
+    return `${Math.floor(diff / 31536000)}y ago`;
+  } catch (_) {
+    return '';
+  }
+}
+
+/**
+ * Extract file paths from SUMMARY.md content.
+ * Looks for "## Files" or "## Key Files" style sections and extracts backtick-wrapped paths.
+ * @param {string} summaryContent
+ * @returns {string[]}
+ */
+function extractProducedFiles(summaryContent) {
+  if (!summaryContent) return [];
+  const files = [];
+  const lines = summaryContent.split('\n');
+  let inSection = false;
+  for (const line of lines) {
+    if (/^##\s+(Files|Key.?Files|Files\s+(Created|Modified|Produced))/i.test(line)) {
+      inSection = true;
+      continue;
+    }
+    if (inSection && /^##\s/.test(line)) break;
+    if (inSection) {
+      const m = line.match(/`([^`]+\.[a-zA-Z]+)`/);
+      if (m) files.push(m[1]);
+    }
+  }
+  return files;
+}
+
+/**
  * Fetch /api/action/:id and render the exec-plan into #exec-plan-detail.
  * @param {string} actionId
  */
@@ -1500,6 +1544,26 @@ async function loadExecPlan(actionId) {
       </div>`;
     }
 
+    // Commits section
+    if (data.commits && data.commits.length > 0) {
+      const commitRows = data.commits.map(c => {
+        const rd = c.date ? relativeDate(c.date) : '';
+        return `<div style="display:flex;align-items:baseline;gap:8px;font-size:11px">
+          <a href="#" class="commit-link" data-sha="${escHtml(c.sha)}" data-short="${escHtml(c.shortSha)}"
+             style="font-family:monospace;font-size:11px;font-weight:700;color:#60a5fa;text-decoration:none;letter-spacing:0.03em"
+             title="Click to copy full SHA">${escHtml(c.shortSha)}</a>
+          <span style="color:var(--text-dim);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(c.message)}</span>
+          <span style="color:var(--text-dim);opacity:0.5;font-size:10px;white-space:nowrap">${rd}</span>
+        </div>`;
+      }).join('');
+      html += `<div style="margin-bottom:14px">
+        <div class="detail-label">Commits (${data.commits.length})</div>
+        <div style="margin-top:6px;display:flex;flex-direction:column;gap:4px">
+          ${commitRows}
+        </div>
+      </div>`;
+    }
+
     // Execute / Stop button
     const actionItem = graphData ? graphData.actions.find(a => a.id === actionId) : null;
     const actionStatus = actionItem ? (actionItem.status || 'PENDING') : 'PENDING';
@@ -1520,6 +1584,17 @@ async function loadExecPlan(actionId) {
         <div class="detail-label">Files</div>
         <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:5px">
           ${ep.filesModified.map(f => `<span style="background:var(--act-bg);border:1px solid var(--act-border);color:var(--act-color);border-radius:4px;padding:2px 7px;font-size:10px;font-family:monospace">${escHtml(f)}</span>`).join('')}
+        </div>
+      </div>`;
+    }
+
+    // Produced files (from SUMMARY.md)
+    const producedFiles = extractProducedFiles(data.summaryContent);
+    if (producedFiles.length) {
+      html += `<div style="margin-bottom:14px">
+        <div class="detail-label">Files produced</div>
+        <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:5px">
+          ${producedFiles.map(f => `<span style="background:var(--done-bg);border:1px solid var(--done-border);color:var(--done-color);border-radius:4px;padding:2px 7px;font-size:10px;font-family:monospace">${escHtml(f)}</span>`).join('')}
         </div>
       </div>`;
     }
@@ -1603,6 +1678,19 @@ async function loadExecPlan(actionId) {
     if (stopBtn) {
       stopBtn.addEventListener('click', () => stopAction(actionId));
     }
+
+    // Wire commit SHA copy-to-clipboard
+    container.querySelectorAll('.commit-link').forEach(link => {
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        const sha = link.dataset.sha;
+        const shortSha = link.dataset.short;
+        navigator.clipboard.writeText(sha).then(() => {
+          link.textContent = 'Copied!';
+          setTimeout(() => { link.textContent = shortSha; }, 1500);
+        });
+      });
+    });
 
     // If action is already running, show log and subscribe immediately
     if (isRunning) {
