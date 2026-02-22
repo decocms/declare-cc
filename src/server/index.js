@@ -49,6 +49,7 @@ const { parseMilestonesFile, writeMilestonesFile } = require('../artifacts/miles
 const { computeWorkflowState } = require('../commands/workflow-state');
 const { createPlayRunner } = require('../commands/play');
 const { computeReadiness } = require('../commands/readiness');
+const { createPipelineRunner } = require('./pipeline-runner');
 
 /** @type {Record<string, string>} */
 const MIME_TYPES = {
@@ -1120,6 +1121,19 @@ function getPlayRunner(cwd) {
   return playRunner;
 }
 
+/** @type {ReturnType<typeof createPipelineRunner> | null} */
+let pipelineRunnerInstance = null;
+
+/**
+ * Get or create the pipeline runner singleton.
+ * @param {string} cwd
+ * @returns {ReturnType<typeof createPipelineRunner>}
+ */
+function getPipelineRunner(cwd) {
+  if (!pipelineRunnerInstance) pipelineRunnerInstance = createPipelineRunner(sseClients, cwd);
+  return pipelineRunnerInstance;
+}
+
 /** @type {ReturnType<typeof createRevisionRunner> | null} */
 let revisionRunner = null;
 
@@ -1666,6 +1680,20 @@ function route(req, res, cwd) {
     if (urlPath === '/api/play/stop') {
       const pr = getPlayRunner(cwd);
       const result = pr.stop();
+      // Also stop pipeline runner if it's running
+      const plr = getPipelineRunner(cwd);
+      if (plr.running()) plr.stop();
+      if (result.error && !plr.running()) {
+        sendJson(res, 400, { error: result.error });
+      } else {
+        sendJson(res, 200, { ok: true });
+      }
+      return;
+    }
+
+    if (urlPath === '/api/pipeline/skip-action') {
+      const plr = getPipelineRunner(cwd);
+      const result = plr.skip();
       if (result.error) {
         sendJson(res, 400, { error: result.error });
       } else {
@@ -1746,7 +1774,8 @@ function route(req, res, cwd) {
 
   if (urlPath === '/api/play/status') {
     const pr = getPlayRunner(cwd);
-    sendJson(res, 200, { running: pr.running(), status: pr.status() });
+    const plr = getPipelineRunner(cwd);
+    sendJson(res, 200, { running: pr.running() || plr.running(), paused: plr.paused(), status: pr.status() || plr.status() });
     return;
   }
 

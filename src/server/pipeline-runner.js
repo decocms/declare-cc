@@ -16,6 +16,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { findMilestoneFolder } = require('../artifacts/milestone-folders');
 
+const STATE_FILE = '.planning/pipeline-state.json';
+const OUTPUT_BUFFER_MAX = 50000;
+
 /**
  * Append a line to the execution log. Never throws.
  * @param {string | undefined} logPath
@@ -50,7 +53,9 @@ function appendLog(logPath, line) {
  * @returns {{
  *   start: () => { ok?: boolean, error?: string, waves?: number },
  *   stop: () => { ok?: boolean, error?: string },
+ *   skip: () => { ok?: boolean, error?: string },
  *   running: () => boolean,
+ *   paused: () => { actionId: string, exitCode: number, waveIndex: number } | null,
  *   status: () => object | null
  * }}
  */
@@ -139,8 +144,42 @@ function createPipelineRunner(sseClients, cwd) {
   const activeProcesses = new Map();
   /** @type {ActionResult[]} */
   let results = [];
-  /** @type {{ currentWave: number, totalWaves: number, completedActions: string[], failedActions: string[], stoppedActions: string[] } | null} */
+  /** @type {{ currentWave: number, totalWaves: number, completedActions: string[], failedActions: string[], stoppedActions: string[], skippedActions: string[] } | null} */
   let pipelineState = null;
+  /** @type {{ actionId: string, exitCode: number, waveIndex: number } | null} */
+  let pausedOnFailure = null;
+  /** @type {((decision: string) => void) | null} */
+  let skipResolve = null;
+  /** @type {Object<string, string>} Buffered output per action ID for restore on reconnect */
+  const outputBuffers = {};
+  /** @type {number} Total actions across all waves */
+  let totalActionCount = 0;
+
+  /**
+   * Persist current pipeline state to disk for browser restore on refresh.
+   * Called after every state mutation. Never throws.
+   */
+  function persistState() {
+    if (!pipelineState) {
+      // Pipeline not running -- delete state file
+      try { fs.unlinkSync(path.join(cwd, STATE_FILE)); } catch (_) {}
+      return;
+    }
+    const state = {
+      running: isRunning,
+      currentWave: pipelineState.currentWave,
+      totalWaves: pipelineState.totalWaves,
+      totalActions: totalActionCount,
+      completedActions: pipelineState.completedActions,
+      failedActions: pipelineState.failedActions,
+      stoppedActions: pipelineState.stoppedActions,
+      activeActions: [...activeProcesses.keys()],
+      outputBuffers: outputBuffers,
+      pausedOnFailure: pausedOnFailure,
+      timestamp: Date.now(),
+    };
+    try { fs.writeFileSync(path.join(cwd, STATE_FILE), JSON.stringify(state, null, 2)); } catch (_) {}
+  }
 
   /**
    * Broadcast SSE event.
@@ -233,6 +272,12 @@ function createPipelineRunner(sseClients, cwd) {
           for (const line of lines) {
             broadcast('action-output', { actionId, text: line, stream: 'stdout' });
             appendLog(logPath, `[${new Date().toISOString()}] [${actionId}] [stdout] ${line}`);
+            // Buffer output for restore on page refresh
+            if (!outputBuffers[actionId]) outputBuffers[actionId] = '';
+            outputBuffers[actionId] += line + '\n';
+            if (outputBuffers[actionId].length > OUTPUT_BUFFER_MAX) {
+              outputBuffers[actionId] = outputBuffers[actionId].slice(-OUTPUT_BUFFER_MAX);
+            }
           }
         });
       }
@@ -246,6 +291,12 @@ function createPipelineRunner(sseClients, cwd) {
           for (const line of lines) {
             broadcast('action-output', { actionId, text: line, stream: 'stderr' });
             appendLog(logPath, `[${new Date().toISOString()}] [${actionId}] [stderr] ${line}`);
+            // Buffer output for restore on page refresh
+            if (!outputBuffers[actionId]) outputBuffers[actionId] = '';
+            outputBuffers[actionId] += line + '\n';
+            if (outputBuffers[actionId].length > OUTPUT_BUFFER_MAX) {
+              outputBuffers[actionId] = outputBuffers[actionId].slice(-OUTPUT_BUFFER_MAX);
+            }
           }
         });
       }
@@ -296,6 +347,7 @@ function createPipelineRunner(sseClients, cwd) {
       completedActions: [],
       failedActions: [],
       stoppedActions: [],
+      skippedActions: [],
     };
 
     // Count total actions for summary
@@ -305,6 +357,8 @@ function createPipelineRunner(sseClients, cwd) {
         totalActions += m.actions.length;
       }
     }
+    totalActionCount = totalActions;
+    persistState();
 
     broadcast('pipeline-start', {
       totalWaves: waves.length,
@@ -326,6 +380,7 @@ function createPipelineRunner(sseClients, cwd) {
 
         const wave = waves[wi];
         pipelineState.currentWave = wi + 1;
+        persistState();
 
         broadcast('pipeline-wave-start', {
           wave: wi + 1,
@@ -372,6 +427,7 @@ function createPipelineRunner(sseClients, cwd) {
             pipelineState.failedActions.push(r.actionId);
           }
         }
+        persistState();
 
         broadcast('pipeline-wave-complete', {
           wave: wi + 1,
@@ -379,6 +435,38 @@ function createPipelineRunner(sseClients, cwd) {
           completed: waveResults.filter(r => r.exitCode === 0).map(r => r.actionId),
           failed: waveResults.filter(r => r.exitCode !== 0).map(r => r.actionId),
         });
+
+        // Pause on failure: if any action in this wave failed (after retry),
+        // pause and wait for user decision before continuing to next wave.
+        const failedInWave = waveResults.filter(r => r.exitCode !== 0);
+        if (failedInWave.length > 0 && !stopRequested) {
+          const firstFailed = failedInWave[0];
+          pausedOnFailure = { actionId: firstFailed.actionId, exitCode: firstFailed.exitCode, waveIndex: wi };
+          persistState();
+          broadcast('pipeline-paused', {
+            actionId: firstFailed.actionId,
+            exitCode: firstFailed.exitCode,
+            wave: wi + 1,
+            totalWaves: waves.length,
+            failedActions: failedInWave.map(r => r.actionId),
+          });
+
+          // Wait for user decision (skip or stop)
+          const decision = await new Promise(resolve => { skipResolve = resolve; });
+          skipResolve = null;
+
+          if (decision === 'stop') {
+            stopRequested = true;
+            pausedOnFailure = null;
+            break;
+          }
+          // decision === 'skip': mark failed actions as skipped and continue
+          for (const f of failedInWave) {
+            pipelineState.skippedActions.push(f.actionId);
+          }
+          pausedOnFailure = null;
+          broadcast('pipeline-resumed', { wave: wi + 1, skipped: failedInWave.map(r => r.actionId) });
+        }
       }
 
       const finalState = { ...pipelineState };
@@ -406,9 +494,11 @@ function createPipelineRunner(sseClients, cwd) {
       });
 
       stopRequested = false;
+      pausedOnFailure = null;
       pipelineState = null;
     })().catch((_err) => {
       isRunning = false;
+      pausedOnFailure = null;
       pipelineState = null;
       broadcast('pipeline-complete', {
         completed: [],
@@ -432,6 +522,13 @@ function createPipelineRunner(sseClients, cwd) {
     }
 
     stopRequested = true;
+
+    // If paused on failure, resolve the pending decision as 'stop'
+    if (pausedOnFailure && skipResolve) {
+      skipResolve('stop');
+      skipResolve = null;
+    }
+
     for (const [, proc] of activeProcesses) {
       try { proc.kill('SIGTERM'); } catch (_) {}
     }
@@ -464,7 +561,31 @@ function createPipelineRunner(sseClients, cwd) {
     };
   }
 
-  return { start, stop, running, status };
+  /**
+   * Skip the failed action and continue the pipeline.
+   * Only works when pipeline is paused on failure.
+   * @returns {{ ok?: boolean, error?: string }}
+   */
+  function skip() {
+    if (!pausedOnFailure) {
+      return { error: 'Pipeline is not paused' };
+    }
+    if (skipResolve) {
+      skipResolve('skip');
+      skipResolve = null;
+    }
+    return { ok: true };
+  }
+
+  /**
+   * Get paused-on-failure info, or null if not paused.
+   * @returns {{ actionId: string, exitCode: number, waveIndex: number } | null}
+   */
+  function paused() {
+    return pausedOnFailure;
+  }
+
+  return { start, stop, skip, running, paused, status };
 }
 
 module.exports = { createPipelineRunner };
