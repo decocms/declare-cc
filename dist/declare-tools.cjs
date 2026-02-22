@@ -4580,6 +4580,176 @@ data: ${JSON.stringify(data)}
   }
 });
 
+// src/server/revision-runner.js
+var require_revision_runner = __commonJS({
+  "src/server/revision-runner.js"(exports2, module2) {
+    "use strict";
+    var { spawn } = require("node:child_process");
+    var fs = require("node:fs");
+    var path = require("node:path");
+    function buildRevisionPrompt(artifactContent, annotations) {
+      const annotationList = annotations.map((a) => `- Line ${a.line}: ${a.text}`).join("\n");
+      return "You are revising a plan artifact based on reviewer annotations. Do NOT implement anything \u2014 only update the plan document.\n\n## Current plan content\n\n" + artifactContent + "\n\n## Reviewer annotations to address\n\n" + annotationList + "\n\n## Instructions\n\nRevise the plan above to address ALL the reviewer's annotations. Output ONLY the revised plan content \u2014 no explanations, no markdown fencing, no preamble. The output will directly replace the current file.";
+    }
+    function createRevisionRunner(sseClients, cwd, onComplete) {
+      let current = null;
+      function broadcast(event, data) {
+        const payload = `event: ${event}
+data: ${JSON.stringify(data)}
+
+`;
+        for (const client of sseClients) {
+          try {
+            client.write(payload);
+          } catch (_) {
+            sseClients.delete(client);
+          }
+        }
+      }
+      function createLineHandler(sessionId, nodeId, streamName, accumulator) {
+        let buffer = "";
+        return (chunk) => {
+          const text = chunk.toString();
+          if (streamName === "stdout") {
+            accumulator.text += text;
+          }
+          buffer += text;
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+          for (const line of lines) {
+            broadcast("revision-output", {
+              sessionId,
+              nodeId,
+              text: line,
+              stream: streamName
+            });
+          }
+        };
+      }
+      function stripMarkdownFencing(text) {
+        const trimmed = text.trim();
+        const fenceMatch = trimmed.match(/^```(?:markdown)?\s*\n([\s\S]*?)\n```\s*$/);
+        if (fenceMatch) {
+          return fenceMatch[1];
+        }
+        return trimmed;
+      }
+      function revise(nodeId, artifactPath, artifactContent, annotations) {
+        if (current) {
+          return { error: "busy", status: 409 };
+        }
+        const sessionId = `revision-${Date.now()}`;
+        const prompt = buildRevisionPrompt(artifactContent, annotations);
+        try {
+          const annPath = path.join(cwd, ".planning", "annotations", nodeId.toUpperCase() + ".json");
+          let round = 0;
+          if (fs.existsSync(annPath)) {
+            try {
+              const annData = JSON.parse(fs.readFileSync(annPath, "utf-8"));
+              round = annData.revisionRound || 0;
+            } catch (_) {
+            }
+          }
+          const versionedPath = artifactPath.replace(".md", "") + ".v" + round + ".md";
+          fs.copyFileSync(artifactPath, versionedPath);
+        } catch (_) {
+        }
+        const proc = spawn("claude", ["-p", prompt, "--output-format", "text", "--no-input"], {
+          cwd,
+          env: { ...process.env, FORCE_COLOR: "0" }
+        });
+        current = { sessionId, proc, nodeId };
+        const stdout = { text: "" };
+        if (proc.stdout) {
+          proc.stdout.on("data", createLineHandler(sessionId, nodeId, "stdout", stdout));
+        }
+        if (proc.stderr) {
+          proc.stderr.on("data", createLineHandler(sessionId, nodeId, "stderr", stdout));
+        }
+        proc.on("close", (exitCode) => {
+          const completedNodeId = current ? current.nodeId : nodeId;
+          current = null;
+          if (exitCode === 0) {
+            try {
+              const revisedContent = stripMarkdownFencing(stdout.text);
+              fs.writeFileSync(artifactPath, revisedContent, "utf-8");
+              const annPath = path.join(cwd, ".planning", "annotations", completedNodeId.toUpperCase() + ".json");
+              let annData = { nodeId: completedNodeId.toUpperCase(), annotations: [], revisionRound: 0 };
+              if (fs.existsSync(annPath)) {
+                try {
+                  annData = JSON.parse(fs.readFileSync(annPath, "utf-8"));
+                } catch (_) {
+                }
+              }
+              const newRound = (annData.revisionRound || 0) + 1;
+              annData.revisionRound = newRound;
+              const annDir = path.dirname(annPath);
+              fs.mkdirSync(annDir, { recursive: true });
+              fs.writeFileSync(annPath, JSON.stringify(annData, null, 2), "utf-8");
+              broadcast("revision-complete", {
+                sessionId,
+                nodeId: completedNodeId,
+                exitCode,
+                revisionRound: newRound
+              });
+              if (onComplete) {
+                try {
+                  onComplete(completedNodeId);
+                } catch (_) {
+                }
+              }
+            } catch (err) {
+              broadcast("revision-complete", {
+                sessionId,
+                nodeId: completedNodeId,
+                exitCode: -1,
+                error: true
+              });
+            }
+          } else {
+            broadcast("revision-complete", {
+              sessionId,
+              nodeId: completedNodeId,
+              exitCode: exitCode ?? -1,
+              error: true
+            });
+          }
+        });
+        proc.on("error", (_err) => {
+          current = null;
+          broadcast("revision-complete", {
+            sessionId,
+            nodeId,
+            exitCode: -1,
+            error: true
+          });
+        });
+        return { ok: true, sessionId };
+      }
+      function stop() {
+        if (!current) {
+          return { error: "not_running", status: 404 };
+        }
+        current.proc.kill("SIGTERM");
+        return { ok: true };
+      }
+      function running() {
+        return current ? current.sessionId : null;
+      }
+      return { revise, stop, running };
+    }
+    if (require.main === module2) {
+      const runner = createRevisionRunner(/* @__PURE__ */ new Set(), ".", () => {
+      });
+      console.log("revise:", typeof runner.revise);
+      console.log("stop:", typeof runner.stop);
+      console.log("running:", typeof runner.running);
+      console.log("OK");
+    }
+    module2.exports = { createRevisionRunner };
+  }
+});
+
 // src/commands/workflow-state.js
 var require_workflow_state = __commonJS({
   "src/commands/workflow-state.js"(exports2, module2) {
@@ -4994,6 +5164,7 @@ var require_server = __commonJS({
     var { createProcessManager } = require_process_manager();
     var { createDerivationRunner } = require_derivation_runner();
     var { createActionDerivationRunner } = require_action_derivation_runner();
+    var { createRevisionRunner } = require_revision_runner();
     var { runAddMilestonesBatch: runAddMilestonesBatch2 } = require_add_milestones_batch();
     var { buildDagFromDisk } = require_build_dag();
     var { computeWorkabilityPath, VALID_REVIEW_STATES } = require_engine();
@@ -5533,12 +5704,14 @@ var require_server = __commonJS({
     function readAnnotations(cwd, nodeId) {
       const filePath = getAnnotationsPath(cwd, nodeId);
       if (!fs.existsSync(filePath)) {
-        return { nodeId: nodeId.toUpperCase(), annotations: [] };
+        return { nodeId: nodeId.toUpperCase(), annotations: [], revisionRound: 0 };
       }
       try {
-        return JSON.parse(fs.readFileSync(filePath, "utf-8"));
+        const data = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+        data.revisionRound = data.revisionRound || 0;
+        return data;
       } catch (_) {
-        return { nodeId: nodeId.toUpperCase(), annotations: [] };
+        return { nodeId: nodeId.toUpperCase(), annotations: [], revisionRound: 0 };
       }
     }
     function writeAnnotations(cwd, nodeId, data) {
@@ -5601,6 +5774,17 @@ var require_server = __commonJS({
         sendJson(res, 500, { error: String(err) });
       }
     }
+    function handleIncrementRevisionRound(res, cwd, nodeId) {
+      try {
+        const data = readAnnotations(cwd, nodeId);
+        data.revisionRound = (data.revisionRound || 0) + 1;
+        writeAnnotations(cwd, nodeId, data);
+        broadcastChange();
+        sendJson(res, 200, { ok: true, revisionRound: data.revisionRound });
+      } catch (err) {
+        sendJson(res, 500, { error: String(err) });
+      }
+    }
     var sseClients = /* @__PURE__ */ new Set();
     var processManager = null;
     function getProcessManager(cwd) {
@@ -5621,6 +5805,16 @@ var require_server = __commonJS({
     function getPlayRunner(cwd) {
       if (!playRunner) playRunner = createPlayRunner(sseClients, cwd);
       return playRunner;
+    }
+    var revisionRunner = null;
+    function getRevisionRunner(cwd) {
+      if (!revisionRunner) {
+        revisionRunner = createRevisionRunner(sseClients, cwd, (nodeId) => {
+          setReviewState(cwd, nodeId, "in_review");
+          broadcastChange();
+        });
+      }
+      return revisionRunner;
     }
     function broadcastChange() {
       for (const client of sseClients) {
@@ -5660,6 +5854,67 @@ var require_server = __commonJS({
           }
         });
       } catch (_) {
+      }
+    }
+    async function handleRevise(req, res, cwd, nodeId) {
+      try {
+        const id = nodeId.toUpperCase();
+        const prefix = id.split("-")[0];
+        const planningDir = path.join(cwd, ".planning");
+        let artifactPath = null;
+        if (prefix === "D") {
+          artifactPath = path.join(planningDir, "FUTURE.md");
+        } else if (prefix === "M") {
+          const folder = findMilestoneFolder(planningDir, id);
+          if (folder) artifactPath = path.join(folder, "PLAN.md");
+        } else if (prefix === "A") {
+          const graph = runLoadGraph2(cwd);
+          if (!("error" in graph)) {
+            const action = graph.actions.find((a) => a.id.toUpperCase() === id);
+            if (action) {
+              const milestoneId = (action.causes || [])[0];
+              if (milestoneId) {
+                const folder = findMilestoneFolder(planningDir, milestoneId);
+                if (folder) {
+                  const aNum = id.replace(/^A-/, "");
+                  artifactPath = path.join(folder, `A-${aNum}-EXEC-PLAN.md`);
+                  if (!fs.existsSync(artifactPath)) {
+                    artifactPath = path.join(folder, "PLAN.md");
+                  }
+                }
+              }
+            }
+          }
+        }
+        if (!artifactPath || !fs.existsSync(artifactPath)) {
+          sendJson(res, 404, { error: "Artifact not found for node " + id });
+          return;
+        }
+        const artifactContent = fs.readFileSync(artifactPath, "utf-8");
+        const annData = readAnnotations(cwd, id);
+        const annotations = annData.annotations || [];
+        if (annotations.length === 0) {
+          sendJson(res, 400, { error: "no_annotations" });
+          return;
+        }
+        const rr = getRevisionRunner(cwd);
+        const result = rr.revise(id, artifactPath, artifactContent, annotations);
+        if (result.error) {
+          sendJson(res, result.status || 500, { error: result.error });
+          return;
+        }
+        sendJson(res, 202, { ok: true, sessionId: result.sessionId });
+      } catch (err) {
+        sendJson(res, 500, { error: String(err) });
+      }
+    }
+    function handleReviseStop(res, cwd) {
+      const rr = getRevisionRunner(cwd);
+      const result = rr.stop();
+      if (result.error) {
+        sendJson(res, result.status || 500, { error: result.error });
+      } else {
+        sendJson(res, 200, { ok: true });
       }
     }
     function route(req, res, cwd) {
@@ -5728,6 +5983,11 @@ var require_server = __commonJS({
       const getAnnotationsMatch = method === "GET" && urlPath.match(/^\/api\/node\/([^/]+)\/annotations$/);
       if (getAnnotationsMatch) {
         handleGetAnnotations(res, cwd, getAnnotationsMatch[1]);
+        return;
+      }
+      const incrementRoundMatch = method === "POST" && urlPath.match(/^\/api\/node\/([^/]+)\/annotations\/increment-round$/);
+      if (incrementRoundMatch) {
+        handleIncrementRevisionRound(res, cwd, incrementRoundMatch[1]);
         return;
       }
       const postAnnotationsMatch = method === "POST" && urlPath.match(/^\/api\/node\/([^/]+)\/annotations$/);
@@ -5920,6 +6180,15 @@ var require_server = __commonJS({
           } else {
             sendJson(res, 200, { ok: true });
           }
+          return;
+        }
+        const reviseMatch = urlPath.match(/^\/api\/node\/([^/]+)\/revise$/);
+        if (reviseMatch) {
+          handleRevise(req, res, cwd, reviseMatch[1]);
+          return;
+        }
+        if (urlPath === "/api/revise/stop") {
+          handleReviseStop(res, cwd);
           return;
         }
         sendJson(res, 404, { error: `Route not found: ${urlPath}` });
