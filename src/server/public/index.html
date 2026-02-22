@@ -1775,6 +1775,26 @@
       opacity: 0.8;
     }
 
+    /* ── Review state badges ── */
+    .review-badge {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 8px;
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      cursor: pointer;
+      user-select: none;
+      margin-left: 4px;
+      transition: opacity 0.15s;
+    }
+    .review-badge:hover { opacity: 0.8; }
+    .review-draft           { background: #e0e0e0; color: #666; border: 1px solid #ccc; }
+    .review-in_review       { background: #dbeafe; color: #1d4ed8; border: 1px solid #93c5fd; }
+    .review-revision_needed { background: #ffedd5; color: #c2410c; border: 1px solid #fdba74; }
+    .review-approved        { background: #dcfce7; color: #15803d; border: 1px solid #86efac; }
+
   </style>
 </head>
 <body>

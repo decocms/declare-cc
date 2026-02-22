@@ -142,6 +142,23 @@ function truncate(text, maxLen) {
   return text.length > maxLen ? text.slice(0, maxLen - 1) + '…' : text;
 }
 
+// ─── Review state helpers ────────────────────────────────────────────────────
+
+const REVIEW_DISPLAY = {
+  draft: 'Draft',
+  in_review: 'In Review',
+  revision_needed: 'Needs Revision',
+  approved: 'Approved',
+};
+
+const REVIEW_CYCLE = ['draft', 'in_review', 'revision_needed', 'approved'];
+
+function reviewBadgeHtml(nodeId, reviewState) {
+  const state = reviewState || 'draft';
+  const label = REVIEW_DISPLAY[state] || state;
+  return `<span class="review-badge review-${state}" data-node-id="${escHtml(nodeId)}" data-review-state="${escHtml(state)}" title="Click to change review state">${escHtml(label)}</span>`;
+}
+
 /**
  * Format a Date as "HH:MM:SS".
  * @param {Date} d
@@ -490,7 +507,7 @@ function buildNodeEl(item, type, derived = {}) {
   el.innerHTML = `
     <div class="node-id">${classIconHtml}${item.id}${depIndicatorHtml}</div>
     <div class="node-title">${truncate(title, 55)}</div>
-    <span class="status-badge">${badgeLabel}</span>${readinessBadgeHtml}${integrityDotHtml}
+    <span class="status-badge">${badgeLabel}</span>${readinessBadgeHtml}${integrityDotHtml}${reviewBadgeHtml(item.id, item.reviewState)}
     ${progressHtml}
   `;
 
@@ -737,7 +754,7 @@ function renderColumnBrowser() {
       <span class="col-item-id">${escHtml(d.id)}</span>
       <span class="col-item-title">${escHtml(truncate(title, 55))}</span>
       <div class="col-item-meta">
-        <span class="status-badge">${escHtml(d.displayStatus)}</span>
+        <span class="status-badge">${escHtml(d.displayStatus)}</span>${reviewBadgeHtml(d.id, d.reviewState)}
       </div>
     `;
 
@@ -807,7 +824,7 @@ function renderColumnBrowser() {
           <span class="col-item-title">${escHtml(truncate(title, 55))}</span>
           ${desc}
           <div class="col-item-meta">
-            <span class="status-badge">${escHtml(badgeLabel)}</span>${colReadinessBadge}
+            <span class="status-badge">${escHtml(badgeLabel)}</span>${colReadinessBadge}${reviewBadgeHtml(m.id, m.reviewState)}
           </div>
         `;
 
@@ -847,7 +864,7 @@ function renderColumnBrowser() {
           <span class="col-item-id">${escHtml(a.id)}</span>
           <span class="col-item-title">${escHtml(truncate(title, 55))}</span>
           <div class="col-item-meta">
-            <span class="status-badge">${escHtml(status)}</span>
+            <span class="status-badge">${escHtml(status)}</span>${reviewBadgeHtml(a.id, a.reviewState)}
           </div>
         `;
 
@@ -1020,6 +1037,38 @@ function handleColumnKeydown(e) {
 
 // Register the column browser keyboard handler
 document.addEventListener('keydown', handleColumnKeydown);
+
+// ─── Review badge click-to-cycle ──────────────────────────────────────────────
+
+document.addEventListener('click', async (e) => {
+  const badge = e.target.closest('.review-badge');
+  if (!badge) return;
+  e.stopPropagation(); // Don't trigger node selection
+
+  const nodeId = badge.dataset.nodeId;
+  const currentState = badge.dataset.reviewState || 'draft';
+  const currentIdx = REVIEW_CYCLE.indexOf(currentState);
+  const nextState = REVIEW_CYCLE[(currentIdx + 1) % REVIEW_CYCLE.length];
+
+  try {
+    const resp = await fetch(`/api/node/${encodeURIComponent(nodeId)}/review-state`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reviewState: nextState }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json();
+      console.error('Failed to update review state:', err);
+      return;
+    }
+    // SSE will trigger a refresh, but also update immediately for responsiveness
+    badge.className = `review-badge review-${nextState}`;
+    badge.dataset.reviewState = nextState;
+    badge.textContent = REVIEW_DISPLAY[nextState] || nextState;
+  } catch (err) {
+    console.error('Failed to update review state:', err);
+  }
+});
 
 // ─── Edge drawing ─────────────────────────────────────────────────────────────
 
