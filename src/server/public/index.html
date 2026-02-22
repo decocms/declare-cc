@@ -2191,7 +2191,8 @@
       background: var(--bg);
       padding-right: var(--panel-width);
     }
-    #execution-view.active { display: flex; flex-direction: row; }
+    #execution-view.active { display: flex; flex-direction: column; }
+    .exec-content { display: flex; flex-direction: row; flex: 1; overflow: hidden; }
 
     .exec-left-panel {
       width: 340px;
@@ -2333,6 +2334,57 @@
       flex-shrink: 0;
     }
 
+    /* ── Execution mode: hide all edit controls ── */
+    body.exec-mode #new-decl-btn { display: none; }
+    body.exec-mode #play-btn { display: none; }
+    body.exec-mode #workflow-banner { display: none; }
+    body.exec-mode #readiness-banner { display: none; }
+    body.exec-mode #side-panel { display: none; }
+    body.exec-mode #activity-feed { display: none; }
+    body.exec-mode #view-toggle { display: none; }
+    body.exec-mode #execution-view { padding-right: 0; }
+
+    /* ── Execution topbar ── */
+    .exec-topbar {
+      display: none;
+      align-items: center;
+      gap: 12px;
+      padding: 0 16px;
+      height: 36px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    body.exec-mode .exec-topbar { display: flex; }
+    body:not(.exec-mode) .exec-topbar { display: none; }
+    .exec-topbar-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-bright);
+      flex: 1;
+    }
+    .exec-exit-btn {
+      padding: 4px 12px;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .exec-exit-btn:hover { background: var(--border); }
+    .exec-stop-btn {
+      padding: 4px 12px;
+      border-radius: 4px;
+      border: 1px solid var(--broken-border);
+      background: var(--broken-bg);
+      color: var(--broken-color);
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .exec-stop-btn:hover { opacity: 0.85; }
+
   </style>
 </head>
 <body>
@@ -2420,12 +2472,20 @@
 
   <!-- Execution view — CI pipeline layout with live output panel -->
   <div id="execution-view">
-    <div class="exec-left-panel">
-      <div class="exec-pipeline" id="exec-pipeline"></div>
+    <div class="exec-topbar">
+      <span class="exec-topbar-title" id="exec-topbar-title">Execution Mode</span>
+      <span id="exec-wave-status" style="font-size:12px;color:var(--text-dim)"></span>
+      <button class="exec-stop-btn" id="exec-stop-btn">Stop</button>
+      <button class="exec-exit-btn" id="exec-exit-btn">Exit</button>
     </div>
-    <div class="exec-output-panel">
-      <div class="exec-output-header" id="exec-output-header">No action selected</div>
-      <pre class="exec-output-log" id="exec-output-log"></pre>
+    <div class="exec-content">
+      <div class="exec-left-panel">
+        <div class="exec-pipeline" id="exec-pipeline"></div>
+      </div>
+      <div class="exec-output-panel">
+        <div class="exec-output-header" id="exec-output-header">No action selected</div>
+        <pre class="exec-output-log" id="exec-output-log"></pre>
+      </div>
     </div>
   </div>
 </div>

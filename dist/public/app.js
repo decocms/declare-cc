@@ -53,6 +53,8 @@ let kbIndex = 0;
 
 /** @type {'dag'|'columns'|'execution'} Current view mode, persisted in localStorage */
 let viewMode = localStorage.getItem('declare-view-mode') || 'columns';
+// Execution mode is only valid during active play; fall back to columns on reload
+if (viewMode === 'execution') viewMode = 'columns';
 
 /** @type {boolean} Whether the declaration input form is visible */
 let declFormVisible = false;
@@ -138,6 +140,10 @@ const $canvasWrap    = document.getElementById('canvas-wrap');
 const $execView      = document.getElementById('execution-view');
 const $execOutputHeader = document.getElementById('exec-output-header');
 const $execOutputLog    = document.getElementById('exec-output-log');
+const $execTopbarTitle  = document.getElementById('exec-topbar-title');
+const $execWaveStatus   = document.getElementById('exec-wave-status');
+const $execStopBtn      = document.getElementById('exec-stop-btn');
+const $execExitBtn      = document.getElementById('exec-exit-btn');
 
 const $declFormContainer = document.getElementById('decl-form-container');
 const $colDeclAddBtn     = document.getElementById('col-decl-add-btn');
@@ -3460,6 +3466,26 @@ async function stopPlay() {
 /**
  * Update play button and banner based on current play state.
  */
+/**
+ * Update the execution topbar title, wave status, and button visibility.
+ */
+function updateExecTopbar() {
+  if (!$execTopbarTitle) return;
+  if (playRunning && playStatus) {
+    $execTopbarTitle.textContent = 'Execution Mode';
+    if ($execWaveStatus) {
+      $execWaveStatus.textContent = playStatus.totalWaves
+        ? 'Wave ' + playStatus.currentWave + '/' + playStatus.totalWaves
+        : '';
+    }
+    if ($execStopBtn) $execStopBtn.style.display = '';
+  } else {
+    $execTopbarTitle.textContent = 'Execution Complete';
+    if ($execWaveStatus) $execWaveStatus.textContent = '';
+    if ($execStopBtn) $execStopBtn.style.display = 'none';
+  }
+}
+
 function updatePlayUI() {
   const btn = document.getElementById('play-btn');
   const banner = document.getElementById('play-banner');
@@ -3569,6 +3595,7 @@ function handlePlayWaveStart(e) {
     updatePlayUI();
     if (viewMode === 'execution') {
       renderExecutionView();
+      updateExecTopbar();
       // Auto-select first running action if auto-follow is on and no action selected (or selected is done)
       if (execAutoFollow && playStatus && playStatus.activeActions.length > 0) {
         const selectedDone = execSelectedActionId && !runningActions.has(execSelectedActionId);
@@ -3597,7 +3624,10 @@ function handlePlayWaveComplete(e) {
       }
     }
     updatePlayUI();
-    if (viewMode === 'execution') renderExecutionView();
+    if (viewMode === 'execution') {
+      renderExecutionView();
+      updateExecTopbar();
+    }
     loadData(); // refresh graph after each wave
   } catch (_) {}
 }
@@ -3616,6 +3646,7 @@ function handlePlayComplete(e) {
       updatePlayUI();
     }, 3000);
     updatePlayUI();
+    updateExecTopbar();
     loadData(); // final refresh
   } catch (_) {}
 }
@@ -4579,6 +4610,7 @@ function switchView(mode) {
   $colBrowser.classList.remove('active');
   if ($readinessBanner) $readinessBanner.classList.remove('active');
   if ($execView) $execView.classList.remove('active');
+  document.body.classList.remove('exec-mode');
 
   if (mode === 'dag') {
     $canvasWrap.style.display = '';
@@ -4603,11 +4635,13 @@ function switchView(mode) {
   } else if (mode === 'execution') {
     if (focusNodeId) exitFocusMode();
     if ($execView) $execView.classList.add('active');
+    document.body.classList.add('exec-mode');
     if ($viewToggle) {
       $viewToggle.classList.add('active');
       $viewToggleLabel.textContent = 'Columns';
     }
     renderExecutionView();
+    updateExecTopbar();
   }
 }
 
@@ -4668,17 +4702,23 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// View toggle button — cycles: columns -> dag -> execution -> columns
+// View toggle button — cycles: columns -> dag (execution excluded, entered only via play)
 if ($viewToggle) {
   $viewToggle.addEventListener('click', () => {
     if (viewMode === 'columns') {
       switchView('dag');
-    } else if (viewMode === 'dag') {
-      switchView('execution');
     } else {
       switchView('columns');
     }
   });
+}
+
+// Execution topbar buttons
+if ($execExitBtn) {
+  $execExitBtn.addEventListener('click', () => switchView('columns'));
+}
+if ($execStopBtn) {
+  $execStopBtn.addEventListener('click', () => stopPlay());
 }
 
 // Declaration form triggers
