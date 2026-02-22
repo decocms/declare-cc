@@ -28,7 +28,7 @@
 | M-39 | Tri-part column browser for D-M-A navigation | DONE    | D-06     | YES  |
 | M-40 | Live activity topbar with jump-to-operation  | DONE    | D-08     | YES  |
 | M-41 | Execute actions from dashboard               | DONE    | D-08     | YES  |
-| M-42 | Full-cycle E2E test suite                    | PENDING | D-06     | NO   |
+| M-42 | Full-cycle E2E test suite                    | PENDING | D-06     | YES  |
 | M-43 | Review state tracked per node                | PENDING | D-13     | YES  |
 | M-44 | Inline annotation UX in column browser       | PENDING | D-13     | YES  |
 | M-45 | Revision cycle with agent                    | PENDING | D-13     | YES  |
