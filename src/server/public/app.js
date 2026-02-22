@@ -80,6 +80,11 @@ let annotatingLine = null;
 /** @type {string|null} Node ID of the currently displayed annotation panel */
 let annotationNodeId = null;
 
+/** @type {string|null} Active revision session ID */
+let revisionSessionId = null;
+/** @type {string|null} Node ID being revised */
+let revisionNodeId = null;
+
 /** @type {boolean} Whether the play sequence is currently running */
 let playRunning = false;
 /** @type {{ currentWave: number, totalWaves: number, activeActions: string[], completedActions: string[], failedActions: string[] } | null} */
@@ -1423,6 +1428,15 @@ async function renderAnnotationPanel(nodeId, type) {
     el.insertAdjacentHTML('beforeend', approveHtml);
   }
 
+  // Show "Request Revision" button when there are annotations
+  if (annotations.length > 0) {
+    const reviseHtml = `<div class="ann-revise-section">
+      <button class="ann-revise-btn" id="ann-revise-btn">Request Revision</button>
+      <div class="ann-revise-hint">Send ${annotations.length} annotation${annotations.length !== 1 ? 's' : ''} to planner agent for revision</div>
+    </div>`;
+    el.insertAdjacentHTML('beforeend', reviseHtml);
+  }
+
   $panelBody.appendChild(el);
 
   // Wire event delegation on the annotation panel
@@ -1494,6 +1508,32 @@ async function renderAnnotationPanel(nodeId, type) {
       // Re-fetch and re-render without limit by toggling a flag
       // For simplicity, just re-render the full content
       renderAnnotationPanelFull(nodeId, type);
+      return;
+    }
+
+    // Click Request Revision button
+    if (e.target.id === 'ann-revise-btn') {
+      e.target.disabled = true;
+      e.target.textContent = 'Revising...';
+      revisionNodeId = nodeId;
+      try {
+        const resp = await fetch('/api/node/' + encodeURIComponent(nodeId) + '/revise', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ nodeId })
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          revisionSessionId = data.sessionId;
+          showRevisionPanel(nodeId);
+        } else {
+          e.target.disabled = false;
+          e.target.textContent = 'Request Revision';
+        }
+      } catch (_) {
+        e.target.disabled = false;
+        e.target.textContent = 'Request Revision';
+      }
       return;
     }
 
@@ -1631,6 +1671,44 @@ async function renderAnnotationPanelFull(nodeId, type) {
   const linesContainer = existingPanel.querySelector('.annotation-lines');
   if (linesContainer) {
     linesContainer.innerHTML = linesHtml;
+  }
+}
+
+/**
+ * Show the revision output panel with streaming output area.
+ * @param {string} nodeId
+ */
+function showRevisionPanel(nodeId) {
+  // Remove any existing revision panel
+  const existing = document.getElementById('revision-panel');
+  if (existing) existing.remove();
+
+  const panel = document.createElement('div');
+  panel.id = 'revision-panel';
+  panel.innerHTML = `
+    <div class="revision-panel-header">Revising ${escHtml(nodeId)}...</div>
+    <pre id="revision-output"></pre>
+    <button class="revision-stop-btn" id="revision-stop-btn">Stop</button>
+  `;
+
+  // Append to annotation panel or panel body
+  const annPanel = document.getElementById('annotation-panel');
+  if (annPanel) {
+    annPanel.appendChild(panel);
+  } else if ($panelBody) {
+    $panelBody.appendChild(panel);
+  }
+
+  // Wire stop button
+  const stopBtn = panel.querySelector('#revision-stop-btn');
+  if (stopBtn) {
+    stopBtn.addEventListener('click', async () => {
+      try {
+        await fetch('/api/revise/stop', { method: 'POST' });
+        stopBtn.textContent = 'Stopping...';
+        stopBtn.disabled = true;
+      } catch (_) { /* ignore */ }
+    });
   }
 }
 
@@ -4498,6 +4576,42 @@ function connectSSE() {
   es.addEventListener('derivation-complete', handleDerivationComplete);
   es.addEventListener('action-derivation-output', handleActionDerivationOutput);
   es.addEventListener('action-derivation-complete', handleActionDerivationComplete);
+  es.addEventListener('revision-output', function(e) {
+    try {
+      const data = JSON.parse(e.data);
+      if (data.sessionId !== revisionSessionId) return;
+      const outputEl = document.getElementById('revision-output');
+      if (outputEl) {
+        outputEl.textContent += data.text + '\n';
+        outputEl.scrollTop = outputEl.scrollHeight;
+      }
+    } catch (_) { /* ignore */ }
+  });
+  es.addEventListener('revision-complete', function(e) {
+    try {
+      const data = JSON.parse(e.data);
+      if (data.sessionId !== revisionSessionId) return;
+      revisionSessionId = null;
+      const panel = document.getElementById('revision-panel');
+      if (panel) {
+        const header = panel.querySelector('.revision-panel-header');
+        const stopBtn = panel.querySelector('#revision-stop-btn');
+        if (stopBtn) stopBtn.style.display = 'none';
+        if (data.error) {
+          if (header) header.textContent = 'Revision failed';
+        } else {
+          if (header) header.textContent = 'Revision complete (Round ' + data.revisionRound + ')';
+          // Re-render annotation panel to show updated round and refreshed content
+          setTimeout(function() {
+            if (revisionNodeId) {
+              const nodeType = revisionNodeId.startsWith('A-') ? 'action' : revisionNodeId.startsWith('M-') ? 'milestone' : 'declaration';
+              renderAnnotationPanel(revisionNodeId, nodeType);
+            }
+          }, 500);
+        }
+      }
+    } catch (_) { /* ignore */ }
+  });
   es.addEventListener('play-start', handlePlayStart);
   es.addEventListener('play-wave-start', handlePlayWaveStart);
   es.addEventListener('play-wave-complete', handlePlayWaveComplete);
