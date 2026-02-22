@@ -34,6 +34,11 @@ let runningActions = new Set();
 /** @type {string | null} Which action's output we're listening to */
 let currentOutputActionId = null;
 
+/** @type {string | null} Currently selected declaration in column browser */
+let colSelectedDecl = null;
+/** @type {string | null} Currently selected milestone in column browser */
+let colSelectedMile = null;
+
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
 
@@ -59,6 +64,11 @@ const $edgesSvg      = document.getElementById('edges-svg');
 const $sidePanel     = document.getElementById('side-panel');
 const $panelBody     = document.getElementById('panel-body');
 const $panelEmpty    = document.getElementById('panel-empty');
+
+const $colBrowser    = document.getElementById('column-browser');
+const $colDeclList   = document.getElementById('col-decl-list');
+const $colMileList   = document.getElementById('col-mile-list');
+const $colActList    = document.getElementById('col-act-list');
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
@@ -154,6 +164,7 @@ async function loadData() {
     hideOverlay();
     renderStatusBar();
     renderGraph();
+    renderColumnBrowser();
     updateLastUpdated();
     checkProjectComplete(graph);
 
@@ -428,6 +439,133 @@ function renderGraph() {
 
   // Mark running actions with pulsing indicator
   updateRunningIndicators();
+}
+
+// ─── Column browser ───────────────────────────────────────────────────────────
+
+/**
+ * Render the three-column Finder-style browser using existing graphData.
+ * Column 1: Declarations, Column 2: Milestones (filtered), Column 3: Actions (filtered).
+ */
+function renderColumnBrowser() {
+  if (!$colBrowser || !graphData) return;
+
+  const { declarations, milestones, actions } = graphData;
+
+  // Compute enriched milestones and declarations (same logic as renderGraph)
+  const enrichedMilestones = (milestones || []).map(m => ({
+    ...m,
+    ...deriveMilestoneStatus(m, actions || []),
+  }));
+
+  const enrichedDeclarations = (declarations || []).map(d => ({
+    ...d,
+    displayStatus: deriveDeclarationStatus(d, enrichedMilestones),
+  }));
+
+  // ── Column 1: Declarations ──
+  $colDeclList.innerHTML = '';
+  enrichedDeclarations.forEach(d => {
+    const el = document.createElement('div');
+    el.className = 'col-item';
+    if (d.wholeness) el.classList.add('wholeness-' + d.wholeness);
+    if (colSelectedDecl === d.id) el.classList.add('col-selected');
+
+    const title = d.title || d.statement || d.id;
+    el.innerHTML = `
+      <span class="col-item-id">${escHtml(d.id)}</span>
+      <span class="col-item-title">${escHtml(truncate(title, 55))}</span>
+      <div class="col-item-meta">
+        <span class="status-badge">${escHtml(d.displayStatus)}</span>
+      </div>
+    `;
+
+    el.addEventListener('click', () => {
+      colSelectedDecl = d.id;
+      colSelectedMile = null;
+      renderColumnBrowser();
+      selectNode(d.id, 'declaration');
+    });
+
+    $colDeclList.appendChild(el);
+  });
+
+  // ── Column 2: Milestones ──
+  $colMileList.innerHTML = '';
+  if (!colSelectedDecl) {
+    $colMileList.innerHTML = '<div class="col-empty">Select a declaration</div>';
+  } else {
+    const filtered = enrichedMilestones.filter(m => (m.realizes || []).includes(colSelectedDecl));
+    if (filtered.length === 0) {
+      $colMileList.innerHTML = '<div class="col-empty">No milestones</div>';
+    } else {
+      filtered.forEach(m => {
+        const el = document.createElement('div');
+        el.className = 'col-item';
+        if (m.wholeness) el.classList.add('wholeness-' + m.wholeness);
+        if (colSelectedMile === m.id) el.classList.add('col-selected');
+
+        const title = m.title || m.id;
+        let badgeLabel = m.displayStatus;
+        if (m.totalCount > 0) {
+          badgeLabel = m.displayStatus === 'EXECUTING'
+            ? `${m.doneCount}/${m.totalCount} DONE`
+            : `${m.doneCount}/${m.totalCount}`;
+        }
+
+        el.innerHTML = `
+          <span class="col-item-id">${escHtml(m.id)}</span>
+          <span class="col-item-title">${escHtml(truncate(title, 55))}</span>
+          <div class="col-item-meta">
+            <span class="status-badge">${escHtml(badgeLabel)}</span>
+          </div>
+        `;
+
+        el.addEventListener('click', () => {
+          colSelectedMile = m.id;
+          renderColumnBrowser();
+          selectNode(m.id, 'milestone');
+        });
+
+        $colMileList.appendChild(el);
+      });
+    }
+  }
+
+  // ── Column 3: Actions ──
+  $colActList.innerHTML = '';
+  if (!colSelectedMile) {
+    $colActList.innerHTML = '<div class="col-empty">Select a milestone</div>';
+  } else {
+    const filtered = (actions || []).filter(a => (a.causes || []).includes(colSelectedMile));
+    if (filtered.length === 0) {
+      $colActList.innerHTML = '<div class="col-empty">No actions</div>';
+    } else {
+      filtered.forEach(a => {
+        const el = document.createElement('div');
+        el.className = 'col-item';
+        if (a.wholeness) el.classList.add('wholeness-' + a.wholeness);
+        if (runningActions.has(a.id)) el.classList.add('is-running');
+
+        const title = a.title || a.id;
+        const status = a.status || 'PENDING';
+
+        el.innerHTML = `
+          <span class="col-item-id">${escHtml(a.id)}</span>
+          <span class="col-item-title">${escHtml(truncate(title, 55))}</span>
+          <div class="col-item-meta">
+            <span class="status-badge">${escHtml(status)}</span>
+          </div>
+        `;
+
+        el.addEventListener('click', () => {
+          selectNode(a.id, 'action');
+        });
+
+        $colActList.appendChild(el);
+      });
+    }
+  }
 }
 
 // ─── Edge drawing ─────────────────────────────────────────────────────────────
