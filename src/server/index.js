@@ -36,10 +36,13 @@ const { runUpdateDeclaration } = require('../commands/update-declaration');
 const { runDeleteDeclaration } = require('../commands/delete-declaration');
 const { createProcessManager } = require('./process-manager');
 const { createDerivationRunner } = require('./derivation-runner');
+const { createActionDerivationRunner } = require('./action-derivation-runner');
 const { runAddMilestonesBatch } = require('../commands/add-milestones-batch');
 const { buildDagFromDisk } = require('../commands/build-dag');
 const { computeWorkabilityPath } = require('../graph/engine');
 const { findMilestoneFolder } = require('../artifacts/milestone-folders');
+const { parsePlanFile, writePlanFile } = require('../artifacts/plan');
+const { computeWorkflowState } = require('../commands/workflow-state');
 
 /** @type {Record<string, string>} */
 const MIME_TYPES = {
@@ -303,6 +306,32 @@ function handleWorkability(res, cwd, nodeId) {
 }
 
 /**
+ * Handle GET /api/workflow/state
+ * Computes and returns the current workflow state from the DAG.
+ *
+ * @param {http.ServerResponse} res
+ * @param {string} cwd
+ */
+function handleWorkflowState(res, cwd) {
+  try {
+    const graph = runLoadGraph(cwd);
+    if ('error' in graph) {
+      sendJson(res, 500, { error: graph.error });
+      return;
+    }
+
+    // Include running actions for accurate executing state detection
+    const pm = getProcessManager(cwd);
+    const runningIds = new Set(pm.running());
+
+    const result = computeWorkflowState(graph, runningIds);
+    sendJson(res, 200, result);
+  } catch (err) {
+    sendJson(res, 500, { error: String(err) });
+  }
+}
+
+/**
  * Handle GET /api/activity — return last N events from activity.jsonl.
  * @param {http.ServerResponse} res
  * @param {string} cwd
@@ -478,6 +507,173 @@ async function handleDeriveAccept(req, res, cwd) {
   }
 }
 
+/**
+ * Handle POST /api/milestones/:id/actions/derive
+ * Triggers action derivation for a specific milestone.
+ *
+ * @param {http.ServerResponse} res
+ * @param {string} cwd
+ * @param {string} milestoneId
+ */
+function handleActionDerive(res, cwd, milestoneId) {
+  try {
+    const graph = runLoadGraph(cwd);
+    if ('error' in graph) {
+      sendJson(res, 500, { error: graph.error });
+      return;
+    }
+
+    const normalizedId = milestoneId.toUpperCase();
+    const milestone = graph.milestones.find(
+      m => m.id.toUpperCase() === normalizedId
+    );
+
+    if (!milestone) {
+      sendJson(res, 404, { error: `Milestone '${milestoneId}' not found` });
+      return;
+    }
+
+    // Get existing actions for this milestone
+    const existingActions = graph.actions.filter(a =>
+      (a.causes || []).some(c => c.toUpperCase() === normalizedId)
+    );
+
+    const adr = getActionDerivationRunner(cwd);
+    const result = adr.derive(
+      { id: milestone.id, title: milestone.title, status: milestone.status, realizes: milestone.realizes || [] },
+      existingActions.map(a => ({ id: a.id, title: a.title, status: a.status, produces: a.produces || '' }))
+    );
+
+    if (result.error) {
+      sendJson(res, result.status || 500, { error: result.error });
+      return;
+    }
+
+    sendJson(res, 202, { ok: true, sessionId: result.sessionId });
+  } catch (err) {
+    sendJson(res, 500, { error: String(err) });
+  }
+}
+
+/**
+ * Handle POST /api/milestones/:id/actions/derive/stop
+ * @param {http.ServerResponse} res
+ * @param {string} cwd
+ */
+function handleActionDeriveStop(res, cwd) {
+  const adr = getActionDerivationRunner(cwd);
+  const result = adr.stop();
+  if (result.error) {
+    sendJson(res, result.status || 500, { error: result.error });
+  } else {
+    sendJson(res, 200, { ok: true });
+  }
+}
+
+/**
+ * Handle POST /api/milestones/:id/actions/derive/accept
+ * Accepts proposed actions and persists them to the milestone's PLAN.md.
+ *
+ * @param {http.IncomingMessage} req
+ * @param {http.ServerResponse} res
+ * @param {string} cwd
+ * @param {string} milestoneId
+ */
+async function handleActionDeriveAccept(req, res, cwd, milestoneId) {
+  try {
+    const body = await readJsonBody(req);
+    if (!body.actions || !Array.isArray(body.actions) || body.actions.length === 0) {
+      sendJson(res, 400, { error: 'Missing or empty actions array' });
+      return;
+    }
+
+    const graph = runLoadGraph(cwd);
+    if ('error' in graph) {
+      sendJson(res, 500, { error: graph.error });
+      return;
+    }
+
+    const normalizedId = milestoneId.toUpperCase();
+    const milestone = graph.milestones.find(
+      m => m.id.toUpperCase() === normalizedId
+    );
+
+    if (!milestone) {
+      sendJson(res, 404, { error: `Milestone '${milestoneId}' not found` });
+      return;
+    }
+
+    // Find milestone folder
+    const planningDir = path.join(cwd, '.planning');
+    const milestoneFolder = findMilestoneFolder(planningDir, milestone.id);
+
+    // Get existing actions from PLAN.md (if any)
+    let existingActions = [];
+    let planContent = '';
+    const planPath = milestoneFolder
+      ? path.join(milestoneFolder, 'PLAN.md')
+      : null;
+
+    if (planPath && fs.existsSync(planPath)) {
+      planContent = fs.readFileSync(planPath, 'utf-8');
+      const parsed = parsePlanFile(planContent);
+      existingActions = parsed.actions || [];
+    }
+
+    // Compute next action IDs — find the max existing action number
+    let maxActionNum = 0;
+    for (const a of graph.actions) {
+      const num = parseInt(a.id.split('-')[1], 10);
+      if (!isNaN(num) && num > maxActionNum) maxActionNum = num;
+    }
+
+    // Build merged action list
+    const newActions = [];
+    for (const input of body.actions) {
+      maxActionNum++;
+      const id = `A-${maxActionNum < 10 ? '0' + maxActionNum : maxActionNum}`;
+      newActions.push({
+        id,
+        title: input.title,
+        status: 'PENDING',
+        produces: input.produces || '',
+      });
+    }
+
+    const allActions = [...existingActions, ...newActions];
+
+    // Ensure milestone folder exists
+    const { ensureMilestoneFolder } = require('../artifacts/milestone-folders');
+    const folder = ensureMilestoneFolder(planningDir, milestone.id, milestone.title);
+    const targetPlanPath = path.join(folder, 'PLAN.md');
+
+    // Write PLAN.md
+    const realizes = milestone.realizes || [];
+    const output = writePlanFile(milestone.id, milestone.title, realizes, allActions);
+    fs.writeFileSync(targetPlanPath, output, 'utf-8');
+
+    // Update MILESTONES.md to mark hasPlan = true
+    const milestonesPath = path.join(planningDir, 'MILESTONES.md');
+    if (fs.existsSync(milestonesPath)) {
+      let milestonesContent = fs.readFileSync(milestonesPath, 'utf-8');
+      // Simple regex replace: find the milestone row and set Plan to YES
+      const rowPattern = new RegExp(`(\\|\\s*${milestone.id}\\s*\\|.*?)\\s*NO\\s*\\|\\s*$`, 'm');
+      if (rowPattern.test(milestonesContent)) {
+        milestonesContent = milestonesContent.replace(rowPattern, '$1 YES |');
+        fs.writeFileSync(milestonesPath, milestonesContent, 'utf-8');
+      }
+    }
+
+    sendJson(res, 200, {
+      actions: newActions,
+      milestoneId: milestone.id,
+    });
+    broadcastChange();
+  } catch (err) {
+    sendJson(res, 400, { error: String(err) });
+  }
+}
+
 /** @type {Set<http.ServerResponse>} Active SSE clients */
 const sseClients = new Set();
 
@@ -505,6 +701,19 @@ let derivationRunner = null;
 function getDerivationRunner(cwd) {
   if (!derivationRunner) derivationRunner = createDerivationRunner(sseClients, cwd);
   return derivationRunner;
+}
+
+/** @type {ReturnType<typeof createActionDerivationRunner> | null} */
+let actionDerivationRunner = null;
+
+/**
+ * Get or create the action derivation runner singleton.
+ * @param {string} cwd
+ * @returns {ReturnType<typeof createActionDerivationRunner>}
+ */
+function getActionDerivationRunner(cwd) {
+  if (!actionDerivationRunner) actionDerivationRunner = createActionDerivationRunner(sseClients, cwd);
+  return actionDerivationRunner;
 }
 
 /**
@@ -676,6 +885,25 @@ function route(req, res, cwd) {
       return;
     }
 
+    // Action derivation routes: POST /api/milestones/:id/actions/derive[/stop|/accept]
+    const actionDeriveMatch = urlPath.match(/^\/api\/milestones\/([^/]+)\/actions\/derive$/);
+    if (actionDeriveMatch) {
+      handleActionDerive(res, cwd, actionDeriveMatch[1]);
+      return;
+    }
+
+    const actionDeriveStopMatch = urlPath.match(/^\/api\/milestones\/([^/]+)\/actions\/derive\/stop$/);
+    if (actionDeriveStopMatch) {
+      handleActionDeriveStop(res, cwd);
+      return;
+    }
+
+    const actionDeriveAcceptMatch = urlPath.match(/^\/api\/milestones\/([^/]+)\/actions\/derive\/accept$/);
+    if (actionDeriveAcceptMatch) {
+      handleActionDeriveAccept(req, res, cwd, actionDeriveAcceptMatch[1]);
+      return;
+    }
+
     sendJson(res, 404, { error: `Route not found: ${urlPath}` });
     return;
   }
@@ -732,6 +960,14 @@ function route(req, res, cwd) {
   if (urlPath === '/api/derivation/running') {
     const dr = getDerivationRunner(cwd);
     sendJson(res, 200, { running: dr.running() });
+    return;
+  }
+
+  // GET /api/milestones/:id/actions/derive/running
+  const actionDeriveRunningMatch = urlPath.match(/^\/api\/milestones\/([^/]+)\/actions\/derive\/running$/);
+  if (actionDeriveRunningMatch) {
+    const adr = getActionDerivationRunner(cwd);
+    sendJson(res, 200, { running: adr.running() });
     return;
   }
 
