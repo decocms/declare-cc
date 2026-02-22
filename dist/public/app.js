@@ -54,6 +54,15 @@ let declFormLoading = false;
 /** @type {string|null} Current error message shown in the declaration form */
 let declFormError = null;
 
+/** @type {string|null} ID of declaration currently being edited */
+let editingDeclId = null;
+/** @type {boolean} Whether an edit save request is in flight */
+let editFormLoading = false;
+/** @type {string|null} Current error message shown in the edit form */
+let editFormError = null;
+/** @type {string|null} ID of declaration showing delete confirmation */
+let deleteConfirmId = null;
+
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
 
@@ -1226,6 +1235,13 @@ function escHtml(str) {
  */
 function renderPanelChain(item, type) {
   if (!graphData) return;
+
+  // If editing this declaration, render edit mode instead
+  if (type === 'declaration' && editingDeclId === item.id) {
+    renderDeclEditMode(item);
+    return;
+  }
+
   const { declarations, milestones, actions } = graphData;
   const sections = [];
 
@@ -1291,15 +1307,36 @@ function renderPanelChain(item, type) {
 
     // If this is the focus node, show its type-specific details below
     if (isFocus) {
-      if (s.type === 'declaration' && s.item.statement) {
-        html += `<div style="margin-top:14px">
-          <div class="detail-label">Statement</div>
-          <div class="detail-value" style="margin-top:5px">${escHtml(s.item.statement)}</div>
-        </div>`;
+      if (s.type === 'declaration') {
+        if (s.item.statement) {
+          html += `<div style="margin-top:14px">
+            <div class="detail-label">Statement</div>
+            <div class="detail-value" style="margin-top:5px">${escHtml(s.item.statement)}</div>
+          </div>`;
+        }
         const realizedBy = milestones.filter(m => (m.realizes || []).includes(s.item.id));
         if (realizedBy.length) {
           html += chainTagSection('Milestones', realizedBy, 'milestone');
         }
+
+        // Delete confirmation (shown inline if deleteConfirmId matches)
+        if (deleteConfirmId === s.item.id) {
+          html += `<div class="delete-confirm">
+            <p>Delete ${escHtml(s.item.id)}? This removes it from FUTURE.md.</p>
+            <div class="delete-confirm-actions">
+              <button class="btn-confirm-delete" id="confirm-delete-btn">Confirm Delete</button>
+              <button class="btn-confirm-cancel" id="cancel-delete-btn">Cancel</button>
+            </div>
+          </div>`;
+        }
+
+        // Edit / Delete buttons
+        html += `<div class="decl-panel-actions">
+          <button class="btn-edit" id="decl-edit-btn">Edit</button>
+          <button class="btn-panel-delete" id="decl-delete-btn">Delete</button>
+        </div>`;
+        // Error placeholder for delete errors
+        html += `<div class="form-error" id="decl-action-error" style="color:var(--broken-color);font-size:12px;margin-top:6px"></div>`;
       }
       if (s.type === 'milestone') {
         const causedBy = actions.filter(a => (a.causes || []).includes(s.item.id));

@@ -396,6 +396,88 @@ function handleExecuteAction(res, cwd, actionId) {
   }
 }
 
+/**
+ * Handle POST /api/milestones/derive
+ * Triggers a milestone derivation subprocess via the derivation runner.
+ *
+ * @param {http.IncomingMessage} req
+ * @param {http.ServerResponse} res
+ * @param {string} cwd
+ */
+async function handleDerive(req, res, cwd) {
+  try {
+    const body = await readJsonBody(req);
+    const graph = runLoadGraph(cwd);
+    if ('error' in graph) {
+      sendJson(res, 500, { error: graph.error });
+      return;
+    }
+
+    const declarations = graph.declarations.map(d => ({
+      id: d.id,
+      statement: d.statement,
+      milestones: d.milestones || [],
+    }));
+
+    const dr = getDerivationRunner(cwd);
+    const result = dr.derive(body.declarationId || null, declarations);
+    if (result.error) {
+      sendJson(res, result.status || 500, { error: result.error });
+      return;
+    }
+
+    sendJson(res, 202, { ok: true, sessionId: result.sessionId });
+  } catch (err) {
+    sendJson(res, 400, { error: String(err) });
+  }
+}
+
+/**
+ * Handle POST /api/milestones/derive/stop
+ * Stops the running derivation process.
+ *
+ * @param {http.ServerResponse} res
+ * @param {string} cwd
+ */
+function handleDeriveStop(res, cwd) {
+  const dr = getDerivationRunner(cwd);
+  const result = dr.stop();
+  if (result.error) {
+    sendJson(res, result.status || 500, { error: result.error });
+  } else {
+    sendJson(res, 200, { ok: true });
+  }
+}
+
+/**
+ * Handle POST /api/milestones/derive/accept
+ * Accepts proposed milestones and persists them via add-milestones-batch.
+ *
+ * @param {http.IncomingMessage} req
+ * @param {http.ServerResponse} res
+ * @param {string} cwd
+ */
+async function handleDeriveAccept(req, res, cwd) {
+  try {
+    const body = await readJsonBody(req);
+    if (!body.milestones || !Array.isArray(body.milestones) || body.milestones.length === 0) {
+      sendJson(res, 400, { error: 'Missing or empty milestones array' });
+      return;
+    }
+
+    const result = runAddMilestonesBatch(cwd, ['--json', JSON.stringify(body.milestones)]);
+    if ('error' in result) {
+      sendJson(res, 400, { error: result.error });
+      return;
+    }
+
+    sendJson(res, 200, result);
+    broadcastChange();
+  } catch (err) {
+    sendJson(res, 400, { error: String(err) });
+  }
+}
+
 /** @type {Set<http.ServerResponse>} Active SSE clients */
 const sseClients = new Set();
 
@@ -581,6 +663,19 @@ function route(req, res, cwd) {
       return;
     }
 
+    if (urlPath === '/api/milestones/derive') {
+      handleDerive(req, res, cwd);
+      return;
+    }
+    if (urlPath === '/api/milestones/derive/stop') {
+      handleDeriveStop(res, cwd);
+      return;
+    }
+    if (urlPath === '/api/milestones/derive/accept') {
+      handleDeriveAccept(req, res, cwd);
+      return;
+    }
+
     sendJson(res, 404, { error: `Route not found: ${urlPath}` });
     return;
   }
@@ -631,6 +726,12 @@ function route(req, res, cwd) {
   if (urlPath === '/api/running') {
     const pm = getProcessManager(cwd);
     sendJson(res, 200, { running: pm.running() });
+    return;
+  }
+
+  if (urlPath === '/api/derivation/running') {
+    const dr = getDerivationRunner(cwd);
+    sendJson(res, 200, { running: dr.running() });
     return;
   }
 
