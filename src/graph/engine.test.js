@@ -3,7 +3,7 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { DeclareDag, isCompleted, COMPLETED_STATUSES } = require('./engine');
+const { DeclareDag, isCompleted, COMPLETED_STATUSES, computeWorkabilityPath } = require('./engine');
 
 describe('DeclareDag', () => {
 
@@ -477,6 +477,137 @@ describe('DeclareDag', () => {
     assert.equal(isCompleted('PENDING'), false);
     assert.equal(isCompleted('ACTIVE'), false);
     assert.equal(isCompleted('BROKEN'), false);
+  });
+
+  // --------------------------------------------------------------------------
+  // Test 25: computeWorkabilityPath returns empty steps for whole node
+  // --------------------------------------------------------------------------
+  it('computeWorkabilityPath returns empty steps for whole node', () => {
+    const dag = new DeclareDag();
+    dag.addNode('D-01', 'declaration', 'Dec 1');
+    dag.addNode('M-01', 'milestone', 'Ms 1');
+    dag.addNode('A-01', 'action', 'Act 1', 'DONE');
+    dag.addEdge('A-01', 'M-01');
+    dag.addEdge('M-01', 'D-01');
+
+    const result = computeWorkabilityPath(dag, 'D-01');
+    assert.equal(result.nodeId, 'D-01');
+    assert.equal(result.wholeness, 'whole');
+    assert.deepEqual(result.steps, []);
+  });
+
+  // --------------------------------------------------------------------------
+  // Test 26: computeWorkabilityPath returns broken leaf actions
+  // --------------------------------------------------------------------------
+  it('computeWorkabilityPath returns broken leaf actions', () => {
+    const dag = new DeclareDag();
+    dag.addNode('D-01', 'declaration', 'Dec 1');
+    dag.addNode('M-01', 'milestone', 'Ms 1');
+    dag.addNode('A-01', 'action', 'Act 1', 'DONE');
+    dag.addNode('A-02', 'action', 'Act 2', 'PENDING');
+    dag.addEdge('A-01', 'M-01');
+    dag.addEdge('A-02', 'M-01');
+    dag.addEdge('M-01', 'D-01');
+
+    const result = computeWorkabilityPath(dag, 'D-01');
+    assert.equal(result.steps.length, 1);
+    assert.equal(result.steps[0].actionId, 'A-02');
+    assert.equal(result.steps[0].title, 'Act 2');
+    assert.equal(result.steps[0].milestoneId, 'M-01');
+  });
+
+  // --------------------------------------------------------------------------
+  // Test 27: computeWorkabilityPath computes impact correctly
+  // --------------------------------------------------------------------------
+  it('computeWorkabilityPath computes impact correctly', () => {
+    const dag = new DeclareDag();
+    dag.addNode('D-01', 'declaration', 'Dec 1');
+    dag.addNode('D-02', 'declaration', 'Dec 2');
+    dag.addNode('M-01', 'milestone', 'Ms 1');
+    dag.addNode('M-02', 'milestone', 'Ms 2');
+    dag.addNode('A-01', 'action', 'Act 1', 'PENDING');
+    dag.addEdge('A-01', 'M-01');
+    dag.addEdge('A-01', 'M-02');
+    dag.addEdge('M-01', 'D-01');
+    dag.addEdge('M-02', 'D-02');
+
+    const result = computeWorkabilityPath(dag, 'D-01');
+    assert.equal(result.steps.length, 1);
+    assert.equal(result.steps[0].actionId, 'A-01');
+    // A-01 blocks: M-01, M-02, D-01, D-02 = 4 non-whole ancestors >= 3
+    assert.equal(result.steps[0].impact, 'high');
+  });
+
+  // --------------------------------------------------------------------------
+  // Test 28: computeWorkabilityPath traverses multi-level DAG
+  // --------------------------------------------------------------------------
+  it('computeWorkabilityPath traverses multi-level DAG', () => {
+    const dag = new DeclareDag();
+    dag.addNode('D-01', 'declaration', 'Dec 1');
+    dag.addNode('M-01', 'milestone', 'Ms 1');
+    dag.addNode('M-02', 'milestone', 'Ms 2');
+    dag.addNode('A-01', 'action', 'Act 1', 'DONE');
+    dag.addNode('A-02', 'action', 'Act 2', 'PENDING');
+    dag.addNode('A-03', 'action', 'Act 3', 'PENDING');
+    dag.addEdge('A-01', 'M-01');
+    dag.addEdge('A-02', 'M-01');
+    dag.addEdge('A-03', 'M-02');
+    dag.addEdge('M-01', 'D-01');
+    dag.addEdge('M-02', 'D-01');
+
+    const result = computeWorkabilityPath(dag, 'D-01');
+    const actionIds = result.steps.map(s => s.actionId).sort();
+    assert.deepEqual(actionIds, ['A-02', 'A-03']);
+    // A-01 (DONE) should NOT appear
+    assert.ok(!result.steps.find(s => s.actionId === 'A-01'));
+  });
+
+  // --------------------------------------------------------------------------
+  // Test 29: computeWorkabilityPath throws for unknown node
+  // --------------------------------------------------------------------------
+  it('computeWorkabilityPath throws for unknown node', () => {
+    const dag = new DeclareDag();
+    dag.addNode('D-01', 'declaration', 'Dec 1');
+
+    assert.throws(
+      () => computeWorkabilityPath(dag, 'X-99'),
+      /Node not found/
+    );
+  });
+
+  // --------------------------------------------------------------------------
+  // Test 30: computeWorkabilityPath sorts by impact descending then by actionId
+  // --------------------------------------------------------------------------
+  it('computeWorkabilityPath sorts by impact descending then by actionId', () => {
+    const dag = new DeclareDag();
+    dag.addNode('D-01', 'declaration', 'Dec 1');
+    dag.addNode('D-02', 'declaration', 'Dec 2');
+    dag.addNode('D-03', 'declaration', 'Dec 3');
+    dag.addNode('M-01', 'milestone', 'Ms 1');
+    dag.addNode('M-02', 'milestone', 'Ms 2');
+    dag.addNode('M-03', 'milestone', 'Ms 3');
+    dag.addNode('A-01', 'action', 'High impact', 'PENDING');
+    dag.addNode('A-02', 'action', 'Medium impact', 'PENDING');
+
+    // A-01 causes M-01, M-02, M-03 (high impact: 3+ non-whole ancestors)
+    dag.addEdge('A-01', 'M-01');
+    dag.addEdge('A-01', 'M-02');
+    dag.addEdge('A-01', 'M-03');
+    dag.addEdge('M-01', 'D-01');
+    dag.addEdge('M-02', 'D-02');
+    dag.addEdge('M-03', 'D-03');
+
+    // A-02 causes only M-01 (medium impact: 1-2 non-whole ancestors)
+    dag.addEdge('A-02', 'M-01');
+
+    const result = computeWorkabilityPath(dag, 'D-01');
+    assert.ok(result.steps.length >= 2);
+    // A-01 should come first (high impact)
+    assert.equal(result.steps[0].actionId, 'A-01');
+    assert.equal(result.steps[0].impact, 'high');
+    // A-02 should come second (medium impact)
+    assert.equal(result.steps[1].actionId, 'A-02');
+    assert.equal(result.steps[1].impact, 'medium');
   });
 
 });

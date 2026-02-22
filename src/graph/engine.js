@@ -587,4 +587,117 @@ function computeWholeness(dag) {
   return dag.computeWholeness();
 }
 
-module.exports = { DeclareDag, COMPLETED_STATUSES, isCompleted, findOrphans, computeWholeness };
+/**
+ * Compute the workability path for a given node.
+ *
+ * Traces downward through non-whole children to find root-cause broken/pending
+ * actions that block wholeness. Each step includes impact scoring based on how
+ * many upstream nodes would be unblocked.
+ *
+ * @param {DeclareDag} dag
+ * @param {string} nodeId
+ * @returns {{ nodeId: string, wholeness: string, steps: Array<{actionId: string, title: string, milestoneId: string, impact: 'high'|'medium'|'low'}> }}
+ */
+function computeWorkabilityPath(dag, nodeId) {
+  if (!dag.getNode(nodeId)) {
+    throw new Error(`Node not found: ${nodeId}`);
+  }
+
+  const wholenessMap = dag.computeWholeness();
+  const nodeWholeness = wholenessMap.get(nodeId);
+
+  if (nodeWholeness === 'whole') {
+    return { nodeId, wholeness: 'whole', steps: [] };
+  }
+
+  // Walk downward through non-whole children to find broken leaf actions
+  const brokenActions = [];
+  const visited = new Set();
+
+  function walkDown(id) {
+    if (visited.has(id)) return;
+    visited.add(id);
+
+    const node = dag.getNode(id);
+    if (!node) return;
+
+    // If this is a broken action (not completed), collect it
+    if (node.type === 'action' && wholenessMap.get(id) === 'broken') {
+      brokenActions.push(node);
+      return;
+    }
+
+    // Walk down to non-whole children
+    const children = dag.downEdges.get(id);
+    if (!children) return;
+    for (const childId of children) {
+      if (wholenessMap.get(childId) !== 'whole') {
+        walkDown(childId);
+      }
+    }
+  }
+
+  walkDown(nodeId);
+
+  // For each broken action, compute impact
+  const steps = brokenActions.map(action => {
+    // Walk upEdges recursively to find all ancestors
+    const ancestors = new Set();
+    const ancestorVisited = new Set();
+
+    function walkUp(id) {
+      if (ancestorVisited.has(id)) return;
+      ancestorVisited.add(id);
+      const upTargets = dag.upEdges.get(id);
+      if (!upTargets) return;
+      for (const targetId of upTargets) {
+        ancestors.add(targetId);
+        walkUp(targetId);
+      }
+    }
+
+    walkUp(action.id);
+
+    // Count ancestors whose wholeness is NOT "whole"
+    let nonWholeCount = 0;
+    for (const ancestorId of ancestors) {
+      if (wholenessMap.get(ancestorId) !== 'whole') {
+        nonWholeCount++;
+      }
+    }
+
+    // Classify impact
+    let impact;
+    if (nonWholeCount >= 3) {
+      impact = 'high';
+    } else if (nonWholeCount >= 1) {
+      impact = 'medium';
+    } else {
+      impact = 'low';
+    }
+
+    // Find milestoneId: first milestone in upstream neighbors
+    const upstream = dag.getUpstream(action.id);
+    const milestone = upstream.find(n => n.type === 'milestone');
+    const milestoneId = milestone ? milestone.id : '';
+
+    return {
+      actionId: action.id,
+      title: action.title,
+      milestoneId,
+      impact,
+    };
+  });
+
+  // Sort by impact descending (high > medium > low), then by actionId
+  const impactOrder = { high: 0, medium: 1, low: 2 };
+  steps.sort((a, b) => {
+    const impactDiff = impactOrder[a.impact] - impactOrder[b.impact];
+    if (impactDiff !== 0) return impactDiff;
+    return a.actionId.localeCompare(b.actionId);
+  });
+
+  return { nodeId, wholeness: nodeWholeness, steps };
+}
+
+module.exports = { DeclareDag, COMPLETED_STATUSES, isCompleted, findOrphans, computeWholeness, computeWorkabilityPath };
