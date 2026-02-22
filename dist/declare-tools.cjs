@@ -3989,6 +3989,113 @@ var require_health_check = __commonJS({
   }
 });
 
+// src/commands/update-declaration.js
+var require_update_declaration = __commonJS({
+  "src/commands/update-declaration.js"(exports2, module2) {
+    "use strict";
+    var { existsSync, readFileSync, writeFileSync } = require("node:fs");
+    var { join } = require("node:path");
+    var { parseFutureFile, writeFutureFile } = require_future();
+    var { commitPlanningDocs: commitPlanningDocs2, loadConfig } = require_commit();
+    var { parseFlag } = require_parse_args();
+    function runUpdateDeclaration(cwd, args) {
+      const id = parseFlag(args, "id");
+      const title = parseFlag(args, "title");
+      const statement = parseFlag(args, "statement");
+      const status = parseFlag(args, "status");
+      if (!id) {
+        return { error: "Missing required flag: --id" };
+      }
+      if (!title && !statement && !status) {
+        return { error: "At least one of --title, --statement, or --status must be provided" };
+      }
+      const planningDir = join(cwd, ".planning");
+      const futurePath = join(planningDir, "FUTURE.md");
+      if (!existsSync(futurePath)) {
+        return { error: "FUTURE.md not found" };
+      }
+      const futureContent = readFileSync(futurePath, "utf-8");
+      const declarations = parseFutureFile(futureContent);
+      const decl = declarations.find((d) => d.id === id);
+      if (!decl) {
+        return { error: `Declaration not found: ${id}` };
+      }
+      if (title) decl.title = title;
+      if (statement) decl.statement = statement;
+      if (status) decl.status = status.toUpperCase();
+      const headerMatch = futureContent.match(/^# Future: (.+)/m);
+      const projectName = headerMatch ? headerMatch[1].trim() : "Project";
+      const content = writeFutureFile(declarations, projectName);
+      writeFileSync(futurePath, content, "utf-8");
+      const config = loadConfig(cwd);
+      let committed = false;
+      let hash;
+      if (config.commit_docs !== false) {
+        const result = commitPlanningDocs2(
+          cwd,
+          `declare: update ${id} "${decl.title}"`,
+          [".planning/FUTURE.md"]
+        );
+        committed = result.committed;
+        hash = result.hash;
+      }
+      return { id, title: decl.title, statement: decl.statement, status: decl.status, committed, hash };
+    }
+    module2.exports = { runUpdateDeclaration };
+  }
+});
+
+// src/commands/delete-declaration.js
+var require_delete_declaration = __commonJS({
+  "src/commands/delete-declaration.js"(exports2, module2) {
+    "use strict";
+    var { existsSync, readFileSync, writeFileSync } = require("node:fs");
+    var { join } = require("node:path");
+    var { parseFutureFile, writeFutureFile } = require_future();
+    var { commitPlanningDocs: commitPlanningDocs2, loadConfig } = require_commit();
+    var { parseFlag } = require_parse_args();
+    function runDeleteDeclaration(cwd, args) {
+      const id = parseFlag(args, "id");
+      if (!id) {
+        return { error: "Missing required flag: --id" };
+      }
+      const planningDir = join(cwd, ".planning");
+      const futurePath = join(planningDir, "FUTURE.md");
+      if (!existsSync(futurePath)) {
+        return { error: "FUTURE.md not found" };
+      }
+      const futureContent = readFileSync(futurePath, "utf-8");
+      const declarations = parseFutureFile(futureContent);
+      const decl = declarations.find((d) => d.id === id);
+      if (!decl) {
+        return { error: `Declaration not found: ${id}` };
+      }
+      if (decl.milestones && decl.milestones.length > 0) {
+        return { error: "Cannot delete declaration with linked milestones. Renegotiate instead." };
+      }
+      const filtered = declarations.filter((d) => d.id !== id);
+      const headerMatch = futureContent.match(/^# Future: (.+)/m);
+      const projectName = headerMatch ? headerMatch[1].trim() : "Project";
+      const content = writeFutureFile(filtered, projectName);
+      writeFileSync(futurePath, content, "utf-8");
+      const config = loadConfig(cwd);
+      let committed = false;
+      let hash;
+      if (config.commit_docs !== false) {
+        const result = commitPlanningDocs2(
+          cwd,
+          `declare: delete ${id} "${decl.title}"`,
+          [".planning/FUTURE.md"]
+        );
+        committed = result.committed;
+        hash = result.hash;
+      }
+      return { id, title: decl.title, deleted: true, committed, hash };
+    }
+    module2.exports = { runDeleteDeclaration };
+  }
+});
+
 // src/server/process-manager.js
 var require_process_manager = __commonJS({
   "src/server/process-manager.js"(exports2, module2) {
@@ -4043,18 +4150,35 @@ data: ${JSON.stringify(data)}
           cwd,
           env: { ...process.env, FORCE_COLOR: "0" }
         });
-        processes.set(actionId, { proc, milestoneId });
+        const planningDir = path.join(cwd, ".planning");
+        const milestoneFolder = findMilestoneFolder(planningDir, milestoneId);
+        let logPath;
+        if (milestoneFolder) {
+          logPath = path.join(milestoneFolder, "execution.log");
+        } else {
+          process.stderr.write(`[declare] Warning: milestone folder not found for ${milestoneId}, skipping execution log
+`);
+        }
+        processes.set(actionId, { proc, milestoneId, logPath });
+        appendLog(logPath, `
+=== START ${actionId} @ ${(/* @__PURE__ */ new Date()).toISOString()} ===`);
         if (proc.stdout) {
-          proc.stdout.on("data", createLineHandler(actionId, "stdout"));
+          proc.stdout.on("data", createLineHandler(actionId, "stdout", logPath));
         }
         if (proc.stderr) {
-          proc.stderr.on("data", createLineHandler(actionId, "stderr"));
+          proc.stderr.on("data", createLineHandler(actionId, "stderr", logPath));
         }
         proc.on("close", (exitCode) => {
+          const entry = processes.get(actionId);
+          appendLog(entry?.logPath, `=== END ${actionId} @ ${(/* @__PURE__ */ new Date()).toISOString()} exit=${exitCode ?? -1} ===
+`);
           processes.delete(actionId);
           broadcast("action-complete", { actionId, exitCode: exitCode ?? -1 });
         });
         proc.on("error", (_err) => {
+          const entry = processes.get(actionId);
+          appendLog(entry?.logPath, `=== ERROR ${actionId} @ ${(/* @__PURE__ */ new Date()).toISOString()} ===
+`);
           processes.delete(actionId);
           broadcast("action-complete", { actionId, exitCode: -1 });
         });
@@ -4088,6 +4212,9 @@ var require_server = __commonJS({
     var { runLoadGraph: runLoadGraph2 } = require_load_graph();
     var { runStatus: runStatus2 } = require_status();
     var { runGetExecPlan: runGetExecPlan2 } = require_get_exec_plan();
+    var { runAddDeclaration: runAddDeclaration2 } = require_add_declaration();
+    var { runUpdateDeclaration } = require_update_declaration();
+    var { runDeleteDeclaration } = require_delete_declaration();
     var { createProcessManager } = require_process_manager();
     var { buildDagFromDisk } = require_build_dag();
     var { computeWorkabilityPath } = require_engine();
