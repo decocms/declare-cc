@@ -2714,10 +2714,14 @@ async function loadExecPlan(actionId) {
     const actionStatus = actionItem ? (actionItem.status || 'PENDING') : 'PENDING';
     const isCompleted = COMPLETED.has(actionStatus);
     const isRunning = runningActions.has(actionId);
+    const reviewState = actionItem ? (actionItem.reviewState || 'draft') : 'draft';
+    const isApproved = reviewState === 'approved';
 
     if (!isCompleted) {
       if (isRunning) {
         html += `<div style="margin-bottom:14px"><button class="exec-btn stop" id="stop-action-btn" data-action-id="${actionId}">&#9632; Stop</button></div>`;
+      } else if (!isApproved) {
+        html += `<div style="margin-bottom:14px"><button class="exec-btn" id="exec-action-btn" data-action-id="${actionId}" disabled title="Plan must be approved before execution (currently: ${reviewState})">&#9654; Execute</button></div>`;
       } else {
         html += `<div style="margin-bottom:14px"><button class="exec-btn" id="exec-action-btn" data-action-id="${actionId}">&#9654; Execute</button></div>`;
       }
@@ -3030,11 +3034,23 @@ function updatePlayUI() {
     if (playRunning) {
       btn.textContent = 'Playing...';
       btn.disabled = true;
+      btn.title = '';
       btn.classList.add('playing');
     } else {
-      btn.textContent = 'Play All';
-      btn.disabled = false;
-      btn.classList.remove('playing');
+      // Check for unapproved non-DONE actions
+      const nonDoneActions = (graphData && graphData.actions || []).filter(a => !COMPLETED.has((a.status || '').toUpperCase()));
+      const unapproved = nonDoneActions.filter(a => (a.reviewState || 'draft') !== 'approved');
+      if (unapproved.length > 0) {
+        btn.textContent = 'Play All';
+        btn.disabled = true;
+        btn.title = `${unapproved.length} plan(s) need approval before execution`;
+        btn.classList.remove('playing');
+      } else {
+        btn.textContent = 'Play All';
+        btn.disabled = false;
+        btn.title = 'Execute all ready agent milestones in dependency order';
+        btn.classList.remove('playing');
+      }
     }
   }
 
