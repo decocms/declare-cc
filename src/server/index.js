@@ -1779,6 +1779,17 @@ function route(req, res, cwd) {
     return;
   }
 
+  if (urlPath === '/api/pipeline/state') {
+    const plr = getPipelineRunner(cwd);
+    const state = plr.getFullState();
+    if (state) {
+      sendJson(res, 200, { active: true, ...state });
+    } else {
+      sendJson(res, 200, { active: false });
+    }
+    return;
+  }
+
   if (urlPath === '/api/derivation/running') {
     const dr = getDerivationRunner(cwd);
     sendJson(res, 200, { running: dr.running() });

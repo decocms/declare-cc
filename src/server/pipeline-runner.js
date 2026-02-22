@@ -496,10 +496,12 @@ function createPipelineRunner(sseClients, cwd) {
       stopRequested = false;
       pausedOnFailure = null;
       pipelineState = null;
+      persistState(); // Cleans up state file
     })().catch((_err) => {
       isRunning = false;
       pausedOnFailure = null;
       pipelineState = null;
+      persistState(); // Cleans up state file
       broadcast('pipeline-complete', {
         completed: [],
         failed: [],
@@ -533,6 +535,7 @@ function createPipelineRunner(sseClients, cwd) {
       try { proc.kill('SIGTERM'); } catch (_) {}
     }
 
+    persistState();
     return { ok: true };
   }
 
@@ -585,7 +588,27 @@ function createPipelineRunner(sseClients, cwd) {
     return pausedOnFailure;
   }
 
-  return { start, stop, skip, running, paused, status };
+  /**
+   * Get full pipeline state for browser restore on page refresh.
+   * Returns null if pipeline is not active (not running and not paused).
+   * @returns {object | null}
+   */
+  function getFullState() {
+    if (!isRunning && !pausedOnFailure) return null;
+    return {
+      running: isRunning,
+      currentWave: pipelineState ? pipelineState.currentWave : 0,
+      totalWaves: pipelineState ? pipelineState.totalWaves : 0,
+      totalActions: totalActionCount,
+      completedActions: pipelineState ? pipelineState.completedActions : [],
+      failedActions: pipelineState ? pipelineState.failedActions : [],
+      activeActions: [...activeProcesses.keys()],
+      outputBuffers: outputBuffers,
+      pausedOnFailure: pausedOnFailure,
+    };
+  }
+
+  return { start, stop, skip, running, paused, status, getFullState };
 }
 
 module.exports = { createPipelineRunner };
