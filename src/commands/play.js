@@ -246,7 +246,36 @@ function createPlayRunner(sseClients, cwd) {
       return { error: graph.error };
     }
 
-    const { waves } = computePlayOrder(graph);
+    // Try manifest-driven order first, fall back to computed order
+    let waves;
+    const manifest = loadManifest(cwd);
+    if (manifest) {
+      // Convert manifest format to computePlayOrder format, filtering DONE actions
+      const actionStatusMap = new Map();
+      for (const a of (graph.actions || [])) {
+        actionStatusMap.set(a.id.toUpperCase(), (a.status || '').toUpperCase());
+      }
+
+      waves = manifest.waves
+        .map(w => {
+          const milestones = w.milestones
+            .map(m => {
+              const pendingActions = m.actions.filter(actionId => {
+                const status = actionStatusMap.get(actionId.toUpperCase()) || '';
+                return !DONE_STATUSES.has(status);
+              });
+              return pendingActions.length > 0
+                ? { milestoneId: m.id, actions: pendingActions }
+                : null;
+            })
+            .filter(Boolean);
+          return milestones.length > 0 ? milestones : null;
+        })
+        .filter(Boolean);
+    } else {
+      waves = computePlayOrder(graph).waves;
+    }
+
     if (waves.length === 0) {
       return { error: 'No ready agent milestones with pending actions' };
     }
@@ -393,4 +422,25 @@ function createPlayRunner(sseClients, cwd) {
   return { start, stop, running, status };
 }
 
-module.exports = { computePlayOrder, createPlayRunner };
+/**
+ * Load an execution manifest from disk.
+ * Returns the parsed manifest or null if the file does not exist or is invalid.
+ *
+ * @param {string} cwd
+ * @returns {{ waves: Array<{ waveNumber: number, milestones: Array<{ id: string, actions: string[] }> }>, confirmedAt?: string } | null}
+ */
+function loadManifest(cwd) {
+  const manifestPath = path.join(cwd, '.planning', 'execution-manifest.json');
+  try {
+    const raw = fs.readFileSync(manifestPath, 'utf8');
+    const data = JSON.parse(raw);
+    if (data && Array.isArray(data.waves) && data.waves.length > 0) {
+      return data;
+    }
+    return null;
+  } catch (_) {
+    return null;
+  }
+}
+
+module.exports = { computePlayOrder, createPlayRunner, loadManifest };
