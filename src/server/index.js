@@ -11,6 +11,7 @@
  *   GET /api/graph          - full graph (declarations, milestones, actions, stats)
  *   GET /api/status         - graph health and performance metrics
  *   GET /api/milestone/:id  - single milestone with full action details
+ *   GET /api/milestone/:id/log - execution log for a milestone (plain text)
  *   GET /events             - SSE stream; pushes 'change' event when .planning/ changes
  *   GET /                   - serve src/server/public/index.html
  *   GET /public/*           - serve static files from src/server/public/
@@ -34,8 +35,11 @@ const { runAddDeclaration } = require('../commands/add-declaration');
 const { runUpdateDeclaration } = require('../commands/update-declaration');
 const { runDeleteDeclaration } = require('../commands/delete-declaration');
 const { createProcessManager } = require('./process-manager');
+const { createDerivationRunner } = require('./derivation-runner');
+const { runAddMilestonesBatch } = require('../commands/add-milestones-batch');
 const { buildDagFromDisk } = require('../commands/build-dag');
 const { computeWorkabilityPath } = require('../graph/engine');
+const { findMilestoneFolder } = require('../artifacts/milestone-folders');
 
 /** @type {Record<string, string>} */
 const MIME_TYPES = {
@@ -231,6 +235,43 @@ function handleMilestone(res, cwd, milestoneId) {
 }
 
 /**
+ * Handle GET /api/milestone/:id/log
+ * Returns the execution.log content as plain text for a milestone.
+ *
+ * @param {http.ServerResponse} res
+ * @param {string} cwd
+ * @param {string} milestoneId
+ */
+function handleMilestoneLog(res, cwd, milestoneId) {
+  const planningDir = path.join(cwd, '.planning');
+  const milestoneFolder = findMilestoneFolder(planningDir, milestoneId);
+
+  if (!milestoneFolder) {
+    sendJson(res, 404, { error: 'Milestone folder not found' });
+    return;
+  }
+
+  const logPath = path.join(milestoneFolder, 'execution.log');
+  fs.readFile(logPath, 'utf-8', (err, data) => {
+    if (err) {
+      // Missing log file is not an error — return empty response
+      res.writeHead(200, {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Access-Control-Allow-Origin': '*',
+      });
+      res.end('');
+      return;
+    }
+    res.writeHead(200, {
+      'Content-Type': 'text/plain; charset=utf-8',
+      'Content-Length': Buffer.byteLength(data),
+      'Access-Control-Allow-Origin': '*',
+    });
+    res.end(data);
+  });
+}
+
+/**
  * Handle GET /api/workability/:id
  * Returns the workability path for a given node.
  *
@@ -369,6 +410,19 @@ let processManager = null;
 function getProcessManager(cwd) {
   if (!processManager) processManager = createProcessManager(sseClients, cwd);
   return processManager;
+}
+
+/** @type {ReturnType<typeof createDerivationRunner> | null} */
+let derivationRunner = null;
+
+/**
+ * Get or create the derivation runner singleton.
+ * @param {string} cwd
+ * @returns {ReturnType<typeof createDerivationRunner>}
+ */
+function getDerivationRunner(cwd) {
+  if (!derivationRunner) derivationRunner = createDerivationRunner(sseClients, cwd);
+  return derivationRunner;
 }
 
 /**
@@ -559,6 +613,12 @@ function route(req, res, cwd) {
   const workabilityMatch = urlPath.match(/^\/api\/workability\/([^/]+)$/);
   if (workabilityMatch) {
     handleWorkability(res, cwd, workabilityMatch[1]);
+    return;
+  }
+
+  const milestoneLogMatch = urlPath.match(/^\/api\/milestone\/([^/]+)\/log$/);
+  if (milestoneLogMatch) {
+    handleMilestoneLog(res, cwd, milestoneLogMatch[1]);
     return;
   }
 
