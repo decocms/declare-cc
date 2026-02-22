@@ -215,6 +215,9 @@ async function loadData() {
     // Fetch running actions (non-blocking — catch errors so it doesn't fail the whole load)
     await fetchRunningActions();
 
+    // Sync topbar with running operations
+    syncTopbarFromRunning();
+
     hideOverlay();
     renderStatusBar();
     renderGraph();
@@ -3272,6 +3275,45 @@ function switchView(mode) {
 
 // ─── Event wiring ─────────────────────────────────────────────────────────────
 
+// Topbar click — navigate to the referenced action/milestone in column browser
+if ($activityTopbar) {
+  $activityTopbar.addEventListener('click', function() {
+    var actionId = $activityTopbar.dataset.actionId;
+    var milestoneId = $activityTopbar.dataset.milestoneId;
+    if (!actionId && !milestoneId) return;
+    if (!graphData) return;
+
+    // Switch to column view if not already there
+    if (viewMode !== 'columns') {
+      switchView('columns');
+    }
+
+    // Navigate: find the declaration for this milestone, then select milestone, then action
+    if (milestoneId) {
+      var milestone = (graphData.milestones || []).find(function(m) { return m.id === milestoneId; });
+      if (milestone && milestone.realizes && milestone.realizes.length) {
+        colSelectedDecl = milestone.realizes[0];
+        colSelectedMile = milestoneId;
+        renderColumnBrowser();
+        selectNode(actionId || milestoneId, actionId ? 'action' : 'milestone');
+      }
+    } else if (actionId) {
+      // Try to find the milestone from the action
+      var action = (graphData.actions || []).find(function(a) { return a.id === actionId; });
+      if (action && action.causes && action.causes.length) {
+        var mId = action.causes[0];
+        var mile = (graphData.milestones || []).find(function(m) { return m.id === mId; });
+        if (mile && mile.realizes && mile.realizes.length) {
+          colSelectedDecl = mile.realizes[0];
+        }
+        colSelectedMile = mId;
+      }
+      renderColumnBrowser();
+      selectNode(actionId, 'action');
+    }
+  });
+}
+
 // File viewer modal close handlers
 document.getElementById('file-viewer-close').addEventListener('click', closeFileViewer);
 document.getElementById('file-viewer-modal').addEventListener('click', (e) => {
@@ -3448,6 +3490,91 @@ function fireConfetti() {
   setTimeout(() => { cancelAnimationFrame(frame); canvas.remove(); }, 8000);
 }
 
+// ─── Activity topbar ──────────────────────────────────────────────────────────
+
+const $activityTopbar = document.getElementById('activity-topbar');
+const $topbarContent  = document.getElementById('topbar-content');
+
+/** @type {{ actionId: string, milestoneId?: string, startedAt: number } | null} */
+let topbarActiveOp = null;
+/** @type {{ actionId: string, milestoneId?: string, completedAt: number } | null} */
+let topbarLastOp = null;
+
+function updateTopbar() {
+  if (!$topbarContent) return;
+  if (topbarActiveOp) {
+    const aLabel = topbarActiveOp.actionId;
+    const mLabel = topbarActiveOp.milestoneId ? ' -- ' + topbarActiveOp.milestoneId : '';
+    $topbarContent.innerHTML = '<span class="topbar-spinner"></span> <span class="topbar-label">EXECUTING ' + escHtml(aLabel) + escHtml(mLabel) + '</span>';
+    $activityTopbar.dataset.actionId = topbarActiveOp.actionId;
+    $activityTopbar.dataset.milestoneId = topbarActiveOp.milestoneId || '';
+  } else if (topbarLastOp) {
+    var ago = formatTimeAgo(topbarLastOp.completedAt);
+    $topbarContent.innerHTML = '<span class="topbar-idle-label">Last: ' + escHtml(topbarLastOp.actionId) + ' completed ' + ago + '</span>';
+    $activityTopbar.dataset.actionId = topbarLastOp.actionId;
+    $activityTopbar.dataset.milestoneId = topbarLastOp.milestoneId || '';
+  } else {
+    $topbarContent.innerHTML = '<span class="topbar-idle-label">No active operations</span>';
+    $activityTopbar.dataset.actionId = '';
+    $activityTopbar.dataset.milestoneId = '';
+  }
+}
+
+function formatTimeAgo(ts) {
+  var diff = Math.floor((Date.now() - ts) / 1000);
+  if (diff < 60) return diff + 's ago';
+  if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+  return Math.floor(diff / 3600) + 'h ago';
+}
+
+async function syncTopbarFromRunning() {
+  try {
+    var data = await fetchJson('/api/running');
+    var running = data.running || [];
+    if (running.length > 0) {
+      var actionId = running[0];
+      var milestoneId = '';
+      if (graphData) {
+        var action = (graphData.actions || []).find(function(a) { return a.id === actionId; });
+        if (action && action.causes && action.causes.length) milestoneId = action.causes[0];
+      }
+      topbarActiveOp = { actionId: actionId, milestoneId: milestoneId, startedAt: Date.now() };
+    }
+    updateTopbar();
+  } catch (_) {}
+}
+
+function topbarOnActionComplete(actionId) {
+  var milestoneId = topbarActiveOp && topbarActiveOp.actionId === actionId
+    ? topbarActiveOp.milestoneId : '';
+  topbarActiveOp = null;
+  topbarLastOp = { actionId: actionId, milestoneId: milestoneId || '', completedAt: Date.now() };
+  updateTopbar();
+}
+
+async function topbarOnActivity() {
+  try {
+    var res = await fetch('/api/activity');
+    var data = await res.json();
+    var events = data.events || [];
+    var taskStart = events.find(function(ev) { return ev.tool === 'Task' && ev.phase === 'start'; });
+    if (taskStart) {
+      var actionMatch = (taskStart.desc || '').match(/A-\d+/i);
+      var mileMatch = (taskStart.desc || '').match(/M-\d+/i);
+      if (actionMatch) {
+        topbarActiveOp = {
+          actionId: actionMatch[0].toUpperCase(),
+          milestoneId: mileMatch ? mileMatch[0].toUpperCase() : '',
+          startedAt: new Date(taskStart.ts).getTime() || Date.now(),
+        };
+        updateTopbar();
+      }
+    }
+  } catch (_) {}
+}
+
+setInterval(function() { if (!topbarActiveOp && topbarLastOp) updateTopbar(); }, 30000);
+
 // ─── Activity feed ────────────────────────────────────────────────────────────
 
 const $activityFeed   = document.getElementById('activity-feed');
@@ -3620,9 +3747,13 @@ function connectSSE() {
   });
   es.addEventListener('activity', () => {
     loadActivity();
+    topbarOnActivity();
   });
   es.addEventListener('action-output', handleActionOutput);
-  es.addEventListener('action-complete', handleActionComplete);
+  es.addEventListener('action-complete', function(e) {
+    handleActionComplete(e);
+    try { var d = JSON.parse(e.data); topbarOnActionComplete(d.actionId); } catch(_) {}
+  });
   es.addEventListener('derivation-output', handleDerivationOutput);
   es.addEventListener('derivation-complete', handleDerivationComplete);
   es.addEventListener('action-derivation-output', handleActionDerivationOutput);
