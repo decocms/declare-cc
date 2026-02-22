@@ -2164,6 +2164,25 @@
     .rb-link:hover { opacity: 0.8; }
     .rb-more { color: var(--text-dim); font-size: 12px; }
 
+    /* ── Review action buttons ── */
+    .review-actions {
+      display: flex; gap: 8px; align-items: center;
+      margin: 12px 0; padding: 10px;
+      background: var(--surface1, var(--surface));
+      border-radius: 6px;
+      border: 1px solid var(--border);
+    }
+    .ra-btn {
+      padding: 6px 14px; border-radius: 4px; border: 1px solid var(--border);
+      cursor: pointer; font-size: 13px; font-weight: 500;
+      background: var(--surface2, var(--surface)); color: var(--text);
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .ra-btn:hover { opacity: 0.85; }
+    .ra-approve.ra-active { background: var(--done-bg); color: var(--done-color); border-color: var(--done-border); }
+    .ra-revision.ra-active { background: var(--broken-bg); color: var(--broken-color); border-color: var(--broken-border); }
+    .ra-state { font-size: 12px; color: var(--text-dim); margin-left: auto; }
+
   </style>
 </head>
 <body>

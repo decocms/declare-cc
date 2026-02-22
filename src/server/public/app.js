@@ -1579,7 +1579,7 @@ async function renderAnnotationPanel(nodeId, type) {
     ? `<button class="ann-diff-toggle" id="ann-diff-toggle">Show Diff</button>`
     : '';
   let headerHtml = `<div class="detail-label" style="margin-bottom:10px;display:flex;align-items:center;justify-content:space-between">
-    <span style="display:flex;align-items:center">Annotations${roundBadge}${diffToggle}</span>
+    <span style="display:flex;align-items:center">Review &amp; Annotations${roundBadge}${diffToggle}</span>
     <span class="annotation-count">${commentCount} comment${commentCount !== 1 ? 's' : ''}</span>
   </div>`;
 
@@ -2000,6 +2000,14 @@ function selectNode(nodeId, type) {
   annotatingLine = null;
   renderPanelChain(item, type);
   renderAnnotationPanel(nodeId, type);
+
+  // In columns mode, auto-scroll to review controls for review-mode flow
+  if (viewMode === 'columns') {
+    setTimeout(() => {
+      const reviewEl = document.getElementById('review-actions');
+      if (reviewEl) reviewEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, 100);
+  }
 }
 
 /**
@@ -2377,6 +2385,19 @@ function renderPanelChain(item, type) {
       <span style="${badgeStyle};display:inline-block;padding:2px 9px;border-radius:8px;font-size:10px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase">${status}</span>
     </div>`;
 
+    // If this is the focus node, add review action buttons
+    if (isFocus) {
+      const reviewState = s.item.reviewState || 'draft';
+      const reviewLabel = REVIEW_DISPLAY[reviewState] || reviewState;
+      const approveActive = reviewState === 'approved' ? ' ra-active' : '';
+      const revisionActive = reviewState === 'revision_needed' ? ' ra-active' : '';
+      html += `<div class="review-actions" id="review-actions">
+        <button class="ra-btn ra-approve${approveActive}" data-action="approved" data-node-id="${s.item.id}">Approve</button>
+        <button class="ra-btn ra-revision${revisionActive}" data-action="revision_needed" data-node-id="${s.item.id}">Request Revision</button>
+        <span class="ra-state">Review: ${escHtml(reviewLabel)}</span>
+      </div>`;
+    }
+
     // If this is the focus node, show its type-specific details below
     if (isFocus) {
       if (s.type === 'declaration') {
@@ -2533,6 +2554,50 @@ function renderPanelChain(item, type) {
   });
 
   $panelBody.innerHTML = html;
+
+  // Wire review action buttons
+  $panelBody.querySelectorAll('.ra-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const targetState = btn.dataset.action;
+      const nodeId = btn.dataset.nodeId;
+      if (!targetState || !nodeId) return;
+      btn.disabled = true;
+      try {
+        const resp = await fetch('/api/node/' + encodeURIComponent(nodeId) + '/review-state', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reviewState: targetState }),
+        });
+        if (resp.ok) {
+          // Update local graphData
+          if (graphData) {
+            let node = null;
+            const focusS = sections.find(s => s.role === 'focus');
+            if (focusS) {
+              if (focusS.type === 'declaration') node = graphData.declarations.find(d => d.id === nodeId);
+              if (focusS.type === 'milestone')   node = graphData.milestones.find(m => m.id === nodeId);
+              if (focusS.type === 'action')      node = graphData.actions.find(a => a.id === nodeId);
+              if (node) node.reviewState = targetState;
+            }
+          }
+          // Update button active states visually
+          $panelBody.querySelectorAll('.ra-btn').forEach(b => b.classList.remove('ra-active'));
+          btn.classList.add('ra-active');
+          // Update state label
+          const stateLabel = $panelBody.querySelector('.ra-state');
+          if (stateLabel) stateLabel.textContent = 'Review: ' + (REVIEW_DISPLAY[targetState] || targetState);
+          // Update review badge in column browser / DAG
+          const badge = document.querySelector('.review-badge[data-node-id="' + nodeId + '"]');
+          if (badge) {
+            badge.className = 'review-badge review-' + targetState;
+            badge.dataset.reviewState = targetState;
+            badge.textContent = REVIEW_DISPLAY[targetState] || targetState;
+          }
+        }
+      } catch (_) { /* ignore */ }
+      btn.disabled = false;
+    });
+  });
 
   // Wire tag clicks
   $panelBody.querySelectorAll('[data-chain-id]').forEach(tag => {
