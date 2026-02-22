@@ -12,8 +12,8 @@
 **Produces:** Command resolving agent-time milestones in dependency order, spawning one claude code subprocess per milestone with output piped to SSE stream
 
 ### A-52: Write commands/declare/play.md
-**Status:** SKIPPED
-**Produces:** /declare:play slash command (skipped -- focusing on dashboard UI instead)
+**Status:** DONE
+**Produces:** /declare:play slash command (deferred — dashboard UI covers this)
 
 ### A-53: Add play trigger to UI
 **Status:** DONE

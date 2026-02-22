@@ -3511,6 +3511,11 @@ function switchView(mode) {
   }
 }
 
+// ─── Activity topbar (DOM refs — must be before event wiring) ─────────────────
+
+const $activityTopbar = document.getElementById('activity-topbar');
+const $topbarContent  = document.getElementById('topbar-content');
+
 // ─── Event wiring ─────────────────────────────────────────────────────────────
 
 // Topbar click — navigate to the referenced action/milestone in column browser
@@ -3739,9 +3744,6 @@ function fireConfetti() {
 }
 
 // ─── Activity topbar ──────────────────────────────────────────────────────────
-
-const $activityTopbar = document.getElementById('activity-topbar');
-const $topbarContent  = document.getElementById('topbar-content');
 
 /** @type {{ actionId: string, milestoneId?: string, startedAt: number } | null} */
 let topbarActiveOp = null;

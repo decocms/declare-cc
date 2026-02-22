@@ -44,7 +44,7 @@
     "esbuild": "^0.24.2"
   },
   "scripts": {
-    "test": "node --test src/graph/engine.test.js",
+    "test": "node --test src/graph/engine.test.js src/server/smoke.test.js",
     "build": "node esbuild.config.js",
     "release": "node scripts/release.js"
   }
