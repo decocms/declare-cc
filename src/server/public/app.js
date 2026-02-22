@@ -75,6 +75,11 @@ let actionDerivationMilestoneId = null;
 /** @type {Array<{title: string, produces: string, reason: string}> | null} */
 let actionDerivationProposals = null;
 
+/** @type {boolean} Whether the play sequence is currently running */
+let playRunning = false;
+/** @type {{ currentWave: number, totalWaves: number, activeActions: string[], completedActions: string[], failedActions: string[] } | null} */
+let playStatus = null;
+
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
 
@@ -2508,6 +2513,175 @@ function handleActionComplete(e) {
   } catch (_) {}
 }
 
+// ─── Play controls ────────────────────────────────────────────────────────────
+
+/**
+ * Start play: execute all ready agent milestones in wave order.
+ */
+async function startPlay() {
+  const btn = document.getElementById('play-btn');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Starting...';
+  }
+
+  try {
+    const res = await fetch('/api/play', { method: 'POST' });
+    const data = await res.json();
+    if (data.error) {
+      if (btn) { btn.disabled = false; btn.textContent = 'Play All'; }
+      alert('Play error: ' + data.error);
+      return;
+    }
+    playRunning = true;
+    updatePlayUI();
+  } catch (err) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Play All'; }
+    alert('Failed to start play: ' + err);
+  }
+}
+
+/**
+ * Stop the running play sequence.
+ */
+async function stopPlay() {
+  try {
+    await fetch('/api/play/stop', { method: 'POST' });
+  } catch (_) {}
+}
+
+/**
+ * Update play button and banner based on current play state.
+ */
+function updatePlayUI() {
+  const btn = document.getElementById('play-btn');
+  const banner = document.getElementById('play-banner');
+
+  if (btn) {
+    if (playRunning) {
+      btn.textContent = 'Playing...';
+      btn.disabled = true;
+      btn.classList.add('playing');
+    } else {
+      btn.textContent = 'Play All';
+      btn.disabled = false;
+      btn.classList.remove('playing');
+    }
+  }
+
+  if (banner) {
+    if (playRunning && playStatus) {
+      banner.classList.add('visible');
+      const waveLabel = document.getElementById('play-wave-label');
+      if (waveLabel) {
+        waveLabel.textContent = `Wave ${playStatus.currentWave}/${playStatus.totalWaves}`;
+      }
+      const actionsList = document.getElementById('play-actions-list');
+      if (actionsList) {
+        actionsList.innerHTML = '';
+        for (const aId of (playStatus.activeActions || [])) {
+          const tag = document.createElement('span');
+          tag.className = 'play-action-tag active';
+          tag.textContent = aId;
+          actionsList.appendChild(tag);
+        }
+        for (const aId of (playStatus.completedActions || [])) {
+          const tag = document.createElement('span');
+          tag.className = 'play-action-tag done';
+          tag.textContent = aId;
+          actionsList.appendChild(tag);
+        }
+        for (const aId of (playStatus.failedActions || [])) {
+          const tag = document.createElement('span');
+          tag.className = 'play-action-tag failed';
+          tag.textContent = aId;
+          actionsList.appendChild(tag);
+        }
+      }
+    } else {
+      banner.classList.remove('visible');
+    }
+  }
+}
+
+/**
+ * Handle play-start SSE event.
+ * @param {MessageEvent} e
+ */
+function handlePlayStart(e) {
+  try {
+    const data = JSON.parse(e.data);
+    playRunning = true;
+    playStatus = {
+      currentWave: 0,
+      totalWaves: data.totalWaves,
+      activeActions: [],
+      completedActions: [],
+      failedActions: [],
+    };
+    updatePlayUI();
+  } catch (_) {}
+}
+
+/**
+ * Handle play-wave-start SSE event.
+ * @param {MessageEvent} e
+ */
+function handlePlayWaveStart(e) {
+  try {
+    const data = JSON.parse(e.data);
+    if (playStatus) {
+      playStatus.currentWave = data.wave;
+      playStatus.activeActions = [];
+      for (const m of (data.milestones || [])) {
+        for (const aId of (m.actions || [])) {
+          playStatus.activeActions.push(aId);
+        }
+      }
+    }
+    updatePlayUI();
+  } catch (_) {}
+}
+
+/**
+ * Handle play-wave-complete SSE event.
+ * @param {MessageEvent} e
+ */
+function handlePlayWaveComplete(e) {
+  try {
+    const data = JSON.parse(e.data);
+    if (playStatus) {
+      playStatus.activeActions = [];
+      for (const aId of (data.completed || [])) {
+        playStatus.completedActions.push(aId);
+      }
+      for (const aId of (data.failed || [])) {
+        playStatus.failedActions.push(aId);
+      }
+    }
+    updatePlayUI();
+    loadData(); // refresh graph after each wave
+  } catch (_) {}
+}
+
+/**
+ * Handle play-complete SSE event.
+ * @param {MessageEvent} e
+ */
+function handlePlayComplete(e) {
+  try {
+    const data = JSON.parse(e.data);
+    playRunning = false;
+    // Keep playStatus briefly for display, then clear
+    setTimeout(() => {
+      playStatus = null;
+      updatePlayUI();
+    }, 3000);
+    updatePlayUI();
+    loadData(); // final refresh
+  } catch (_) {}
+}
+
 // ─── Derivation controls ──────────────────────────────────────────────────────
 
 /**
@@ -3416,6 +3590,16 @@ $refreshBtn.addEventListener('click', () => {
   loadData();
 });
 
+// Play button
+const $playBtn = document.getElementById('play-btn');
+if ($playBtn) {
+  $playBtn.addEventListener('click', startPlay);
+}
+const $playStopBtn = document.getElementById('play-stop-btn');
+if ($playStopBtn) {
+  $playStopBtn.addEventListener('click', stopPlay);
+}
+
 // ESC to exit focus mode; arrow keys to navigate between declarations (DAG view only)
 document.addEventListener('keydown', (e) => {
   // Skip DAG keyboard handling when column browser is active
@@ -3822,6 +4006,10 @@ function connectSSE() {
   es.addEventListener('derivation-complete', handleDerivationComplete);
   es.addEventListener('action-derivation-output', handleActionDerivationOutput);
   es.addEventListener('action-derivation-complete', handleActionDerivationComplete);
+  es.addEventListener('play-start', handlePlayStart);
+  es.addEventListener('play-wave-start', handlePlayWaveStart);
+  es.addEventListener('play-wave-complete', handlePlayWaveComplete);
+  es.addEventListener('play-complete', handlePlayComplete);
   es.addEventListener('error', () => {
     // Connection dropped — reconnect after 3s
     es.close();

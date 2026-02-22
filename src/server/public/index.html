@@ -1022,6 +1022,84 @@
     }
     .new-decl-btn:hover { background: #0f2d50; border-color: var(--decl-color); }
 
+    /* Play All button */
+    .play-btn {
+      background: #0a2018;
+      border: 1px solid var(--act-border);
+      color: var(--act-color);
+      padding: 5px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .play-btn:hover { background: #0f3020; border-color: var(--act-color); }
+    .play-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .play-btn.playing {
+      background: var(--executing-bg);
+      border-color: var(--executing-border);
+      color: var(--executing-color);
+      animation: pulse-play 1.5s ease-in-out infinite;
+    }
+    @keyframes pulse-play {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
+    }
+
+    /* Play progress banner */
+    #play-banner {
+      display: none;
+      background: var(--surface);
+      border-bottom: 1px solid var(--executing-border);
+      padding: 8px 20px;
+      font-size: 12px;
+      color: var(--text);
+      align-items: center;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+    #play-banner.visible { display: flex; }
+    #play-banner .play-wave-label {
+      color: var(--executing-color);
+      font-weight: 600;
+    }
+    #play-banner .play-actions-list {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    #play-banner .play-action-tag {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 2px 8px;
+      font-size: 11px;
+    }
+    #play-banner .play-action-tag.active {
+      border-color: var(--executing-border);
+      color: var(--executing-color);
+    }
+    #play-banner .play-action-tag.done {
+      border-color: var(--act-border);
+      color: var(--act-color);
+    }
+    #play-banner .play-action-tag.failed {
+      border-color: var(--broken-border);
+      color: var(--broken-color);
+    }
+    .play-stop-btn {
+      background: var(--broken-bg);
+      border: 1px solid var(--broken-border);
+      color: var(--broken-color);
+      padding: 3px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 11px;
+      margin-left: auto;
+    }
+    .play-stop-btn:hover { background: #3a0a10; }
+
     /* Scrollbar for column panels */
     .col-panel::-webkit-scrollbar { width: 4px; }
     .col-panel::-webkit-scrollbar-track { background: transparent; }
@@ -1715,6 +1793,7 @@
   <span id="health-badge" class="health-badge health-unknown">–</span>
   <span class="spacer"></span>
   <button id="new-decl-btn" class="new-decl-btn">+ Declaration</button>
+  <button id="play-btn" class="play-btn" title="Execute all ready agent milestones in dependency order">Play All</button>
   <span id="last-updated"></span>
   <button id="view-toggle" title="Switch view">
     <span id="view-toggle-label">Columns</span>
@@ -1729,6 +1808,13 @@
   <span class="wf-pct" id="wf-pct"></span>
   <span class="wf-next-label" id="wf-next-label"></span>
   <button class="wf-action-btn" id="wf-action-btn"></button>
+</div>
+
+<!-- Play progress banner -->
+<div id="play-banner">
+  <span class="play-wave-label" id="play-wave-label">Wave 0/0</span>
+  <div class="play-actions-list" id="play-actions-list"></div>
+  <button class="play-stop-btn" id="play-stop-btn">Stop</button>
 </div>
 
 <!-- Main -->
