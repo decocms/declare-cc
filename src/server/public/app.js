@@ -63,6 +63,11 @@ let editFormError = null;
 /** @type {string|null} ID of declaration showing delete confirmation */
 let deleteConfirmId = null;
 
+/** @type {string | null} Active derivation session ID */
+let derivationSessionId = null;
+/** @type {Array<{title: string, realizes: string, reason: string}> | null} */
+let derivationProposals = null;
+
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
 
@@ -207,6 +212,16 @@ async function loadData() {
     if (selectedNodeId) {
       const el = document.querySelector(`[data-node-id="${selectedNodeId}"]`);
       if (el) el.classList.add('selected');
+    }
+
+    // Clean up edit state if the edited declaration no longer exists
+    if (editingDeclId && graph && graph.declarations) {
+      const stillExists = graph.declarations.some(d => d.id === editingDeclId);
+      if (!stillExists) {
+        editingDeclId = null;
+        editFormError = null;
+        editFormLoading = false;
+      }
     }
   } catch (err) {
     showError(
@@ -1489,6 +1504,193 @@ async function loadMilestoneLog(milestoneId) {
   }
 }
 
+// ─── Declaration inline edit mode ──────────────────────────────────────────
+
+/**
+ * Render the declaration detail panel in edit mode.
+ * @param {any} item - the declaration object
+ */
+function renderDeclEditMode(item) {
+  const status = item.status || 'PENDING';
+  const statuses = ['PENDING', 'ACTIVE', 'DONE', 'HONORED', 'KEPT'];
+
+  const optionsHtml = statuses.map(s =>
+    `<option value="${s}" ${s === status ? 'selected' : ''}>${s}</option>`
+  ).join('');
+
+  const errorHtml = editFormError
+    ? `<div class="form-error" id="edit-decl-error" style="color:var(--broken-color);font-size:12px;margin-top:8px">${escHtml(editFormError)}</div>`
+    : '<div class="form-error" id="edit-decl-error" style="color:var(--broken-color);font-size:12px;margin-top:8px"></div>';
+
+  const saveLabel = editFormLoading ? 'Saving...' : 'Save';
+  const disabledAttr = editFormLoading ? 'disabled' : '';
+
+  $panelBody.innerHTML = `
+    <div class="detail-id">DECLARATION &middot; ${escHtml(item.id)}</div>
+    <div class="decl-edit-mode">
+      <label>Title</label>
+      <input id="edit-decl-title" value="${escHtml(item.title || '')}" ${disabledAttr} />
+      <label>Statement</label>
+      <textarea id="edit-decl-statement" rows="4" ${disabledAttr}>${escHtml(item.statement || '')}</textarea>
+      <label>Status</label>
+      <select id="edit-decl-status" class="decl-status-select" ${disabledAttr}>
+        ${optionsHtml}
+      </select>
+      <div class="decl-edit-actions">
+        <button class="btn-save" id="edit-decl-save" ${disabledAttr}>${saveLabel}</button>
+        <button class="btn-cancel" id="edit-decl-cancel">Cancel</button>
+      </div>
+      ${errorHtml}
+    </div>
+  `;
+
+  // Wire save button
+  const $save = document.getElementById('edit-decl-save');
+  if ($save) $save.addEventListener('click', () => saveDeclEdit(item.id));
+
+  // Wire cancel button
+  const $cancel = document.getElementById('edit-decl-cancel');
+  if ($cancel) {
+    $cancel.addEventListener('click', () => {
+      editingDeclId = null;
+      editFormError = null;
+      editFormLoading = false;
+      // Re-render the panel with the original item
+      selectNode(item.id, 'declaration');
+    });
+  }
+
+  // Wire Cmd/Ctrl+Enter in textarea to save
+  const $stmt = document.getElementById('edit-decl-statement');
+  if ($stmt) {
+    $stmt.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        saveDeclEdit(item.id);
+      }
+    });
+  }
+
+  // Auto-focus the title input
+  const $title = document.getElementById('edit-decl-title');
+  if ($title && !editFormLoading) {
+    requestAnimationFrame(() => $title.focus());
+  }
+}
+
+/**
+ * Save declaration edits via PUT /api/declarations/:id.
+ * @param {string} id - declaration ID
+ */
+async function saveDeclEdit(id) {
+  if (editFormLoading) return;
+
+  const $title = document.getElementById('edit-decl-title');
+  const $stmt  = document.getElementById('edit-decl-statement');
+  const $status = document.getElementById('edit-decl-status');
+
+  const title     = ($title ? $title.value : '').trim();
+  const statement = ($stmt  ? $stmt.value  : '').trim();
+  const status    = $status ? $status.value : 'PENDING';
+
+  // Validate
+  if (!title) {
+    editFormError = 'Title is required';
+    const item = graphData ? graphData.declarations.find(d => d.id === id) : null;
+    if (item) renderDeclEditMode(item);
+    return;
+  }
+  if (!statement) {
+    editFormError = 'Statement is required';
+    const item = graphData ? graphData.declarations.find(d => d.id === id) : null;
+    if (item) renderDeclEditMode(item);
+    return;
+  }
+
+  // Set loading state
+  editFormLoading = true;
+  editFormError = null;
+  const item = graphData ? graphData.declarations.find(d => d.id === id) : null;
+  if (item) renderDeclEditMode(item);
+
+  try {
+    const res = await fetch('/api/declarations/' + encodeURIComponent(id), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, statement, status }),
+    });
+
+    if (res.ok) {
+      editingDeclId = null;
+      editFormLoading = false;
+      editFormError = null;
+      await loadData();
+      // Re-select the node to refresh panel
+      if (selectedNodeId === id && graphData) {
+        const updated = graphData.declarations.find(d => d.id === id);
+        if (updated) {
+          renderPanelChain(updated, 'declaration');
+        }
+      }
+    } else {
+      const data = await res.json().catch(() => ({}));
+      editFormError = data.error || `Server error (${res.status})`;
+      editFormLoading = false;
+      const currentItem = graphData ? graphData.declarations.find(d => d.id === id) : null;
+      if (currentItem) renderDeclEditMode(currentItem);
+    }
+  } catch (err) {
+    editFormError = err.message || 'Network error';
+    editFormLoading = false;
+    const currentItem = graphData ? graphData.declarations.find(d => d.id === id) : null;
+    if (currentItem) renderDeclEditMode(currentItem);
+  }
+}
+
+/**
+ * Delete a declaration via DELETE /api/declarations/:id.
+ * @param {string} id - declaration ID
+ */
+async function deleteDeclaration(id) {
+  try {
+    const res = await fetch('/api/declarations/' + encodeURIComponent(id), {
+      method: 'DELETE',
+    });
+
+    if (res.ok) {
+      deleteConfirmId = null;
+      selectedNodeId = null;
+      editingDeclId = null;
+      if ($panelEmpty) $panelEmpty.style.display = '';
+      $panelBody.innerHTML = '';
+      $panelBody.appendChild($panelEmpty);
+      await loadData();
+    } else {
+      const data = await res.json().catch(() => ({}));
+      deleteConfirmId = null;
+      // Show error in the panel
+      const errorEl = document.getElementById('decl-action-error');
+      if (errorEl) {
+        errorEl.textContent = data.error || `Could not delete (${res.status})`;
+      } else {
+        // Re-render and show error
+        const currentItem = graphData ? graphData.declarations.find(d => d.id === id) : null;
+        if (currentItem) {
+          renderPanelChain(currentItem, 'declaration');
+          const err2 = document.getElementById('decl-action-error');
+          if (err2) err2.textContent = data.error || `Could not delete (${res.status})`;
+        }
+      }
+    }
+  } catch (err) {
+    deleteConfirmId = null;
+    const errorEl = document.getElementById('decl-action-error');
+    if (errorEl) {
+      errorEl.textContent = err.message || 'Network error';
+    }
+  }
+}
+
 function chainTagSection(label, items, type) {
   const tags = items.map(item => {
     const name = item.title || item.id;
@@ -2576,6 +2778,8 @@ function connectSSE() {
   });
   es.addEventListener('action-output', handleActionOutput);
   es.addEventListener('action-complete', handleActionComplete);
+  es.addEventListener('derivation-output', handleDerivationOutput);
+  es.addEventListener('derivation-complete', handleDerivationComplete);
   es.addEventListener('error', () => {
     // Connection dropped — reconnect after 3s
     es.close();

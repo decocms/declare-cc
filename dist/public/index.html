@@ -1323,6 +1323,82 @@
     .wp-impact.impact-medium { background: #1a1200; color: var(--integrity-partial); border: 1px solid #3d2c00; }
     .wp-impact.impact-low    { background: #0a2018; color: var(--integrity-whole); border: 1px solid #1a4d34; }
 
+    /* ── Derivation panel ── */
+    .derivation-panel {
+      margin-top: 12px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px;
+      background: var(--bg);
+    }
+    .derivation-panel .output-log {
+      max-height: 200px;
+      overflow-y: auto;
+      font-family: 'SF Mono', Monaco, monospace;
+      font-size: 11px;
+      padding: 8px;
+      background: #1a1a2e;
+      color: #ccc;
+      border-radius: 4px;
+      white-space: pre-wrap;
+      margin-bottom: 12px;
+    }
+    .derivation-checklist { list-style: none; padding: 0; margin: 8px 0; }
+    .derivation-checklist li {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .derivation-checklist li:last-child { border-bottom: none; }
+    .derivation-checklist input[type="checkbox"] { flex-shrink: 0; }
+    .derivation-checklist input[type="text"] {
+      flex: 1;
+      background: var(--bg);
+      color: var(--fg, var(--text));
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 4px 6px;
+      font-size: 13px;
+    }
+    .derivation-checklist .reason {
+      font-size: 11px;
+      color: #888;
+      margin-left: 28px;
+      display: block;
+    }
+    .derive-btn {
+      background: var(--accent, #4a6cf7);
+      color: #fff;
+      border: none;
+      padding: 6px 14px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .derive-btn:hover { opacity: 0.85; }
+    .derive-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .derive-accept-btn {
+      background: #2ea043;
+      color: #fff;
+      border: none;
+      padding: 6px 14px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+      margin-right: 8px;
+    }
+    .derive-cancel-btn {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 6px 14px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+
   </style>
 </head>
 <body>
