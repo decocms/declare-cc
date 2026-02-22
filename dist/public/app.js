@@ -120,6 +120,7 @@ const $panelBody     = document.getElementById('panel-body');
 const $panelEmpty    = document.getElementById('panel-empty');
 
 const $colBrowser    = document.getElementById('column-browser');
+const $readinessBanner = document.getElementById('readiness-banner');
 const $colDeclList   = document.getElementById('col-decl-list');
 const $colMileList   = document.getElementById('col-mile-list');
 const $colActList    = document.getElementById('col-act-list');
@@ -897,6 +898,104 @@ function renderColumnBrowser() {
   if (isColumnBrowserActive()) {
     updateKbFocus();
   }
+
+  // Update readiness banner
+  renderReadinessBanner();
+}
+
+// ─── Readiness banner ─────────────────────────────────────────────────────────
+
+/**
+ * Render the global readiness indicator banner showing how many plans are
+ * approved vs total, with clickable links to unapproved nodes.
+ * Called at the end of renderColumnBrowser() so it updates on every SSE refresh.
+ */
+function renderReadinessBanner() {
+  if (!$readinessBanner || !graphData) return;
+
+  // Show banner only in column browser mode
+  if (!isColumnBrowserActive()) {
+    $readinessBanner.classList.remove('active');
+    return;
+  }
+  $readinessBanner.classList.add('active');
+
+  const allNodes = [
+    ...(graphData.declarations || []).map(n => ({ ...n, _type: 'declaration' })),
+    ...(graphData.milestones || []).map(n => ({ ...n, _type: 'milestone' })),
+    ...(graphData.actions || []).map(n => ({ ...n, _type: 'action' })),
+  ];
+
+  const total = allNodes.length;
+  const approved = allNodes.filter(n => n.reviewState === 'approved');
+  const unapproved = allNodes.filter(n => n.reviewState !== 'approved');
+  const approvedCount = approved.length;
+
+  if (total === 0) {
+    $readinessBanner.innerHTML = '<span class="rb-remaining">No nodes to review</span>';
+    return;
+  }
+
+  if (unapproved.length === 0) {
+    $readinessBanner.innerHTML = `<span class="rb-complete">All ${total} nodes approved</span>`;
+    return;
+  }
+
+  const MAX_LINKS = 8;
+  const shown = unapproved.slice(0, MAX_LINKS);
+  const remaining = unapproved.length - shown.length;
+
+  let linksHtml = shown.map(n =>
+    `<a class="rb-link" data-node-id="${escHtml(n.id)}" data-node-type="${n._type}">${escHtml(n.id)}</a>`
+  ).join('');
+
+  if (remaining > 0) {
+    linksHtml += `<span class="rb-more">+ ${remaining} more</span>`;
+  }
+
+  $readinessBanner.innerHTML =
+    `<span class="rb-progress">${approvedCount}/${total} approved</span>` +
+    `<span class="rb-remaining">${unapproved.length} need review:</span>` +
+    linksHtml;
+
+  // Wire click handlers on links
+  $readinessBanner.querySelectorAll('.rb-link').forEach(link => {
+    link.addEventListener('click', function(e) {
+      e.preventDefault();
+      const nodeId = this.dataset.nodeId;
+      const nodeType = this.dataset.nodeType;
+
+      // Navigate the column browser to the clicked node
+      if (nodeType === 'declaration') {
+        colSelectedDecl = nodeId;
+        colSelectedMile = null;
+        renderColumnBrowser();
+        selectNode(nodeId, 'declaration');
+      } else if (nodeType === 'milestone') {
+        // Find the declaration this milestone realizes
+        const milestone = (graphData.milestones || []).find(m => m.id === nodeId);
+        if (milestone && milestone.realizes && milestone.realizes.length) {
+          colSelectedDecl = milestone.realizes[0];
+        }
+        colSelectedMile = nodeId;
+        renderColumnBrowser();
+        selectNode(nodeId, 'milestone');
+      } else if (nodeType === 'action') {
+        // Find the milestone this action belongs to, then its declaration
+        const action = (graphData.actions || []).find(a => a.id === nodeId);
+        if (action && action.causes && action.causes.length) {
+          const mileId = action.causes[0];
+          colSelectedMile = mileId;
+          const milestone = (graphData.milestones || []).find(m => m.id === mileId);
+          if (milestone && milestone.realizes && milestone.realizes.length) {
+            colSelectedDecl = milestone.realizes[0];
+          }
+        }
+        renderColumnBrowser();
+        selectNode(nodeId, 'action');
+      }
+    });
+  });
 }
 
 // ─── Column browser keyboard navigation ──────────────────────────────────────
@@ -1480,7 +1579,7 @@ async function renderAnnotationPanel(nodeId, type) {
     ? `<button class="ann-diff-toggle" id="ann-diff-toggle">Show Diff</button>`
     : '';
   let headerHtml = `<div class="detail-label" style="margin-bottom:10px;display:flex;align-items:center;justify-content:space-between">
-    <span style="display:flex;align-items:center">Annotations${roundBadge}${diffToggle}</span>
+    <span style="display:flex;align-items:center">Review &amp; Annotations${roundBadge}${diffToggle}</span>
     <span class="annotation-count">${commentCount} comment${commentCount !== 1 ? 's' : ''}</span>
   </div>`;
 
@@ -1901,6 +2000,14 @@ function selectNode(nodeId, type) {
   annotatingLine = null;
   renderPanelChain(item, type);
   renderAnnotationPanel(nodeId, type);
+
+  // In columns mode, auto-scroll to review controls for review-mode flow
+  if (viewMode === 'columns') {
+    setTimeout(() => {
+      const reviewEl = document.getElementById('review-actions');
+      if (reviewEl) reviewEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, 100);
+  }
 }
 
 /**
@@ -2278,6 +2385,19 @@ function renderPanelChain(item, type) {
       <span style="${badgeStyle};display:inline-block;padding:2px 9px;border-radius:8px;font-size:10px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase">${status}</span>
     </div>`;
 
+    // If this is the focus node, add review action buttons
+    if (isFocus) {
+      const reviewState = s.item.reviewState || 'draft';
+      const reviewLabel = REVIEW_DISPLAY[reviewState] || reviewState;
+      const approveActive = reviewState === 'approved' ? ' ra-active' : '';
+      const revisionActive = reviewState === 'revision_needed' ? ' ra-active' : '';
+      html += `<div class="review-actions" id="review-actions">
+        <button class="ra-btn ra-approve${approveActive}" data-action="approved" data-node-id="${s.item.id}">Approve</button>
+        <button class="ra-btn ra-revision${revisionActive}" data-action="revision_needed" data-node-id="${s.item.id}">Request Revision</button>
+        <span class="ra-state">Review: ${escHtml(reviewLabel)}</span>
+      </div>`;
+    }
+
     // If this is the focus node, show its type-specific details below
     if (isFocus) {
       if (s.type === 'declaration') {
@@ -2434,6 +2554,50 @@ function renderPanelChain(item, type) {
   });
 
   $panelBody.innerHTML = html;
+
+  // Wire review action buttons
+  $panelBody.querySelectorAll('.ra-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const targetState = btn.dataset.action;
+      const nodeId = btn.dataset.nodeId;
+      if (!targetState || !nodeId) return;
+      btn.disabled = true;
+      try {
+        const resp = await fetch('/api/node/' + encodeURIComponent(nodeId) + '/review-state', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reviewState: targetState }),
+        });
+        if (resp.ok) {
+          // Update local graphData
+          if (graphData) {
+            let node = null;
+            const focusS = sections.find(s => s.role === 'focus');
+            if (focusS) {
+              if (focusS.type === 'declaration') node = graphData.declarations.find(d => d.id === nodeId);
+              if (focusS.type === 'milestone')   node = graphData.milestones.find(m => m.id === nodeId);
+              if (focusS.type === 'action')      node = graphData.actions.find(a => a.id === nodeId);
+              if (node) node.reviewState = targetState;
+            }
+          }
+          // Update button active states visually
+          $panelBody.querySelectorAll('.ra-btn').forEach(b => b.classList.remove('ra-active'));
+          btn.classList.add('ra-active');
+          // Update state label
+          const stateLabel = $panelBody.querySelector('.ra-state');
+          if (stateLabel) stateLabel.textContent = 'Review: ' + (REVIEW_DISPLAY[targetState] || targetState);
+          // Update review badge in column browser / DAG
+          const badge = document.querySelector('.review-badge[data-node-id="' + nodeId + '"]');
+          if (badge) {
+            badge.className = 'review-badge review-' + targetState;
+            badge.dataset.reviewState = targetState;
+            badge.textContent = REVIEW_DISPLAY[targetState] || targetState;
+          }
+        }
+      } catch (_) { /* ignore */ }
+      btn.disabled = false;
+    });
+  });
 
   // Wire tag clicks
   $panelBody.querySelectorAll('[data-chain-id]').forEach(tag => {
@@ -4198,6 +4362,7 @@ function switchView(mode) {
   if (mode === 'dag') {
     $canvasWrap.style.display = '';
     $colBrowser.classList.remove('active');
+    if ($readinessBanner) $readinessBanner.classList.remove('active');
     clearColumnBrowserKbFocus();
     if ($viewToggle) {
       $viewToggle.classList.remove('active');
