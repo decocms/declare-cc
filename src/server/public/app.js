@@ -97,6 +97,9 @@ let revisionSessionId = null;
 /** @type {string|null} Node ID being revised */
 let revisionNodeId = null;
 
+/** @type {boolean} Whether the execution order has been confirmed */
+let orderConfirmed = false;
+
 /** @type {boolean} Whether the play sequence is currently running */
 let playRunning = false;
 /** @type {{ currentWave: number, totalWaves: number, activeActions: string[], completedActions: string[], failedActions: string[] } | null} */
@@ -3430,7 +3433,10 @@ function handleActionComplete(e) {
     }
 
     // Refresh execution view if active
-    if (viewMode === 'execution') renderExecutionView();
+    if (viewMode === 'execution') {
+      if (orderConfirmed) renderExecutionView();
+      else renderPreExecutionView();
+    }
 
     // Refresh graph and re-render the panel
     loadData();
@@ -3444,6 +3450,7 @@ function handleActionComplete(e) {
  * Start play: execute all ready agent milestones in wave order.
  */
 async function startPlay() {
+  if (!orderConfirmed) return;
   const btn = document.getElementById('play-btn');
   if (btn) {
     btn.disabled = true;
@@ -3483,7 +3490,11 @@ async function stopPlay() {
  */
 function updateExecTopbar() {
   if (!$execTopbarTitle) return;
-  if (playRunning && playStatus) {
+  if (!orderConfirmed) {
+    $execTopbarTitle.textContent = 'Review Execution Order';
+    if ($execWaveStatus) $execWaveStatus.textContent = '';
+    if ($execStopBtn) $execStopBtn.style.display = 'none';
+  } else if (playRunning && playStatus) {
     $execTopbarTitle.textContent = 'Execution Mode';
     if ($execWaveStatus) {
       $execWaveStatus.textContent = playStatus.totalWaves
@@ -3606,14 +3617,19 @@ function handlePlayWaveStart(e) {
     }
     updatePlayUI();
     if (viewMode === 'execution') {
-      renderExecutionView();
-      updateExecTopbar();
-      // Auto-select first running action if auto-follow is on and no action selected (or selected is done)
-      if (execAutoFollow && playStatus && playStatus.activeActions.length > 0) {
-        const selectedDone = execSelectedActionId && !runningActions.has(execSelectedActionId);
-        if (!execSelectedActionId || selectedDone) {
-          selectExecAction(playStatus.activeActions[0], false);
+      if (orderConfirmed) {
+        renderExecutionView();
+        updateExecTopbar();
+        // Auto-select first running action if auto-follow is on and no action selected (or selected is done)
+        if (execAutoFollow && playStatus && playStatus.activeActions.length > 0) {
+          const selectedDone = execSelectedActionId && !runningActions.has(execSelectedActionId);
+          if (!execSelectedActionId || selectedDone) {
+            selectExecAction(playStatus.activeActions[0], false);
+          }
         }
+      } else {
+        renderPreExecutionView();
+        updateExecTopbar();
       }
     }
   } catch (_) {}
@@ -3637,8 +3653,13 @@ function handlePlayWaveComplete(e) {
     }
     updatePlayUI();
     if (viewMode === 'execution') {
-      renderExecutionView();
-      updateExecTopbar();
+      if (orderConfirmed) {
+        renderExecutionView();
+        updateExecTopbar();
+      } else {
+        renderPreExecutionView();
+        updateExecTopbar();
+      }
     }
     loadData(); // refresh graph after each wave
   } catch (_) {}
@@ -4493,18 +4514,14 @@ function selectExecAction(actionId, manual) {
 }
 
 /**
- * Render the execution pipeline view — milestones grouped by dependency waves
- * with nested actions showing status indicators in a CI-pipeline layout.
+ * Compute wave ordering of milestones using Kahn's algorithm.
+ * Returns array of waves, each wave being an array of milestone objects.
+ * @returns {Array<Array<{id:string, status:string, title:string, dependsOn?:string[], classification?:string, hasPlan?:boolean}>>}
  */
-function renderExecutionView() {
-  const $pipeline = document.getElementById('exec-pipeline');
-  if (!$pipeline || !graphData) return;
-
+function computeWaveOrder() {
+  if (!graphData) return [];
   const milestones = graphData.milestones || [];
-  const actions = graphData.actions || [];
 
-  // Compute wave ordering using Kahn's algorithm (mirrors play.js logic)
-  // Include ALL milestones (not just agent/non-DONE) for full context
   const candidateIds = new Set(milestones.map(m => m.id.toUpperCase()));
 
   /** @type {Map<string, string[]>} */
@@ -4541,6 +4558,77 @@ function renderExecutionView() {
     for (const m of wave) placed.add(m.id.toUpperCase());
     waves.push(wave);
   }
+
+  return waves;
+}
+
+/**
+ * Render the pre-execution wave order view — shows computed execution order
+ * as an ordered list with a Confirm Order button before execution controls are available.
+ */
+function renderPreExecutionView() {
+  const $pipeline = document.getElementById('exec-pipeline');
+  if (!$pipeline || !graphData) return;
+
+  const actions = graphData.actions || [];
+  const waves = computeWaveOrder();
+
+  let html = '<div class="exec-preorder-list">';
+  waves.forEach((wave, waveIdx) => {
+    html += `<div class="exec-preorder-wave">`;
+    html += `<div class="exec-preorder-wave-header">Wave ${waveIdx + 1}</div>`;
+
+    for (const m of wave) {
+      const mStatus = deriveMilestoneStatus(m, actions);
+      html += `<div class="exec-preorder-milestone">${escHtml(m.id)}: ${escHtml(m.title || '')} — ${escHtml(mStatus.displayStatus)}</div>`;
+
+      const myActions = actions.filter(a => (a.causes || []).includes(m.id));
+      for (const a of myActions) {
+        const aStatus = (a.status || '').toUpperCase();
+        let dotClass = 'queued';
+        if (COMPLETED.has(aStatus)) dotClass = 'done';
+        else if (aStatus === 'BROKEN' || aStatus === 'FAILED') dotClass = 'failed';
+
+        html += `<div class="exec-preorder-action">`;
+        html += `<span class="exec-status-dot ${dotClass}"></span>`;
+        html += `<span>${escHtml(a.id)}: ${escHtml(a.title || '')}</span>`;
+        html += `</div>`;
+      }
+    }
+
+    html += `</div>`;
+  });
+
+  if (waves.length === 0) {
+    html += '<div style="color:var(--text-dim);padding:20px;font-size:13px;">No milestones to display.</div>';
+  }
+
+  html += '</div>';
+  html += '<button class="exec-confirm-btn" id="exec-confirm-btn">Confirm Order</button>';
+
+  $pipeline.innerHTML = html;
+
+  // Wire confirm button
+  const confirmBtn = document.getElementById('exec-confirm-btn');
+  if (confirmBtn) {
+    confirmBtn.addEventListener('click', () => {
+      orderConfirmed = true;
+      renderExecutionView();
+      updateExecTopbar();
+    });
+  }
+}
+
+/**
+ * Render the execution pipeline view — milestones grouped by dependency waves
+ * with nested actions showing status indicators in a CI-pipeline layout.
+ */
+function renderExecutionView() {
+  const $pipeline = document.getElementById('exec-pipeline');
+  if (!$pipeline || !graphData) return;
+
+  const actions = graphData.actions || [];
+  const waves = computeWaveOrder();
 
   // Build HTML
   let html = '';
@@ -4668,7 +4756,8 @@ function switchView(mode) {
       $viewToggle.classList.add('active');
       $viewToggleLabel.textContent = 'Columns';
     }
-    renderExecutionView();
+    orderConfirmed = false;
+    renderPreExecutionView();
     updateExecTopbar();
   }
 }
