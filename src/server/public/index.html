@@ -2447,6 +2447,23 @@
     }
     .exec-confirm-btn:hover { opacity: 0.9; }
 
+    /* ── Drag-to-reorder feedback ── */
+    .exec-dragging { opacity: 0.4; outline: 2px dashed var(--planned-color); }
+    .exec-drop-valid { outline: 2px solid var(--act-color); background: rgba(52, 211, 153, 0.08); }
+    .exec-drop-invalid { outline: 2px solid var(--broken-color); opacity: 0.5; cursor: no-drop; }
+    .exec-preorder-milestone[draggable="true"],
+    .exec-preorder-action[draggable="true"] { cursor: grab; }
+    .exec-preorder-milestone[draggable="true"]:active,
+    .exec-preorder-action[draggable="true"]:active { cursor: grabbing; }
+    .exec-preorder-milestone[draggable="true"]::before,
+    .exec-preorder-action[draggable="true"]::before {
+      content: "\22EE\22EE";
+      color: var(--text-dim);
+      margin-right: 6px;
+      font-size: 11px;
+      letter-spacing: -3px;
+    }
+
   </style>
 </head>
 <body>

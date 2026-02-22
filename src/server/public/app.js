@@ -100,6 +100,13 @@ let revisionNodeId = null;
 /** @type {boolean} Whether the execution order has been confirmed */
 let orderConfirmed = false;
 
+/** @type {Array<Array<{id:string, status:string, title:string, actions?: Array<{id:string, title:string, status:string}>}>>|null} Mutable wave order for drag-reorder */
+let preExecWaves = null;
+/** @type {number|null} Wave index of current drag source */
+let dragSourceWave = null;
+/** @type {number|null} Milestone index of current drag source (for action drags) */
+let dragSourceMile = null;
+
 /** @type {boolean} Whether the play sequence is currently running */
 let playRunning = false;
 /** @type {{ currentWave: number, totalWaves: number, activeActions: string[], completedActions: string[], failedActions: string[] } | null} */
@@ -4565,41 +4572,53 @@ function computeWaveOrder() {
 /**
  * Render the pre-execution wave order view — shows computed execution order
  * as an ordered list with a Confirm Order button before execution controls are available.
+ * Supports drag-to-reorder within wave (milestones) and within milestone (actions).
  */
 function renderPreExecutionView() {
   const $pipeline = document.getElementById('exec-pipeline');
   if (!$pipeline || !graphData) return;
 
-  const actions = graphData.actions || [];
-  const waves = computeWaveOrder();
+  const allActions = graphData.actions || [];
+
+  // Initialise mutable wave state on first render (or after reset)
+  if (!preExecWaves) {
+    const rawWaves = computeWaveOrder();
+    // Enrich each milestone with its resolved actions list
+    preExecWaves = rawWaves.map(wave =>
+      wave.map(m => ({
+        ...m,
+        actions: allActions.filter(a => (a.causes || []).includes(m.id))
+      }))
+    );
+  }
 
   let html = '<div class="exec-preorder-list">';
-  waves.forEach((wave, waveIdx) => {
+  preExecWaves.forEach((wave, waveIdx) => {
     html += `<div class="exec-preorder-wave">`;
     html += `<div class="exec-preorder-wave-header">Wave ${waveIdx + 1}</div>`;
 
-    for (const m of wave) {
-      const mStatus = deriveMilestoneStatus(m, actions);
-      html += `<div class="exec-preorder-milestone">${escHtml(m.id)}: ${escHtml(m.title || '')} — ${escHtml(mStatus.displayStatus)}</div>`;
+    wave.forEach((m, mileIdx) => {
+      const mStatus = deriveMilestoneStatus(m, allActions);
+      html += `<div class="exec-preorder-milestone" draggable="true" data-wave-idx="${waveIdx}" data-milestone-idx="${mileIdx}">${escHtml(m.id)}: ${escHtml(m.title || '')} — ${escHtml(mStatus.displayStatus)}</div>`;
 
-      const myActions = actions.filter(a => (a.causes || []).includes(m.id));
-      for (const a of myActions) {
+      const mActions = m.actions || [];
+      mActions.forEach((a, actIdx) => {
         const aStatus = (a.status || '').toUpperCase();
         let dotClass = 'queued';
         if (COMPLETED.has(aStatus)) dotClass = 'done';
         else if (aStatus === 'BROKEN' || aStatus === 'FAILED') dotClass = 'failed';
 
-        html += `<div class="exec-preorder-action">`;
+        html += `<div class="exec-preorder-action" draggable="true" data-wave-idx="${waveIdx}" data-milestone-idx="${mileIdx}" data-action-idx="${actIdx}">`;
         html += `<span class="exec-status-dot ${dotClass}"></span>`;
         html += `<span>${escHtml(a.id)}: ${escHtml(a.title || '')}</span>`;
         html += `</div>`;
-      }
-    }
+      });
+    });
 
     html += `</div>`;
   });
 
-  if (waves.length === 0) {
+  if (preExecWaves.length === 0) {
     html += '<div style="color:var(--text-dim);padding:20px;font-size:13px;">No milestones to display.</div>';
   }
 
@@ -4608,13 +4627,158 @@ function renderPreExecutionView() {
 
   $pipeline.innerHTML = html;
 
-  // Wire confirm button
+  // ── Drag-and-drop wiring ──
+
+  /** Remove all drag feedback classes from the DOM */
+  function clearDragClasses() {
+    $pipeline.querySelectorAll('.exec-drop-valid, .exec-drop-invalid, .exec-dragging').forEach(el => {
+      el.classList.remove('exec-drop-valid', 'exec-drop-invalid', 'exec-dragging');
+    });
+  }
+
+  // Wire milestone drag handlers
+  $pipeline.querySelectorAll('.exec-preorder-milestone[draggable="true"]').forEach(el => {
+    el.addEventListener('dragstart', (e) => {
+      const wIdx = Number(el.dataset.waveIdx);
+      const mIdx = Number(el.dataset.milestoneIdx);
+      e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'milestone', waveIdx: wIdx, mileIdx: mIdx }));
+      e.dataTransfer.effectAllowed = 'move';
+      el.classList.add('exec-dragging');
+      dragSourceWave = wIdx;
+      dragSourceMile = null;
+    });
+    el.addEventListener('dragend', () => {
+      clearDragClasses();
+      dragSourceWave = null;
+      dragSourceMile = null;
+    });
+    el.addEventListener('dragover', (e) => {
+      if (dragSourceWave === null) return;
+      // Only milestone-type drags target milestone elements
+      const targetWave = Number(el.dataset.waveIdx);
+      if (dragSourceMile !== null) {
+        // This is an action drag — milestone is not a valid target
+        el.classList.add('exec-drop-invalid');
+        el.classList.remove('exec-drop-valid');
+        return;
+      }
+      if (targetWave === dragSourceWave) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        el.classList.add('exec-drop-valid');
+        el.classList.remove('exec-drop-invalid');
+      } else {
+        el.classList.add('exec-drop-invalid');
+        el.classList.remove('exec-drop-valid');
+      }
+    });
+    el.addEventListener('dragleave', () => {
+      el.classList.remove('exec-drop-valid', 'exec-drop-invalid');
+    });
+    el.addEventListener('drop', (e) => {
+      e.preventDefault();
+      el.classList.remove('exec-drop-valid', 'exec-drop-invalid');
+      try {
+        const data = JSON.parse(e.dataTransfer.getData('text/plain'));
+        if (data.type !== 'milestone') return;
+        const srcWave = data.waveIdx;
+        const srcIdx = data.mileIdx;
+        const tgtWave = Number(el.dataset.waveIdx);
+        const tgtIdx = Number(el.dataset.milestoneIdx);
+        if (srcWave !== tgtWave || srcIdx === tgtIdx) return;
+        // Splice and insert
+        const [moved] = preExecWaves[srcWave].splice(srcIdx, 1);
+        preExecWaves[tgtWave].splice(tgtIdx, 0, moved);
+        renderPreExecutionView();
+      } catch (_) { /* ignore malformed data */ }
+    });
+  });
+
+  // Wire action drag handlers
+  $pipeline.querySelectorAll('.exec-preorder-action[draggable="true"]').forEach(el => {
+    el.addEventListener('dragstart', (e) => {
+      const wIdx = Number(el.dataset.waveIdx);
+      const mIdx = Number(el.dataset.milestoneIdx);
+      const aIdx = Number(el.dataset.actionIdx);
+      e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'action', waveIdx: wIdx, mileIdx: mIdx, actIdx: aIdx }));
+      e.dataTransfer.effectAllowed = 'move';
+      el.classList.add('exec-dragging');
+      dragSourceWave = wIdx;
+      dragSourceMile = mIdx;
+    });
+    el.addEventListener('dragend', () => {
+      clearDragClasses();
+      dragSourceWave = null;
+      dragSourceMile = null;
+    });
+    el.addEventListener('dragover', (e) => {
+      if (dragSourceWave === null || dragSourceMile === null) return;
+      const targetWave = Number(el.dataset.waveIdx);
+      const targetMile = Number(el.dataset.milestoneIdx);
+      if (targetWave === dragSourceWave && targetMile === dragSourceMile) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        el.classList.add('exec-drop-valid');
+        el.classList.remove('exec-drop-invalid');
+      } else {
+        el.classList.add('exec-drop-invalid');
+        el.classList.remove('exec-drop-valid');
+      }
+    });
+    el.addEventListener('dragleave', () => {
+      el.classList.remove('exec-drop-valid', 'exec-drop-invalid');
+    });
+    el.addEventListener('drop', (e) => {
+      e.preventDefault();
+      el.classList.remove('exec-drop-valid', 'exec-drop-invalid');
+      try {
+        const data = JSON.parse(e.dataTransfer.getData('text/plain'));
+        if (data.type !== 'action') return;
+        const srcWave = data.waveIdx;
+        const srcMile = data.mileIdx;
+        const srcIdx = data.actIdx;
+        const tgtWave = Number(el.dataset.waveIdx);
+        const tgtMile = Number(el.dataset.milestoneIdx);
+        const tgtIdx = Number(el.dataset.actionIdx);
+        if (srcWave !== tgtWave || srcMile !== tgtMile || srcIdx === tgtIdx) return;
+        const actionsArr = preExecWaves[srcWave][srcMile].actions;
+        const [moved] = actionsArr.splice(srcIdx, 1);
+        actionsArr.splice(tgtIdx, 0, moved);
+        renderPreExecutionView();
+      } catch (_) { /* ignore malformed data */ }
+    });
+  });
+
+  // ── Confirm button — POST manifest and transition ──
   const confirmBtn = document.getElementById('exec-confirm-btn');
   if (confirmBtn) {
-    confirmBtn.addEventListener('click', () => {
-      orderConfirmed = true;
-      renderExecutionView();
-      updateExecTopbar();
+    confirmBtn.addEventListener('click', async () => {
+      const manifest = {
+        waves: preExecWaves.map((wave, i) => ({
+          waveNumber: i + 1,
+          milestones: wave.map(m => ({
+            id: m.id,
+            actions: (m.actions || []).map(a => a.id)
+          }))
+        }))
+      };
+      try {
+        const resp = await fetch('/api/execution-manifest', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(manifest)
+        });
+        if (!resp.ok) {
+          const errBody = await resp.text();
+          alert('Failed to save execution manifest: ' + errBody);
+          return;
+        }
+        orderConfirmed = true;
+        renderExecutionView();
+        updateExecTopbar();
+      } catch (err) {
+        alert('Failed to save execution manifest: ' + err.message);
+      }
     });
   }
 }
@@ -4757,6 +4921,7 @@ function switchView(mode) {
       $viewToggleLabel.textContent = 'Columns';
     }
     orderConfirmed = false;
+    preExecWaves = null;
     renderPreExecutionView();
     updateExecTopbar();
   }
