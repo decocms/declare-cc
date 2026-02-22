@@ -35,7 +35,7 @@
 **Status:** PENDING
 **Milestones:** M-36, M-37
 
-## D-13: Test API Declaration
+## D-13: Updated Title
 **Statement:** Testing the CRUD API
 **Status:** PENDING
 **Milestones:** 
