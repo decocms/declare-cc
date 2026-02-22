@@ -1550,6 +1550,113 @@ var require_add_declaration = __commonJS({
   }
 });
 
+// src/commands/update-declaration.js
+var require_update_declaration = __commonJS({
+  "src/commands/update-declaration.js"(exports2, module2) {
+    "use strict";
+    var { existsSync, readFileSync, writeFileSync } = require("node:fs");
+    var { join } = require("node:path");
+    var { parseFutureFile, writeFutureFile } = require_future();
+    var { commitPlanningDocs: commitPlanningDocs2, loadConfig } = require_commit();
+    var { parseFlag } = require_parse_args();
+    function runUpdateDeclaration2(cwd, args) {
+      const id = parseFlag(args, "id");
+      const title = parseFlag(args, "title");
+      const statement = parseFlag(args, "statement");
+      const status = parseFlag(args, "status");
+      if (!id) {
+        return { error: "Missing required flag: --id" };
+      }
+      if (!title && !statement && !status) {
+        return { error: "At least one of --title, --statement, or --status must be provided" };
+      }
+      const planningDir = join(cwd, ".planning");
+      const futurePath = join(planningDir, "FUTURE.md");
+      if (!existsSync(futurePath)) {
+        return { error: "FUTURE.md not found" };
+      }
+      const futureContent = readFileSync(futurePath, "utf-8");
+      const declarations = parseFutureFile(futureContent);
+      const decl = declarations.find((d) => d.id === id);
+      if (!decl) {
+        return { error: `Declaration not found: ${id}` };
+      }
+      if (title) decl.title = title;
+      if (statement) decl.statement = statement;
+      if (status) decl.status = status.toUpperCase();
+      const headerMatch = futureContent.match(/^# Future: (.+)/m);
+      const projectName = headerMatch ? headerMatch[1].trim() : "Project";
+      const content = writeFutureFile(declarations, projectName);
+      writeFileSync(futurePath, content, "utf-8");
+      const config = loadConfig(cwd);
+      let committed = false;
+      let hash;
+      if (config.commit_docs !== false) {
+        const result = commitPlanningDocs2(
+          cwd,
+          `declare: update ${id} "${decl.title}"`,
+          [".planning/FUTURE.md"]
+        );
+        committed = result.committed;
+        hash = result.hash;
+      }
+      return { id, title: decl.title, statement: decl.statement, status: decl.status, committed, hash };
+    }
+    module2.exports = { runUpdateDeclaration: runUpdateDeclaration2 };
+  }
+});
+
+// src/commands/delete-declaration.js
+var require_delete_declaration = __commonJS({
+  "src/commands/delete-declaration.js"(exports2, module2) {
+    "use strict";
+    var { existsSync, readFileSync, writeFileSync } = require("node:fs");
+    var { join } = require("node:path");
+    var { parseFutureFile, writeFutureFile } = require_future();
+    var { commitPlanningDocs: commitPlanningDocs2, loadConfig } = require_commit();
+    var { parseFlag } = require_parse_args();
+    function runDeleteDeclaration2(cwd, args) {
+      const id = parseFlag(args, "id");
+      if (!id) {
+        return { error: "Missing required flag: --id" };
+      }
+      const planningDir = join(cwd, ".planning");
+      const futurePath = join(planningDir, "FUTURE.md");
+      if (!existsSync(futurePath)) {
+        return { error: "FUTURE.md not found" };
+      }
+      const futureContent = readFileSync(futurePath, "utf-8");
+      const declarations = parseFutureFile(futureContent);
+      const decl = declarations.find((d) => d.id === id);
+      if (!decl) {
+        return { error: `Declaration not found: ${id}` };
+      }
+      if (decl.milestones && decl.milestones.length > 0) {
+        return { error: "Cannot delete declaration with linked milestones. Renegotiate instead." };
+      }
+      const filtered = declarations.filter((d) => d.id !== id);
+      const headerMatch = futureContent.match(/^# Future: (.+)/m);
+      const projectName = headerMatch ? headerMatch[1].trim() : "Project";
+      const content = writeFutureFile(filtered, projectName);
+      writeFileSync(futurePath, content, "utf-8");
+      const config = loadConfig(cwd);
+      let committed = false;
+      let hash;
+      if (config.commit_docs !== false) {
+        const result = commitPlanningDocs2(
+          cwd,
+          `declare: delete ${id} "${decl.title}"`,
+          [".planning/FUTURE.md"]
+        );
+        committed = result.committed;
+        hash = result.hash;
+      }
+      return { id, title: decl.title, deleted: true, committed, hash };
+    }
+    module2.exports = { runDeleteDeclaration: runDeleteDeclaration2 };
+  }
+});
+
 // src/commands/add-milestone.js
 var require_add_milestone = __commonJS({
   "src/commands/add-milestone.js"(exports2, module2) {
@@ -3251,6 +3358,7 @@ var require_get_exec_plan = __commonJS({
     "use strict";
     var { existsSync, readFileSync, readdirSync } = require("node:fs");
     var { join } = require("node:path");
+    var { execSync } = require("node:child_process");
     var { parseFlag } = require_parse_args();
     var { buildDagFromDisk } = require_build_dag();
     var { findMilestoneFolder } = require_milestone_folders();
@@ -3358,6 +3466,29 @@ var require_get_exec_plan = __commonJS({
         return null;
       }
     }
+    function getActionCommits(cwd, actionId, milestoneId) {
+      try {
+        const milestonePrefix = milestoneId.match(/^(M-\d+)/);
+        if (!milestonePrefix) return [];
+        const grepPattern = `(${milestonePrefix[1]}-${actionId})`;
+        const output = execSync(
+          `git log --all --oneline --format="%H|%s|%ai" --extended-regexp --grep="${grepPattern}"`,
+          { cwd, encoding: "utf-8", timeout: 5e3 }
+        );
+        const lines = output.trim().split("\n").filter(Boolean);
+        return lines.map((line) => {
+          const [sha, message, date] = line.split("|");
+          return {
+            sha: sha || "",
+            shortSha: (sha || "").slice(0, 7),
+            message: message || "",
+            date: date || ""
+          };
+        });
+      } catch {
+        return [];
+      }
+    }
     function runGetExecPlan2(cwd, args) {
       const actionId = parseFlag(args, "action");
       if (!actionId) {
@@ -3376,6 +3507,7 @@ var require_get_exec_plan = __commonJS({
       if (!milestoneFolder) {
         return { error: `Milestone folder not found for ${milestone.id}` };
       }
+      const commits = getActionCommits(cwd, actionId, milestone.id);
       const execPlanPath = findExecPlan(milestoneFolder, actionId);
       if (!execPlanPath) {
         return {
@@ -3386,7 +3518,8 @@ var require_get_exec_plan = __commonJS({
           milestoneTitle: milestone.title,
           execPlan: null,
           summaryExists: false,
-          model: resolveActionModel(cwd, null)
+          model: resolveActionModel(cwd, null),
+          commits
         };
       }
       const raw = readFileSync(execPlanPath, "utf-8");
@@ -3421,7 +3554,8 @@ var require_get_exec_plan = __commonJS({
           verification
         },
         summaryExists,
-        summaryContent
+        summaryContent,
+        commits
       };
     }
     module2.exports = { runGetExecPlan: runGetExecPlan2 };
@@ -3989,113 +4123,6 @@ var require_health_check = __commonJS({
   }
 });
 
-// src/commands/update-declaration.js
-var require_update_declaration = __commonJS({
-  "src/commands/update-declaration.js"(exports2, module2) {
-    "use strict";
-    var { existsSync, readFileSync, writeFileSync } = require("node:fs");
-    var { join } = require("node:path");
-    var { parseFutureFile, writeFutureFile } = require_future();
-    var { commitPlanningDocs: commitPlanningDocs2, loadConfig } = require_commit();
-    var { parseFlag } = require_parse_args();
-    function runUpdateDeclaration(cwd, args) {
-      const id = parseFlag(args, "id");
-      const title = parseFlag(args, "title");
-      const statement = parseFlag(args, "statement");
-      const status = parseFlag(args, "status");
-      if (!id) {
-        return { error: "Missing required flag: --id" };
-      }
-      if (!title && !statement && !status) {
-        return { error: "At least one of --title, --statement, or --status must be provided" };
-      }
-      const planningDir = join(cwd, ".planning");
-      const futurePath = join(planningDir, "FUTURE.md");
-      if (!existsSync(futurePath)) {
-        return { error: "FUTURE.md not found" };
-      }
-      const futureContent = readFileSync(futurePath, "utf-8");
-      const declarations = parseFutureFile(futureContent);
-      const decl = declarations.find((d) => d.id === id);
-      if (!decl) {
-        return { error: `Declaration not found: ${id}` };
-      }
-      if (title) decl.title = title;
-      if (statement) decl.statement = statement;
-      if (status) decl.status = status.toUpperCase();
-      const headerMatch = futureContent.match(/^# Future: (.+)/m);
-      const projectName = headerMatch ? headerMatch[1].trim() : "Project";
-      const content = writeFutureFile(declarations, projectName);
-      writeFileSync(futurePath, content, "utf-8");
-      const config = loadConfig(cwd);
-      let committed = false;
-      let hash;
-      if (config.commit_docs !== false) {
-        const result = commitPlanningDocs2(
-          cwd,
-          `declare: update ${id} "${decl.title}"`,
-          [".planning/FUTURE.md"]
-        );
-        committed = result.committed;
-        hash = result.hash;
-      }
-      return { id, title: decl.title, statement: decl.statement, status: decl.status, committed, hash };
-    }
-    module2.exports = { runUpdateDeclaration };
-  }
-});
-
-// src/commands/delete-declaration.js
-var require_delete_declaration = __commonJS({
-  "src/commands/delete-declaration.js"(exports2, module2) {
-    "use strict";
-    var { existsSync, readFileSync, writeFileSync } = require("node:fs");
-    var { join } = require("node:path");
-    var { parseFutureFile, writeFutureFile } = require_future();
-    var { commitPlanningDocs: commitPlanningDocs2, loadConfig } = require_commit();
-    var { parseFlag } = require_parse_args();
-    function runDeleteDeclaration(cwd, args) {
-      const id = parseFlag(args, "id");
-      if (!id) {
-        return { error: "Missing required flag: --id" };
-      }
-      const planningDir = join(cwd, ".planning");
-      const futurePath = join(planningDir, "FUTURE.md");
-      if (!existsSync(futurePath)) {
-        return { error: "FUTURE.md not found" };
-      }
-      const futureContent = readFileSync(futurePath, "utf-8");
-      const declarations = parseFutureFile(futureContent);
-      const decl = declarations.find((d) => d.id === id);
-      if (!decl) {
-        return { error: `Declaration not found: ${id}` };
-      }
-      if (decl.milestones && decl.milestones.length > 0) {
-        return { error: "Cannot delete declaration with linked milestones. Renegotiate instead." };
-      }
-      const filtered = declarations.filter((d) => d.id !== id);
-      const headerMatch = futureContent.match(/^# Future: (.+)/m);
-      const projectName = headerMatch ? headerMatch[1].trim() : "Project";
-      const content = writeFutureFile(filtered, projectName);
-      writeFileSync(futurePath, content, "utf-8");
-      const config = loadConfig(cwd);
-      let committed = false;
-      let hash;
-      if (config.commit_docs !== false) {
-        const result = commitPlanningDocs2(
-          cwd,
-          `declare: delete ${id} "${decl.title}"`,
-          [".planning/FUTURE.md"]
-        );
-        committed = result.committed;
-        hash = result.hash;
-      }
-      return { id, title: decl.title, deleted: true, committed, hash };
-    }
-    module2.exports = { runDeleteDeclaration };
-  }
-});
-
 // src/server/process-manager.js
 var require_process_manager = __commonJS({
   "src/server/process-manager.js"(exports2, module2) {
@@ -4213,8 +4240,8 @@ var require_server = __commonJS({
     var { runStatus: runStatus2 } = require_status();
     var { runGetExecPlan: runGetExecPlan2 } = require_get_exec_plan();
     var { runAddDeclaration: runAddDeclaration2 } = require_add_declaration();
-    var { runUpdateDeclaration } = require_update_declaration();
-    var { runDeleteDeclaration } = require_delete_declaration();
+    var { runUpdateDeclaration: runUpdateDeclaration2 } = require_update_declaration();
+    var { runDeleteDeclaration: runDeleteDeclaration2 } = require_delete_declaration();
     var { createProcessManager } = require_process_manager();
     var { buildDagFromDisk } = require_build_dag();
     var { computeWorkabilityPath } = require_engine();
@@ -4240,10 +4267,35 @@ var require_server = __commonJS({
         "Content-Type": "application/json; charset=utf-8",
         "Content-Length": Buffer.byteLength(body),
         "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type"
       });
       res.end(body);
+    }
+    function readJsonBody(req) {
+      return new Promise((resolve, reject) => {
+        const chunks = [];
+        let size = 0;
+        const MAX_SIZE = 64 * 1024;
+        req.on("data", (chunk) => {
+          size += chunk.length;
+          if (size > MAX_SIZE) {
+            reject(new Error("Request body too large (max 64KB)"));
+            req.destroy();
+            return;
+          }
+          chunks.push(chunk);
+        });
+        req.on("end", () => {
+          try {
+            const raw = Buffer.concat(chunks).toString("utf-8");
+            resolve(JSON.parse(raw));
+          } catch (err) {
+            reject(new Error("Invalid JSON body"));
+          }
+        });
+        req.on("error", reject);
+      });
     }
     function sendFile(res, filePath) {
       const ext = path.extname(filePath).toLowerCase();
@@ -4451,14 +4503,70 @@ var require_server = __commonJS({
       if (method === "OPTIONS") {
         res.writeHead(204, {
           "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+          "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
           "Access-Control-Allow-Headers": "Content-Type"
         });
         res.end();
         return;
       }
-      if (method !== "GET" && method !== "POST") {
+      if (method !== "GET" && method !== "POST" && method !== "PUT" && method !== "DELETE") {
         sendJson(res, 405, { error: "Method Not Allowed" });
+        return;
+      }
+      if (method === "POST" && urlPath === "/api/declarations") {
+        readJsonBody(req).then((body) => {
+          if (!body.title || !body.statement) {
+            sendJson(res, 400, { error: "Missing required fields: title and statement" });
+            return;
+          }
+          const result = runAddDeclaration2(cwd, ["--title", body.title, "--statement", body.statement]);
+          if ("error" in result) {
+            sendJson(res, 400, result);
+            return;
+          }
+          sendJson(res, 201, result);
+          broadcastChange();
+        }).catch((err) => sendJson(res, 400, { error: String(err) }));
+        return;
+      }
+      const declPutMatch = method === "PUT" && urlPath.match(/^\/api\/declarations\/([^/]+)$/);
+      if (declPutMatch) {
+        readJsonBody(req).then((body) => {
+          const args = ["--id", declPutMatch[1]];
+          if (body.title) {
+            args.push("--title", body.title);
+          }
+          if (body.statement) {
+            args.push("--statement", body.statement);
+          }
+          if (body.status) {
+            args.push("--status", body.status);
+          }
+          if (!body.title && !body.statement && !body.status) {
+            sendJson(res, 400, { error: "At least one of title, statement, or status must be provided" });
+            return;
+          }
+          const result = runUpdateDeclaration2(cwd, args);
+          if ("error" in result) {
+            const status = result.error.includes("not found") ? 404 : 400;
+            sendJson(res, status, result);
+            return;
+          }
+          sendJson(res, 200, result);
+          broadcastChange();
+        }).catch((err) => sendJson(res, 400, { error: String(err) }));
+        return;
+      }
+      const declDeleteMatch = method === "DELETE" && urlPath.match(/^\/api\/declarations\/([^/]+)$/);
+      if (declDeleteMatch) {
+        const result = runDeleteDeclaration2(cwd, ["--id", declDeleteMatch[1]]);
+        if ("error" in result) {
+          const status = result.error.includes("not found") ? 404 : 400;
+          sendJson(res, status, result);
+          return;
+        }
+        sendJson(res, 200, result);
+        broadcastChange();
         return;
       }
       if (method === "POST") {
@@ -4684,6 +4792,8 @@ var { runInit } = require_init();
 var { runStatus } = require_status();
 var { runHelp } = require_help();
 var { runAddDeclaration } = require_add_declaration();
+var { runUpdateDeclaration } = require_update_declaration();
+var { runDeleteDeclaration } = require_delete_declaration();
 var { runAddMilestone } = require_add_milestone();
 var { runAddMilestonesBatch } = require_add_milestones_batch();
 var { runAddAction } = require_add_action();
@@ -4802,6 +4912,20 @@ function main() {
       case "add-declaration": {
         const cwdAddDecl = parseCwdFlag(args) || process.cwd();
         const result = runAddDeclaration(cwdAddDecl, args.slice(1));
+        console.log(JSON.stringify(result));
+        if (result.error) process.exit(1);
+        break;
+      }
+      case "update-declaration": {
+        const cwdUpdateDecl = parseCwdFlag(args) || process.cwd();
+        const result = runUpdateDeclaration(cwdUpdateDecl, args.slice(1));
+        console.log(JSON.stringify(result));
+        if (result.error) process.exit(1);
+        break;
+      }
+      case "delete-declaration": {
+        const cwdDeleteDecl = parseCwdFlag(args) || process.cwd();
+        const result = runDeleteDeclaration(cwdDeleteDecl, args.slice(1));
         console.log(JSON.stringify(result));
         if (result.error) process.exit(1);
         break;
@@ -5031,7 +5155,7 @@ function main() {
         break;
       }
       default:
-        console.log(JSON.stringify({ error: `Unknown command: ${command}. Use: commit, init, status, add-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, sync-status, serve, record-session, get-state, quick-task, add-todo, check-todos, complete-todo, config-get, config-set, health-check, help` }));
+        console.log(JSON.stringify({ error: `Unknown command: ${command}. Use: commit, init, status, add-declaration, update-declaration, delete-declaration, add-milestone, add-milestones, create-plan, load-graph, trace, prioritize, visualize, compute-waves, generate-exec-plan, verify-wave, verify-milestone, execute, check-drift, check-occurrence, compute-performance, renegotiate, complete-milestone, sync-status, serve, record-session, get-state, quick-task, add-todo, check-todos, complete-todo, config-get, config-set, health-check, help` }));
         process.exit(1);
     }
   } catch (err) {
