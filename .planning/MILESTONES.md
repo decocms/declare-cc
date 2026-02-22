@@ -34,7 +34,7 @@
 | M-45 | Revision cycle with agent                    | PENDING | D-13     | YES  |
 | M-46 | Execution gated on approval                  | PENDING | D-13     | YES  |
 | M-47 | Planning mode as default column browser view | PENDING | D-14     | YES  |
-| M-48 | Execution mode as dedicated full-screen view | PENDING | D-14     | NO   |
+| M-48 | Execution mode as dedicated full-screen view | PENDING | D-14     | YES  |
 | M-49 | Mode transition gate                         | PENDING | D-14     | NO   |
 | M-50 | Execution order configuration                | PENDING | D-15     | NO   |
 | M-51 | Single Go pipeline runner                    | PENDING | D-15     | NO   |
