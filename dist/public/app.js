@@ -1209,6 +1209,11 @@ function renderPanelChain(item, type) {
   if (focusSection && focusSection.type === 'action') {
     loadExecPlan(focusSection.item.id);
   }
+
+  // If the focused node is not whole, fetch and render workability path
+  if (focusSection && focusSection.item.wholeness && focusSection.item.wholeness !== 'whole') {
+    renderWorkabilityPath(focusSection.item.id, focusSection.type);
+  }
 }
 
 function chainTagSection(label, items, type) {
@@ -1220,6 +1225,73 @@ function chainTagSection(label, items, type) {
     <div class="detail-label">${label}</div>
     <div class="detail-tag-list" style="margin-top:6px">${tags}</div>
   </div>`;
+}
+
+/**
+ * Fetch the workability path for a node and render it in the detail panel.
+ * Shows "Path to wholeness (N steps)" with actionable fix steps sorted by impact.
+ * Silently skips on any error or if the node is already whole.
+ * @param {string} nodeId
+ * @param {string} nodeType
+ */
+async function renderWorkabilityPath(nodeId, nodeType) {
+  try {
+    const res = await fetch(`/api/workability/${encodeURIComponent(nodeId)}`);
+    if (!res.ok) return;
+
+    const data = await res.json();
+    if (!data || !data.steps || data.steps.length === 0) return;
+    if (data.wholeness === 'whole') return;
+
+    const impactWeight = { critical: 4, high: 3, medium: 2, low: 1 };
+    const steps = data.steps.slice().sort((a, b) => {
+      const wa = impactWeight[(a.impact || '').toLowerCase()] || 0;
+      const wb = impactWeight[(b.impact || '').toLowerCase()] || 0;
+      return wb - wa;
+    });
+
+    let html = `<div class="workability-path">`;
+    html += `<div class="wp-header">Path to wholeness (${steps.length} steps)</div>`;
+
+    steps.forEach(step => {
+      const impactLevel = (step.impact || 'medium').toLowerCase();
+      const validLevels = ['high', 'medium', 'low', 'critical'];
+      const badgeClass = validLevels.includes(impactLevel) ? impactLevel : 'medium';
+      const cssClass = badgeClass === 'critical' ? 'high' : badgeClass;
+
+      html += `<div class="wp-step">
+        <span class="wp-step-action" data-node-id="${escHtml(step.actionId)}" data-node-type="action">${escHtml(step.actionId)}</span>
+        <div class="wp-step-body">
+          <div class="wp-step-title">${escHtml(step.title || step.actionId)}</div>
+          <div class="wp-step-milestone">${escHtml(step.milestone || '')}</div>
+        </div>
+        <span class="wp-impact impact-${cssClass}">${escHtml(step.impact || 'medium')}</span>
+      </div>`;
+    });
+
+    html += `</div>`;
+
+    const execPlanEl = $panelBody.querySelector('#exec-plan-detail');
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = html;
+    const wpEl = tempDiv.firstElementChild;
+
+    if (execPlanEl) {
+      execPlanEl.parentNode.insertBefore(wpEl, execPlanEl);
+    } else {
+      $panelBody.appendChild(wpEl);
+    }
+
+    wpEl.querySelectorAll('.wp-step-action').forEach(el => {
+      el.addEventListener('click', () => {
+        const actionId = el.dataset.nodeId;
+        const actionType = el.dataset.nodeType;
+        if (actionId && actionType) selectNode(actionId, actionType);
+      });
+    });
+  } catch (_) {
+    // Silently skip
+  }
 }
 
 /**
@@ -1885,6 +1957,7 @@ function switchView(mode) {
   if (mode === 'dag') {
     $canvasWrap.style.display = '';
     $colBrowser.classList.remove('active');
+    clearColumnBrowserKbFocus();
     if ($viewToggle) {
       $viewToggle.classList.remove('active');
       $viewToggleLabel.textContent = 'Columns';
@@ -1902,6 +1975,7 @@ function switchView(mode) {
     }
     // Refresh column browser data
     renderColumnBrowser();
+    initColumnBrowserKbFocus();
   }
 }
 

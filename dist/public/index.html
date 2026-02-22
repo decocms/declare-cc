@@ -902,6 +902,41 @@
     .col-panel::-webkit-scrollbar-track { background: transparent; }
     .col-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
+    /* Workability path section */
+    .workability-path { margin-top: 4px; }
+    .workability-path .wp-header {
+      font-size: 10px; font-weight: 700; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--text-dim); margin-bottom: 8px;
+    }
+    .wp-step {
+      display: flex; align-items: flex-start; gap: 10px;
+      padding: 8px 10px; border-radius: 6px;
+      background: var(--surface2); border: 1px solid var(--border);
+      margin-bottom: 6px; font-size: 12px;
+    }
+    .wp-step-action {
+      font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+      color: var(--act-color); cursor: pointer; white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .wp-step-action:hover { text-decoration: underline; }
+    .wp-step-body { flex: 1; min-width: 0; }
+    .wp-step-title {
+      color: var(--text-bright); font-size: 12px; font-weight: 500;
+      line-height: 1.35; margin-bottom: 3px;
+    }
+    .wp-step-milestone {
+      font-size: 10px; color: var(--text-dim); opacity: 0.7;
+    }
+    .wp-impact {
+      display: inline-block; padding: 1px 7px; border-radius: 8px;
+      font-size: 9px; font-weight: 700; letter-spacing: 0.04em;
+      text-transform: uppercase; flex-shrink: 0; margin-top: 1px;
+    }
+    .wp-impact.impact-high   { background: #2a0a10; color: var(--broken-color); border: 1px solid #5a1520; }
+    .wp-impact.impact-medium { background: #1a1200; color: var(--integrity-partial); border: 1px solid #3d2c00; }
+    .wp-impact.impact-low    { background: #0a2018; color: var(--integrity-whole); border: 1px solid #1a4d34; }
+
   </style>
 </head>
 <body>
