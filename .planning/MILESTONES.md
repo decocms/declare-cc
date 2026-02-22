@@ -28,3 +28,4 @@
 | M-39 | Tri-part column browser for D-M-A navigation | Three-column Finder-style browser for navigating D-M-A hierarchy         | DONE    | D-06     | YES  |
 | M-40 | Live activity topbar with jump-to-operation  | Persistent topbar showing the current running operation with click-to-jump | DONE    | D-08     | YES  |
 | M-41 | Execute actions from dashboard               | Execute and stop actions from the dashboard with live output streaming    | DONE    | D-08     | YES  |
+| M-42 | Full-cycle E2E test suite                    | E2E test exercising complete D-M-A lifecycle through the HTTP API        | PENDING | D-06     | NO   |
