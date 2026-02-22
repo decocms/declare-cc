@@ -2714,10 +2714,14 @@ async function loadExecPlan(actionId) {
     const actionStatus = actionItem ? (actionItem.status || 'PENDING') : 'PENDING';
     const isCompleted = COMPLETED.has(actionStatus);
     const isRunning = runningActions.has(actionId);
+    const reviewState = actionItem ? (actionItem.reviewState || 'draft') : 'draft';
+    const isApproved = reviewState === 'approved';
 
     if (!isCompleted) {
       if (isRunning) {
         html += `<div style="margin-bottom:14px"><button class="exec-btn stop" id="stop-action-btn" data-action-id="${actionId}">&#9632; Stop</button></div>`;
+      } else if (!isApproved) {
+        html += `<div style="margin-bottom:14px"><button class="exec-btn" id="exec-action-btn" data-action-id="${actionId}" disabled title="Plan must be approved before execution (currently: ${reviewState})">&#9654; Execute</button></div>`;
       } else {
         html += `<div style="margin-bottom:14px"><button class="exec-btn" id="exec-action-btn" data-action-id="${actionId}">&#9654; Execute</button></div>`;
       }
