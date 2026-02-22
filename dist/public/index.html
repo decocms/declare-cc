@@ -2163,6 +2163,23 @@
     }
     .rb-link:hover { opacity: 0.8; }
     .rb-more { color: var(--text-dim); font-size: 12px; }
+    .enter-exec-btn {
+      margin-left: auto;
+      padding: 6px 16px;
+      border: none;
+      border-radius: 4px;
+      font-weight: 600;
+      font-size: 13px;
+      cursor: pointer;
+      background: var(--act-color);
+      color: #fff;
+      transition: opacity 0.15s;
+    }
+    .enter-exec-btn:hover:not(:disabled) { opacity: 0.85; }
+    .enter-exec-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
 
     /* ── Review action buttons ── */
     .review-actions {
@@ -2308,15 +2325,22 @@
       height: 10px;
       border-radius: 50%;
       flex-shrink: 0;
+      transition: background 0.3s ease, box-shadow 0.3s ease;
     }
     .exec-status-dot.queued  { background: #555; }
     .exec-status-dot.running { background: var(--planned-color); animation: exec-pulse 1.5s ease-in-out infinite; }
-    .exec-status-dot.done    { background: var(--act-color); }
-    .exec-status-dot.failed  { background: var(--broken-color); }
+    .exec-status-dot.done    { background: var(--act-color); animation: dotComplete 0.3s ease; }
+    .exec-status-dot.failed  { background: var(--broken-color); animation: dotComplete 0.3s ease; }
 
     @keyframes exec-pulse {
       0%, 100% { opacity: 1; }
       50%      { opacity: 0.3; }
+    }
+
+    @keyframes dotComplete {
+      0%   { transform: scale(1); }
+      50%  { transform: scale(1.3); }
+      100% { transform: scale(1); }
     }
 
     .exec-action-title {
@@ -2361,7 +2385,7 @@
       font-size: 13px;
       font-weight: 600;
       color: var(--text-bright);
-      flex: 1;
+      flex-shrink: 0;
     }
     .exec-exit-btn {
       padding: 4px 12px;
@@ -2384,6 +2408,91 @@
       font-weight: 600;
     }
     .exec-stop-btn:hover { opacity: 0.85; }
+
+    /* ── Execution progress bar ── */
+    .exec-progress-container {
+      height: 6px;
+      background: var(--bg);
+      border-radius: 3px;
+      flex: 1;
+      margin: 0 16px;
+      min-width: 120px;
+    }
+    .exec-progress-fill {
+      height: 100%;
+      background: var(--decl-color);
+      border-radius: 3px;
+      transition: width 0.3s ease;
+      width: 0;
+    }
+    .exec-progress-pct {
+      font-size: 13px;
+      color: var(--text-dim);
+      min-width: 40px;
+      text-align: right;
+    }
+
+    /* ── Pre-execution wave order view ── */
+    .exec-preorder-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      counter-reset: wave-counter;
+    }
+    .exec-preorder-wave {
+      border-left: 3px solid var(--planned-color);
+      padding: 12px 16px;
+      margin-bottom: 16px;
+    }
+    .exec-preorder-wave-header {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 8px;
+    }
+    .exec-preorder-milestone {
+      padding: 6px 12px;
+      font-size: 13px;
+      color: var(--mile-color);
+    }
+    .exec-preorder-action {
+      padding: 4px 12px 4px 24px;
+      font-size: 12px;
+      color: var(--text-dim);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .exec-confirm-btn {
+      background: var(--act-color);
+      color: white;
+      border: none;
+      padding: 10px 24px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 20px;
+      width: 100%;
+    }
+    .exec-confirm-btn:hover { opacity: 0.9; }
+
+    /* ── Drag-to-reorder feedback ── */
+    .exec-dragging { opacity: 0.4; outline: 2px dashed var(--planned-color); }
+    .exec-drop-valid { outline: 2px solid var(--act-color); background: rgba(52, 211, 153, 0.08); }
+    .exec-drop-invalid { outline: 2px solid var(--broken-color); opacity: 0.5; cursor: no-drop; }
+    .exec-preorder-milestone[draggable="true"],
+    .exec-preorder-action[draggable="true"] { cursor: grab; }
+    .exec-preorder-milestone[draggable="true"]:active,
+    .exec-preorder-action[draggable="true"]:active { cursor: grabbing; }
+    .exec-preorder-milestone[draggable="true"]::before,
+    .exec-preorder-action[draggable="true"]::before {
+      content: "\22EE\22EE";
+      color: var(--text-dim);
+      margin-right: 6px;
+      font-size: 11px;
+      letter-spacing: -3px;
+    }
 
   </style>
 </head>
@@ -2475,6 +2584,8 @@
     <div class="exec-topbar">
       <span class="exec-topbar-title" id="exec-topbar-title">Execution Mode</span>
       <span id="exec-wave-status" style="font-size:12px;color:var(--text-dim)"></span>
+      <div class="exec-progress-container"><div class="exec-progress-fill" id="exec-progress-fill"></div></div>
+      <span class="exec-progress-pct" id="exec-progress-pct"></span>
       <button class="exec-stop-btn" id="exec-stop-btn">Stop</button>
       <button class="exec-exit-btn" id="exec-exit-btn">Exit</button>
     </div>

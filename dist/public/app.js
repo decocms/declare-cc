@@ -97,10 +97,27 @@ let revisionSessionId = null;
 /** @type {string|null} Node ID being revised */
 let revisionNodeId = null;
 
+/** @type {boolean} Whether the execution order has been confirmed */
+let orderConfirmed = false;
+
+/** @type {Array<Array<{id:string, status:string, title:string, actions?: Array<{id:string, title:string, status:string}>}>>|null} Mutable wave order for drag-reorder */
+let preExecWaves = null;
+/** @type {number|null} Wave index of current drag source */
+let dragSourceWave = null;
+/** @type {number|null} Milestone index of current drag source (for action drags) */
+let dragSourceMile = null;
+
 /** @type {boolean} Whether the play sequence is currently running */
 let playRunning = false;
 /** @type {{ currentWave: number, totalWaves: number, activeActions: string[], completedActions: string[], failedActions: string[] } | null} */
 let playStatus = null;
+
+/** @type {number} Total actions across all waves for progress tracking */
+let execTotalActions = 0;
+/** @type {number} Actions completed so far */
+let execCompletedActions = 0;
+/** @type {number} Actions failed so far */
+let execFailedActions = 0;
 
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
@@ -144,6 +161,8 @@ const $execTopbarTitle  = document.getElementById('exec-topbar-title');
 const $execWaveStatus   = document.getElementById('exec-wave-status');
 const $execStopBtn      = document.getElementById('exec-stop-btn');
 const $execExitBtn      = document.getElementById('exec-exit-btn');
+const $execProgressFill = document.getElementById('exec-progress-fill');
+const $execProgressPct  = document.getElementById('exec-progress-pct');
 
 const $declFormContainer = document.getElementById('decl-form-container');
 const $colDeclAddBtn     = document.getElementById('col-decl-add-btn');
@@ -953,28 +972,40 @@ function renderReadinessBanner() {
   }
 
   if (unapproved.length === 0) {
-    $readinessBanner.innerHTML = `<span class="rb-complete">All ${total} nodes approved</span>`;
-    return;
+    $readinessBanner.innerHTML =
+      `<span class="rb-complete">All ${total} nodes approved</span>` +
+      `<button class="enter-exec-btn" id="enter-exec-btn">Enter Execution Mode</button>`;
+  } else {
+    const MAX_LINKS = 8;
+    const shown = unapproved.slice(0, MAX_LINKS);
+    const remaining = unapproved.length - shown.length;
+
+    let linksHtml = shown.map(n =>
+      `<a class="rb-link" data-node-id="${escHtml(n.id)}" data-node-type="${n._type}">${escHtml(n.id)}</a>`
+    ).join('');
+
+    if (remaining > 0) {
+      linksHtml += `<span class="rb-more">+ ${remaining} more</span>`;
+    }
+
+    $readinessBanner.innerHTML =
+      `<span class="rb-progress">${approvedCount}/${total} approved</span>` +
+      `<span class="rb-remaining">${unapproved.length} need review:</span>` +
+      linksHtml +
+      `<button class="enter-exec-btn" id="enter-exec-btn" disabled title="All nodes must be approved before entering execution mode">Enter Execution Mode</button>`;
   }
 
-  const MAX_LINKS = 8;
-  const shown = unapproved.slice(0, MAX_LINKS);
-  const remaining = unapproved.length - shown.length;
-
-  let linksHtml = shown.map(n =>
-    `<a class="rb-link" data-node-id="${escHtml(n.id)}" data-node-type="${n._type}">${escHtml(n.id)}</a>`
-  ).join('');
-
-  if (remaining > 0) {
-    linksHtml += `<span class="rb-more">+ ${remaining} more</span>`;
+  // Wire enter-execution-mode button
+  const execBtn = document.getElementById('enter-exec-btn');
+  if (execBtn && !execBtn.disabled) {
+    execBtn.addEventListener('click', () => {
+      if (confirm('Enter execution mode? You will not be able to edit plans until you exit.')) {
+        switchView('execution');
+      }
+    });
   }
 
-  $readinessBanner.innerHTML =
-    `<span class="rb-progress">${approvedCount}/${total} approved</span>` +
-    `<span class="rb-remaining">${unapproved.length} need review:</span>` +
-    linksHtml;
-
-  // Wire click handlers on links
+  // Wire click handlers on unapproved-node links
   $readinessBanner.querySelectorAll('.rb-link').forEach(link => {
     link.addEventListener('click', function(e) {
       e.preventDefault();
@@ -3404,6 +3435,14 @@ function handleActionComplete(e) {
       currentOutputActionId = null;
     }
 
+    // Update progress counters
+    if (exitCode === 0) {
+      execCompletedActions++;
+    } else {
+      execFailedActions++;
+    }
+    updateExecProgress();
+
     // Update state
     runningActions.delete(actionId);
     updateRunningIndicators();
@@ -3418,7 +3457,10 @@ function handleActionComplete(e) {
     }
 
     // Refresh execution view if active
-    if (viewMode === 'execution') renderExecutionView();
+    if (viewMode === 'execution') {
+      if (orderConfirmed) renderExecutionView();
+      else renderPreExecutionView();
+    }
 
     // Refresh graph and re-render the panel
     loadData();
@@ -3432,6 +3474,7 @@ function handleActionComplete(e) {
  * Start play: execute all ready agent milestones in wave order.
  */
 async function startPlay() {
+  if (!orderConfirmed) return;
   const btn = document.getElementById('play-btn');
   if (btn) {
     btn.disabled = true;
@@ -3471,7 +3514,11 @@ async function stopPlay() {
  */
 function updateExecTopbar() {
   if (!$execTopbarTitle) return;
-  if (playRunning && playStatus) {
+  if (!orderConfirmed) {
+    $execTopbarTitle.textContent = 'Review Execution Order';
+    if ($execWaveStatus) $execWaveStatus.textContent = '';
+    if ($execStopBtn) $execStopBtn.style.display = 'none';
+  } else if (playRunning && playStatus) {
     $execTopbarTitle.textContent = 'Execution Mode';
     if ($execWaveStatus) {
       $execWaveStatus.textContent = playStatus.totalWaves
@@ -3484,6 +3531,18 @@ function updateExecTopbar() {
     if ($execWaveStatus) $execWaveStatus.textContent = '';
     if ($execStopBtn) $execStopBtn.style.display = 'none';
   }
+  updateExecProgress();
+}
+
+/**
+ * Update the execution progress bar and percentage display.
+ */
+function updateExecProgress() {
+  const pct = execTotalActions > 0
+    ? Math.round(((execCompletedActions + execFailedActions) / execTotalActions) * 100)
+    : 0;
+  if ($execProgressFill) $execProgressFill.style.width = pct + '%';
+  if ($execProgressPct) $execProgressPct.textContent = execTotalActions > 0 ? pct + '%' : '';
 }
 
 function updatePlayUI() {
@@ -3564,6 +3623,22 @@ function handlePlayStart(e) {
       completedActions: [],
       failedActions: [],
     };
+    // Reset progress counters
+    execCompletedActions = 0;
+    execFailedActions = 0;
+    // Compute totalActions from data — use top-level field if present, else count from waves
+    if (data.totalActions != null) {
+      execTotalActions = data.totalActions;
+    } else if (data.waves) {
+      execTotalActions = 0;
+      for (const w of data.waves) {
+        for (const m of (w.milestones || [])) {
+          execTotalActions += (m.actions || []).length;
+        }
+      }
+    } else {
+      execTotalActions = 0;
+    }
     // Reset execution view output state for new run
     execOutputBuffers = {};
     execSelectedActionId = null;
@@ -3571,6 +3646,7 @@ function handlePlayStart(e) {
     if ($execOutputHeader) $execOutputHeader.textContent = 'No action selected';
     if ($execOutputLog) $execOutputLog.textContent = '';
     updatePlayUI();
+    updateExecProgress();
     // Auto-switch to execution mode when play starts
     switchView('execution');
   } catch (_) {}
@@ -3594,14 +3670,19 @@ function handlePlayWaveStart(e) {
     }
     updatePlayUI();
     if (viewMode === 'execution') {
-      renderExecutionView();
-      updateExecTopbar();
-      // Auto-select first running action if auto-follow is on and no action selected (or selected is done)
-      if (execAutoFollow && playStatus && playStatus.activeActions.length > 0) {
-        const selectedDone = execSelectedActionId && !runningActions.has(execSelectedActionId);
-        if (!execSelectedActionId || selectedDone) {
-          selectExecAction(playStatus.activeActions[0], false);
+      if (orderConfirmed) {
+        renderExecutionView();
+        updateExecTopbar();
+        // Auto-select first running action if auto-follow is on and no action selected (or selected is done)
+        if (execAutoFollow && playStatus && playStatus.activeActions.length > 0) {
+          const selectedDone = execSelectedActionId && !runningActions.has(execSelectedActionId);
+          if (!execSelectedActionId || selectedDone) {
+            selectExecAction(playStatus.activeActions[0], false);
+          }
         }
+      } else {
+        renderPreExecutionView();
+        updateExecTopbar();
       }
     }
   } catch (_) {}
@@ -3625,8 +3706,13 @@ function handlePlayWaveComplete(e) {
     }
     updatePlayUI();
     if (viewMode === 'execution') {
-      renderExecutionView();
-      updateExecTopbar();
+      if (orderConfirmed) {
+        renderExecutionView();
+        updateExecTopbar();
+      } else {
+        renderPreExecutionView();
+        updateExecTopbar();
+      }
     }
     loadData(); // refresh graph after each wave
   } catch (_) {}
@@ -3640,6 +3726,11 @@ function handlePlayComplete(e) {
   try {
     const data = JSON.parse(e.data);
     playRunning = false;
+    // Show 100% if pipeline completed (not stopped)
+    if (!(data.stopped && data.stopped.length > 0)) {
+      if ($execProgressFill) $execProgressFill.style.width = '100%';
+      if ($execProgressPct) $execProgressPct.textContent = '100%';
+    }
     // Keep playStatus briefly for display, then clear
     setTimeout(() => {
       playStatus = null;
@@ -4481,18 +4572,14 @@ function selectExecAction(actionId, manual) {
 }
 
 /**
- * Render the execution pipeline view — milestones grouped by dependency waves
- * with nested actions showing status indicators in a CI-pipeline layout.
+ * Compute wave ordering of milestones using Kahn's algorithm.
+ * Returns array of waves, each wave being an array of milestone objects.
+ * @returns {Array<Array<{id:string, status:string, title:string, dependsOn?:string[], classification?:string, hasPlan?:boolean}>>}
  */
-function renderExecutionView() {
-  const $pipeline = document.getElementById('exec-pipeline');
-  if (!$pipeline || !graphData) return;
-
+function computeWaveOrder() {
+  if (!graphData) return [];
   const milestones = graphData.milestones || [];
-  const actions = graphData.actions || [];
 
-  // Compute wave ordering using Kahn's algorithm (mirrors play.js logic)
-  // Include ALL milestones (not just agent/non-DONE) for full context
   const candidateIds = new Set(milestones.map(m => m.id.toUpperCase()));
 
   /** @type {Map<string, string[]>} */
@@ -4529,6 +4616,234 @@ function renderExecutionView() {
     for (const m of wave) placed.add(m.id.toUpperCase());
     waves.push(wave);
   }
+
+  return waves;
+}
+
+/**
+ * Render the pre-execution wave order view — shows computed execution order
+ * as an ordered list with a Confirm Order button before execution controls are available.
+ * Supports drag-to-reorder within wave (milestones) and within milestone (actions).
+ */
+function renderPreExecutionView() {
+  const $pipeline = document.getElementById('exec-pipeline');
+  if (!$pipeline || !graphData) return;
+
+  const allActions = graphData.actions || [];
+
+  // Initialise mutable wave state on first render (or after reset)
+  if (!preExecWaves) {
+    const rawWaves = computeWaveOrder();
+    // Enrich each milestone with its resolved actions list
+    preExecWaves = rawWaves.map(wave =>
+      wave.map(m => ({
+        ...m,
+        actions: allActions.filter(a => (a.causes || []).includes(m.id))
+      }))
+    );
+  }
+
+  let html = '<div class="exec-preorder-list">';
+  preExecWaves.forEach((wave, waveIdx) => {
+    html += `<div class="exec-preorder-wave">`;
+    html += `<div class="exec-preorder-wave-header">Wave ${waveIdx + 1}</div>`;
+
+    wave.forEach((m, mileIdx) => {
+      const mStatus = deriveMilestoneStatus(m, allActions);
+      html += `<div class="exec-preorder-milestone" draggable="true" data-wave-idx="${waveIdx}" data-milestone-idx="${mileIdx}">${escHtml(m.id)}: ${escHtml(m.title || '')} — ${escHtml(mStatus.displayStatus)}</div>`;
+
+      const mActions = m.actions || [];
+      mActions.forEach((a, actIdx) => {
+        const aStatus = (a.status || '').toUpperCase();
+        let dotClass = 'queued';
+        if (COMPLETED.has(aStatus)) dotClass = 'done';
+        else if (aStatus === 'BROKEN' || aStatus === 'FAILED') dotClass = 'failed';
+
+        html += `<div class="exec-preorder-action" draggable="true" data-wave-idx="${waveIdx}" data-milestone-idx="${mileIdx}" data-action-idx="${actIdx}">`;
+        html += `<span class="exec-status-dot ${dotClass}"></span>`;
+        html += `<span>${escHtml(a.id)}: ${escHtml(a.title || '')}</span>`;
+        html += `</div>`;
+      });
+    });
+
+    html += `</div>`;
+  });
+
+  if (preExecWaves.length === 0) {
+    html += '<div style="color:var(--text-dim);padding:20px;font-size:13px;">No milestones to display.</div>';
+  }
+
+  html += '</div>';
+  html += '<button class="exec-confirm-btn" id="exec-confirm-btn">Confirm Order</button>';
+
+  $pipeline.innerHTML = html;
+
+  // ── Drag-and-drop wiring ──
+
+  /** Remove all drag feedback classes from the DOM */
+  function clearDragClasses() {
+    $pipeline.querySelectorAll('.exec-drop-valid, .exec-drop-invalid, .exec-dragging').forEach(el => {
+      el.classList.remove('exec-drop-valid', 'exec-drop-invalid', 'exec-dragging');
+    });
+  }
+
+  // Wire milestone drag handlers
+  $pipeline.querySelectorAll('.exec-preorder-milestone[draggable="true"]').forEach(el => {
+    el.addEventListener('dragstart', (e) => {
+      const wIdx = Number(el.dataset.waveIdx);
+      const mIdx = Number(el.dataset.milestoneIdx);
+      e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'milestone', waveIdx: wIdx, mileIdx: mIdx }));
+      e.dataTransfer.effectAllowed = 'move';
+      el.classList.add('exec-dragging');
+      dragSourceWave = wIdx;
+      dragSourceMile = null;
+    });
+    el.addEventListener('dragend', () => {
+      clearDragClasses();
+      dragSourceWave = null;
+      dragSourceMile = null;
+    });
+    el.addEventListener('dragover', (e) => {
+      if (dragSourceWave === null) return;
+      // Only milestone-type drags target milestone elements
+      const targetWave = Number(el.dataset.waveIdx);
+      if (dragSourceMile !== null) {
+        // This is an action drag — milestone is not a valid target
+        el.classList.add('exec-drop-invalid');
+        el.classList.remove('exec-drop-valid');
+        return;
+      }
+      if (targetWave === dragSourceWave) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        el.classList.add('exec-drop-valid');
+        el.classList.remove('exec-drop-invalid');
+      } else {
+        el.classList.add('exec-drop-invalid');
+        el.classList.remove('exec-drop-valid');
+      }
+    });
+    el.addEventListener('dragleave', () => {
+      el.classList.remove('exec-drop-valid', 'exec-drop-invalid');
+    });
+    el.addEventListener('drop', (e) => {
+      e.preventDefault();
+      el.classList.remove('exec-drop-valid', 'exec-drop-invalid');
+      try {
+        const data = JSON.parse(e.dataTransfer.getData('text/plain'));
+        if (data.type !== 'milestone') return;
+        const srcWave = data.waveIdx;
+        const srcIdx = data.mileIdx;
+        const tgtWave = Number(el.dataset.waveIdx);
+        const tgtIdx = Number(el.dataset.milestoneIdx);
+        if (srcWave !== tgtWave || srcIdx === tgtIdx) return;
+        // Splice and insert
+        const [moved] = preExecWaves[srcWave].splice(srcIdx, 1);
+        preExecWaves[tgtWave].splice(tgtIdx, 0, moved);
+        renderPreExecutionView();
+      } catch (_) { /* ignore malformed data */ }
+    });
+  });
+
+  // Wire action drag handlers
+  $pipeline.querySelectorAll('.exec-preorder-action[draggable="true"]').forEach(el => {
+    el.addEventListener('dragstart', (e) => {
+      const wIdx = Number(el.dataset.waveIdx);
+      const mIdx = Number(el.dataset.milestoneIdx);
+      const aIdx = Number(el.dataset.actionIdx);
+      e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'action', waveIdx: wIdx, mileIdx: mIdx, actIdx: aIdx }));
+      e.dataTransfer.effectAllowed = 'move';
+      el.classList.add('exec-dragging');
+      dragSourceWave = wIdx;
+      dragSourceMile = mIdx;
+    });
+    el.addEventListener('dragend', () => {
+      clearDragClasses();
+      dragSourceWave = null;
+      dragSourceMile = null;
+    });
+    el.addEventListener('dragover', (e) => {
+      if (dragSourceWave === null || dragSourceMile === null) return;
+      const targetWave = Number(el.dataset.waveIdx);
+      const targetMile = Number(el.dataset.milestoneIdx);
+      if (targetWave === dragSourceWave && targetMile === dragSourceMile) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        el.classList.add('exec-drop-valid');
+        el.classList.remove('exec-drop-invalid');
+      } else {
+        el.classList.add('exec-drop-invalid');
+        el.classList.remove('exec-drop-valid');
+      }
+    });
+    el.addEventListener('dragleave', () => {
+      el.classList.remove('exec-drop-valid', 'exec-drop-invalid');
+    });
+    el.addEventListener('drop', (e) => {
+      e.preventDefault();
+      el.classList.remove('exec-drop-valid', 'exec-drop-invalid');
+      try {
+        const data = JSON.parse(e.dataTransfer.getData('text/plain'));
+        if (data.type !== 'action') return;
+        const srcWave = data.waveIdx;
+        const srcMile = data.mileIdx;
+        const srcIdx = data.actIdx;
+        const tgtWave = Number(el.dataset.waveIdx);
+        const tgtMile = Number(el.dataset.milestoneIdx);
+        const tgtIdx = Number(el.dataset.actionIdx);
+        if (srcWave !== tgtWave || srcMile !== tgtMile || srcIdx === tgtIdx) return;
+        const actionsArr = preExecWaves[srcWave][srcMile].actions;
+        const [moved] = actionsArr.splice(srcIdx, 1);
+        actionsArr.splice(tgtIdx, 0, moved);
+        renderPreExecutionView();
+      } catch (_) { /* ignore malformed data */ }
+    });
+  });
+
+  // ── Confirm button — POST manifest and transition ──
+  const confirmBtn = document.getElementById('exec-confirm-btn');
+  if (confirmBtn) {
+    confirmBtn.addEventListener('click', async () => {
+      const manifest = {
+        waves: preExecWaves.map((wave, i) => ({
+          waveNumber: i + 1,
+          milestones: wave.map(m => ({
+            id: m.id,
+            actions: (m.actions || []).map(a => a.id)
+          }))
+        }))
+      };
+      try {
+        const resp = await fetch('/api/execution-manifest', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(manifest)
+        });
+        if (!resp.ok) {
+          const errBody = await resp.text();
+          alert('Failed to save execution manifest: ' + errBody);
+          return;
+        }
+        orderConfirmed = true;
+        renderExecutionView();
+        updateExecTopbar();
+      } catch (err) {
+        alert('Failed to save execution manifest: ' + err.message);
+      }
+    });
+  }
+}
+
+/**
+ * Render the execution pipeline view — milestones grouped by dependency waves
+ * with nested actions showing status indicators in a CI-pipeline layout.
+ */
+function renderExecutionView() {
+  const $pipeline = document.getElementById('exec-pipeline');
+  if (!$pipeline || !graphData) return;
+
+  const actions = graphData.actions || [];
+  const waves = computeWaveOrder();
 
   // Build HTML
   let html = '';
@@ -4598,10 +4913,26 @@ function renderExecutionView() {
 // ─── View switching (DAG / Column browser / Execution) ────────────────────────
 
 /**
+ * Check whether all non-DONE actions are approved, allowing execution mode.
+ * Returns true when there are no unapproved actions (or no actions at all).
+ * @returns {boolean}
+ */
+function canEnterExecution() {
+  const actions = (graphData && graphData.actions) || [];
+  const nonDone = actions.filter(a => !COMPLETED.has((a.status || '').toUpperCase()));
+  if (nonDone.length === 0) return true;
+  return nonDone.every(a => a.reviewState === 'approved');
+}
+
+/**
  * Switch between DAG, column browser, and execution views.
  * @param {'dag'|'columns'|'execution'} mode
  */
 function switchView(mode) {
+  if (mode === 'execution' && !canEnterExecution()) {
+    console.warn('Cannot enter execution mode: unapproved actions remain');
+    return;
+  }
   viewMode = mode;
   localStorage.setItem('declare-view-mode', mode);
 
@@ -4640,7 +4971,9 @@ function switchView(mode) {
       $viewToggle.classList.add('active');
       $viewToggleLabel.textContent = 'Columns';
     }
-    renderExecutionView();
+    orderConfirmed = false;
+    preExecWaves = null;
+    renderPreExecutionView();
     updateExecTopbar();
   }
 }
@@ -5194,6 +5527,11 @@ function connectSSE() {
   es.addEventListener('play-wave-start', handlePlayWaveStart);
   es.addEventListener('play-wave-complete', handlePlayWaveComplete);
   es.addEventListener('play-complete', handlePlayComplete);
+  // Pipeline runner events (same shape, reuse handlers)
+  es.addEventListener('pipeline-start', handlePlayStart);
+  es.addEventListener('pipeline-wave-start', handlePlayWaveStart);
+  es.addEventListener('pipeline-wave-complete', handlePlayWaveComplete);
+  es.addEventListener('pipeline-complete', handlePlayComplete);
   es.addEventListener('error', () => {
     // Connection dropped — reconnect after 3s
     es.close();
