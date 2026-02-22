@@ -1386,6 +1386,17 @@ function renderPanelChain(item, type) {
           </div>`;
       }
 
+      if (s.type === 'milestone') {
+        // Execution log viewer — filled asynchronously after render
+        html += `<div style="margin-top:16px;border-top:1px solid var(--border);padding-top:12px">
+          <div class="detail-label" style="display:flex;align-items:center;justify-content:space-between">
+            Execution Log
+            <button id="refresh-log-btn" style="font-size:10px;padding:2px 8px;cursor:pointer;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;color:var(--text-dim)" title="Refresh log">&#8635;</button>
+          </div>
+          <pre id="milestone-exec-log" class="output-log" style="margin-top:8px;max-height:300px;overflow-y:auto;font-size:11px;white-space:pre-wrap;word-break:break-all"></pre>
+        </div>`;
+      }
+
       if (s.type === 'action') {
         // Exec-plan placeholder — filled asynchronously after render
         html += `<div id="exec-plan-detail" style="margin-top:16px">
@@ -1404,8 +1415,49 @@ function renderPanelChain(item, type) {
     });
   });
 
-  // If an action is focused, fetch and render its exec-plan
+  // Wire declaration Edit/Delete buttons
   const focusSection = sections.find(s => s.role === 'focus');
+  if (focusSection && focusSection.type === 'declaration') {
+    const editBtn = document.getElementById('decl-edit-btn');
+    const deleteBtn = document.getElementById('decl-delete-btn');
+    const confirmDeleteBtn = document.getElementById('confirm-delete-btn');
+    const cancelDeleteBtn = document.getElementById('cancel-delete-btn');
+
+    if (editBtn) {
+      editBtn.addEventListener('click', () => {
+        editingDeclId = focusSection.item.id;
+        renderPanelChain(focusSection.item, 'declaration');
+      });
+    }
+    if (deleteBtn) {
+      deleteBtn.addEventListener('click', () => {
+        deleteConfirmId = focusSection.item.id;
+        renderPanelChain(focusSection.item, 'declaration');
+      });
+    }
+    if (confirmDeleteBtn) {
+      confirmDeleteBtn.addEventListener('click', () => {
+        deleteDeclaration(focusSection.item.id);
+      });
+    }
+    if (cancelDeleteBtn) {
+      cancelDeleteBtn.addEventListener('click', () => {
+        deleteConfirmId = null;
+        renderPanelChain(focusSection.item, 'declaration');
+      });
+    }
+  }
+
+  // If a milestone is focused, fetch and render its execution log
+  if (focusSection && focusSection.type === 'milestone') {
+    loadMilestoneLog(focusSection.item.id);
+    const refreshLogBtn = document.getElementById('refresh-log-btn');
+    if (refreshLogBtn) {
+      refreshLogBtn.addEventListener('click', () => loadMilestoneLog(focusSection.item.id));
+    }
+  }
+
+  // If an action is focused, fetch and render its exec-plan
   if (focusSection && focusSection.type === 'action') {
     loadExecPlan(focusSection.item.id);
   }
@@ -1413,6 +1465,27 @@ function renderPanelChain(item, type) {
   // If the focused node is not whole, fetch and render workability path
   if (focusSection && focusSection.item.wholeness && focusSection.item.wholeness !== 'whole') {
     renderWorkabilityPath(focusSection.item.id, focusSection.type);
+  }
+}
+
+/**
+ * Fetch the execution log for a milestone and display it in the log viewer.
+ * @param {string} milestoneId
+ */
+async function loadMilestoneLog(milestoneId) {
+  const logEl = document.getElementById('milestone-exec-log');
+  if (!logEl) return;
+  try {
+    const res = await fetch(`/api/milestone/${encodeURIComponent(milestoneId)}/log`);
+    const text = await res.text();
+    if (text.trim()) {
+      logEl.textContent = text;
+      logEl.scrollTop = logEl.scrollHeight;
+    } else {
+      logEl.innerHTML = '<span style="opacity:0.4;font-style:italic">No execution log yet</span>';
+    }
+  } catch (e) {
+    logEl.innerHTML = '<span style="opacity:0.4;font-style:italic">Could not load log</span>';
   }
 }
 
