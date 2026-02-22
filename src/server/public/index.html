@@ -1795,6 +1795,146 @@
     .review-revision_needed { background: #ffedd5; color: #c2410c; border: 1px solid #fdba74; }
     .review-approved        { background: #dcfce7; color: #15803d; border: 1px solid #86efac; }
 
+    /* ── Annotation panel ── */
+    .annotation-panel {
+      margin-top: 20px;
+      border-top: 1px solid var(--border);
+      padding-top: 16px;
+    }
+    .annotation-count {
+      font-size: 10px;
+      color: var(--text-dim);
+      font-weight: 400;
+    }
+    .annotation-lines {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 11px;
+      line-height: 1.6;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px 0;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+    .ann-line {
+      display: flex;
+      padding: 0 10px;
+    }
+    .ann-line:hover {
+      background: var(--surface2);
+    }
+    .ann-line-num {
+      color: var(--text-dim);
+      opacity: 0.5;
+      min-width: 32px;
+      text-align: right;
+      padding-right: 10px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .ann-line-num:hover {
+      opacity: 1;
+      color: #60a5fa;
+    }
+    .ann-line-text {
+      white-space: pre;
+      overflow-x: auto;
+      flex: 1;
+    }
+    .ann-line.has-annotation {
+      background: rgba(234, 179, 8, 0.08);
+      border-left: 2px solid #eab308;
+    }
+    .ann-comment {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 10px 4px 42px;
+      background: rgba(234, 179, 8, 0.06);
+      border-left: 2px solid #eab308;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 11px;
+    }
+    .ann-comment-text {
+      flex: 1;
+      color: #eab308;
+    }
+    .ann-comment-meta {
+      font-size: 9px;
+      color: var(--text-dim);
+      opacity: 0.6;
+    }
+    .ann-resolve-btn {
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      cursor: pointer;
+      font-size: 14px;
+      padding: 0 4px;
+      opacity: 0.5;
+    }
+    .ann-resolve-btn:hover {
+      opacity: 1;
+      color: var(--broken-color);
+    }
+    .ann-input-row {
+      display: flex;
+      gap: 6px;
+      padding: 4px 10px 4px 42px;
+      background: rgba(96, 165, 250, 0.06);
+    }
+    .ann-input {
+      flex: 1;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 4px;
+      padding: 4px 8px;
+      font-size: 11px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+    .ann-input:focus {
+      outline: none;
+      border-color: #60a5fa;
+    }
+    .ann-submit-btn {
+      background: #60a5fa;
+      color: #000;
+      border: none;
+      border-radius: 4px;
+      padding: 4px 10px;
+      font-size: 10px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .ann-submit-btn:hover {
+      background: #93bbfd;
+    }
+    .ann-show-more-btn {
+      display: block;
+      width: 100%;
+      background: none;
+      border: none;
+      border-top: 1px solid var(--border);
+      color: var(--text-dim);
+      padding: 6px;
+      font-size: 10px;
+      cursor: pointer;
+      text-align: center;
+    }
+    .ann-show-more-btn:hover {
+      color: var(--text);
+      background: var(--surface2);
+    }
+    .ann-no-artifact {
+      color: var(--text-dim);
+      font-size: 11px;
+      opacity: 0.5;
+      font-style: italic;
+      padding: 8px 0;
+    }
+
   </style>
 </head>
 <body>

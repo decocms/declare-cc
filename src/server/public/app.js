@@ -75,6 +75,11 @@ let actionDerivationMilestoneId = null;
 /** @type {Array<{title: string, produces: string, reason: string}> | null} */
 let actionDerivationProposals = null;
 
+/** @type {number|null} Line number currently being annotated */
+let annotatingLine = null;
+/** @type {string|null} Node ID of the currently displayed annotation panel */
+let annotationNodeId = null;
+
 /** @type {boolean} Whether the play sequence is currently running */
 let playRunning = false;
 /** @type {{ currentWave: number, totalWaves: number, activeActions: string[], completedActions: string[], failedActions: string[] } | null} */
@@ -1211,6 +1216,336 @@ function drawEdges() {
   $edgesSvg.appendChild(fragment);
 }
 
+// ─── Annotation panel ─────────────────────────────────────────────────────────
+
+/**
+ * Determine the artifact file path for a node, used to load content for annotation display.
+ * @param {string} nodeId
+ * @param {string} type - 'declaration' | 'milestone' | 'action'
+ * @returns {string|null} The file path relative to project root, or null if unknown.
+ */
+function getNodeArtifactPath(nodeId, type) {
+  if (!graphData) return null;
+
+  if (type === 'declaration') {
+    return '.planning/FUTURE.md';
+  }
+
+  if (type === 'milestone') {
+    const milestone = graphData.milestones.find(m => m.id === nodeId);
+    if (!milestone) return null;
+    // Construct slug from title
+    const slug = (milestone.title || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    const mNum = nodeId.replace(/^M-/, '');
+    return `.planning/milestones/M-${mNum}-${slug}/PLAN.md`;
+  }
+
+  if (type === 'action') {
+    // Find the milestone this action belongs to
+    const action = graphData.actions.find(a => a.id === nodeId);
+    if (!action) return null;
+    const milestoneId = (action.causes || [])[0];
+    if (!milestoneId) return null;
+    const milestone = graphData.milestones.find(m => m.id === milestoneId);
+    if (!milestone) return null;
+    const slug = (milestone.title || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    const mNum = milestoneId.replace(/^M-/, '');
+    const aNum = nodeId.replace(/^A-/, '');
+    return `.planning/milestones/M-${mNum}-${slug}/A-${aNum}-EXEC-PLAN.md`;
+  }
+
+  return null;
+}
+
+/**
+ * Format a timestamp as a short relative time string (e.g. "2m ago", "3h ago", "Jan 5").
+ * @param {string} ts - ISO timestamp
+ * @returns {string}
+ */
+function fmtRelativeTime(ts) {
+  if (!ts) return '';
+  const now = Date.now();
+  const then = new Date(ts).getTime();
+  const diffSec = Math.floor((now - then) / 1000);
+  if (diffSec < 60) return 'just now';
+  if (diffSec < 3600) return Math.floor(diffSec / 60) + 'm ago';
+  if (diffSec < 86400) return Math.floor(diffSec / 3600) + 'h ago';
+  if (diffSec < 604800) return Math.floor(diffSec / 86400) + 'd ago';
+  return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+/**
+ * Render the annotation panel for a node. Appends to $panelBody after existing content.
+ * Fetches artifact content and annotations, builds line-numbered display with inline comments.
+ *
+ * @param {string} nodeId
+ * @param {string} type
+ */
+async function renderAnnotationPanel(nodeId, type) {
+  annotationNodeId = nodeId;
+  annotatingLine = null;
+
+  const artifactPath = getNodeArtifactPath(nodeId, type);
+
+  // Fetch annotations
+  let annotations = [];
+  try {
+    const annRes = await fetch('/api/node/' + encodeURIComponent(nodeId) + '/annotations');
+    if (annRes.ok) {
+      const annData = await annRes.json();
+      annotations = annData.annotations || [];
+    }
+  } catch (_) { /* ignore */ }
+
+  // Build annotations lookup by line
+  const annByLine = {};
+  annotations.forEach(a => {
+    if (!annByLine[a.line]) annByLine[a.line] = [];
+    annByLine[a.line].push(a);
+  });
+
+  // Fetch artifact content if path is available
+  let lines = null;
+  if (artifactPath) {
+    try {
+      const fileRes = await fetch('/api/files?path=' + encodeURIComponent(artifactPath));
+      if (fileRes.ok) {
+        const fileData = await fileRes.json();
+        const content = fileData.content || '';
+        lines = content.split('\n');
+      }
+    } catch (_) { /* ignore */ }
+  }
+
+  // Check that we're still showing the same node (user might have clicked elsewhere)
+  if (annotationNodeId !== nodeId) return;
+
+  // Remove any existing annotation panel
+  const existingPanel = document.getElementById('annotation-panel');
+  if (existingPanel) existingPanel.remove();
+
+  // Build the annotation panel HTML
+  const el = document.createElement('div');
+  el.className = 'annotation-panel';
+  el.id = 'annotation-panel';
+
+  const commentCount = annotations.length;
+  let headerHtml = `<div class="detail-label" style="margin-bottom:10px;display:flex;align-items:center;justify-content:space-between">
+    Annotations
+    <span class="annotation-count">${commentCount} comment${commentCount !== 1 ? 's' : ''}</span>
+  </div>`;
+
+  if (lines !== null) {
+    // Show line-numbered artifact content with inline annotations
+    const MAX_LINES = 500;
+    const showAll = lines.length <= MAX_LINES;
+    const displayLines = showAll ? lines : lines.slice(0, MAX_LINES);
+
+    let linesHtml = '';
+    displayLines.forEach((lineText, idx) => {
+      const lineNum = idx + 1;
+      const hasAnn = annByLine[lineNum] && annByLine[lineNum].length > 0;
+      linesHtml += `<div class="ann-line${hasAnn ? ' has-annotation' : ''}" data-line="${lineNum}">`;
+      linesHtml += `<span class="ann-line-num" title="Click to annotate line ${lineNum}">${lineNum}</span>`;
+      linesHtml += `<span class="ann-line-text">${escHtml(lineText)}</span>`;
+      linesHtml += `</div>`;
+
+      // Show existing annotations for this line
+      if (hasAnn) {
+        annByLine[lineNum].forEach(a => {
+          linesHtml += `<div class="ann-comment" data-annotation-id="${escHtml(a.id)}">`;
+          linesHtml += `<span class="ann-comment-text">${escHtml(a.text)}</span>`;
+          linesHtml += `<span class="ann-comment-meta">${fmtRelativeTime(a.timestamp)}</span>`;
+          linesHtml += `<button class="ann-resolve-btn" data-annotation-id="${escHtml(a.id)}" title="Resolve">&times;</button>`;
+          linesHtml += `</div>`;
+        });
+      }
+
+      // Show input row if this line is being annotated
+      if (annotatingLine === lineNum) {
+        linesHtml += `<div class="ann-input-row">`;
+        linesHtml += `<input type="text" class="ann-input" placeholder="Add annotation..." autofocus />`;
+        linesHtml += `<button class="ann-submit-btn">Add</button>`;
+        linesHtml += `</div>`;
+      }
+    });
+
+    // Also show annotations on lines beyond what we displayed, or on lines without artifact content
+    if (!showAll) {
+      linesHtml += `<button class="ann-show-more-btn" id="ann-show-more">${lines.length - MAX_LINES} more lines... click to show all</button>`;
+    }
+
+    el.innerHTML = headerHtml + `<div class="annotation-lines">${linesHtml}</div>`;
+  } else if (annotations.length > 0) {
+    // No artifact content available, but show annotations in list mode
+    let listHtml = '';
+    annotations.forEach(a => {
+      listHtml += `<div class="ann-comment" data-annotation-id="${escHtml(a.id)}" style="border-radius:4px;margin-bottom:4px">`;
+      listHtml += `<span style="font-size:10px;color:var(--text-dim);min-width:28px">L${a.line}</span>`;
+      listHtml += `<span class="ann-comment-text">${escHtml(a.text)}</span>`;
+      listHtml += `<span class="ann-comment-meta">${fmtRelativeTime(a.timestamp)}</span>`;
+      listHtml += `<button class="ann-resolve-btn" data-annotation-id="${escHtml(a.id)}" title="Resolve">&times;</button>`;
+      listHtml += `</div>`;
+    });
+    el.innerHTML = headerHtml + `<div class="annotation-lines" style="padding:8px">${listHtml}</div>`;
+  } else {
+    // No artifact content and no annotations
+    el.innerHTML = headerHtml + `<div class="ann-no-artifact">No artifact content available. Select a line-numbered artifact to add annotations.</div>`;
+  }
+
+  $panelBody.appendChild(el);
+
+  // Wire event delegation on the annotation panel
+  el.addEventListener('click', async (e) => {
+    // Click on line number to toggle annotation input
+    const lineNumEl = e.target.closest('.ann-line-num');
+    if (lineNumEl) {
+      const line = parseInt(lineNumEl.parentElement.dataset.line, 10);
+      annotatingLine = annotatingLine === line ? null : line;
+      renderAnnotationPanel(nodeId, type);
+      return;
+    }
+
+    // Click submit button
+    const submitBtn = e.target.closest('.ann-submit-btn');
+    if (submitBtn) {
+      const inputRow = submitBtn.closest('.ann-input-row');
+      const input = inputRow ? inputRow.querySelector('.ann-input') : null;
+      if (input && input.value.trim()) {
+        try {
+          await fetch('/api/node/' + encodeURIComponent(nodeId) + '/annotations', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ line: annotatingLine, text: input.value.trim() })
+          });
+          annotatingLine = null;
+          renderAnnotationPanel(nodeId, type);
+        } catch (_) { /* ignore */ }
+      }
+      return;
+    }
+
+    // Click resolve/delete button
+    const resolveBtn = e.target.closest('.ann-resolve-btn');
+    if (resolveBtn) {
+      const annId = resolveBtn.dataset.annotationId;
+      if (annId) {
+        try {
+          await fetch('/api/node/' + encodeURIComponent(nodeId) + '/annotations/' + encodeURIComponent(annId), {
+            method: 'DELETE'
+          });
+          renderAnnotationPanel(nodeId, type);
+        } catch (_) { /* ignore */ }
+      }
+      return;
+    }
+
+    // Click show more button
+    if (e.target.id === 'ann-show-more') {
+      // Re-render without the line limit is complex; just scroll to show we'd load all
+      // For now: remove the button text and mark as "loading all"
+      // Full implementation: we'd re-render with no limit
+      e.target.textContent = 'Loading all lines...';
+      e.target.disabled = true;
+      // Re-fetch and re-render without limit by toggling a flag
+      // For simplicity, just re-render the full content
+      renderAnnotationPanelFull(nodeId, type);
+      return;
+    }
+  });
+
+  // Wire Enter key in annotation input
+  el.addEventListener('keydown', async (e) => {
+    if (e.key === 'Enter' && e.target.classList.contains('ann-input')) {
+      const input = e.target;
+      if (input.value.trim()) {
+        try {
+          await fetch('/api/node/' + encodeURIComponent(nodeId) + '/annotations', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ line: annotatingLine, text: input.value.trim() })
+          });
+          annotatingLine = null;
+          renderAnnotationPanel(nodeId, type);
+        } catch (_) { /* ignore */ }
+      }
+    }
+  });
+}
+
+/**
+ * Re-render the annotation panel showing all lines (no 500-line limit).
+ * @param {string} nodeId
+ * @param {string} type
+ */
+async function renderAnnotationPanelFull(nodeId, type) {
+  // Temporarily patch to show all lines by using a large limit approach
+  // We just re-call renderAnnotationPanel but it already shows 500 lines max.
+  // For the full version, we'll modify the approach:
+  const artifactPath = getNodeArtifactPath(nodeId, type);
+  let annotations = [];
+  try {
+    const annRes = await fetch('/api/node/' + encodeURIComponent(nodeId) + '/annotations');
+    if (annRes.ok) {
+      const annData = await annRes.json();
+      annotations = annData.annotations || [];
+    }
+  } catch (_) { /* ignore */ }
+
+  const annByLine = {};
+  annotations.forEach(a => {
+    if (!annByLine[a.line]) annByLine[a.line] = [];
+    annByLine[a.line].push(a);
+  });
+
+  let lines = null;
+  if (artifactPath) {
+    try {
+      const fileRes = await fetch('/api/files?path=' + encodeURIComponent(artifactPath));
+      if (fileRes.ok) {
+        const fileData = await fileRes.json();
+        lines = (fileData.content || '').split('\n');
+      }
+    } catch (_) { /* ignore */ }
+  }
+
+  if (annotationNodeId !== nodeId) return;
+
+  const existingPanel = document.getElementById('annotation-panel');
+  if (!existingPanel || !lines) return;
+
+  const commentCount = annotations.length;
+  let linesHtml = '';
+  lines.forEach((lineText, idx) => {
+    const lineNum = idx + 1;
+    const hasAnn = annByLine[lineNum] && annByLine[lineNum].length > 0;
+    linesHtml += `<div class="ann-line${hasAnn ? ' has-annotation' : ''}" data-line="${lineNum}">`;
+    linesHtml += `<span class="ann-line-num" title="Click to annotate line ${lineNum}">${lineNum}</span>`;
+    linesHtml += `<span class="ann-line-text">${escHtml(lineText)}</span>`;
+    linesHtml += `</div>`;
+    if (hasAnn) {
+      annByLine[lineNum].forEach(a => {
+        linesHtml += `<div class="ann-comment" data-annotation-id="${escHtml(a.id)}">`;
+        linesHtml += `<span class="ann-comment-text">${escHtml(a.text)}</span>`;
+        linesHtml += `<span class="ann-comment-meta">${fmtRelativeTime(a.timestamp)}</span>`;
+        linesHtml += `<button class="ann-resolve-btn" data-annotation-id="${escHtml(a.id)}" title="Resolve">&times;</button>`;
+        linesHtml += `</div>`;
+      });
+    }
+    if (annotatingLine === lineNum) {
+      linesHtml += `<div class="ann-input-row">`;
+      linesHtml += `<input type="text" class="ann-input" placeholder="Add annotation..." autofocus />`;
+      linesHtml += `<button class="ann-submit-btn">Add</button>`;
+      linesHtml += `</div>`;
+    }
+  });
+
+  const linesContainer = existingPanel.querySelector('.annotation-lines');
+  if (linesContainer) {
+    linesContainer.innerHTML = linesHtml;
+  }
+}
+
 // ─── Side panel ───────────────────────────────────────────────────────────────
 
 /**
@@ -1256,7 +1591,9 @@ function selectNode(nodeId, type) {
   if (!item) return;
 
   if ($panelEmpty) $panelEmpty.style.display = 'none';
+  annotatingLine = null;
   renderPanelChain(item, type);
+  renderAnnotationPanel(nodeId, type);
 }
 
 /**
