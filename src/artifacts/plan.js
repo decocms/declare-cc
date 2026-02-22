@@ -34,7 +34,7 @@ function extractField(lines, field) {
  * - Missing fields default gracefully
  *
  * @param {string} content - Raw markdown content of PLAN.md
- * @returns {{ milestone: string | null, realizes: string[], status: string, derived: string, actions: Array<{id: string, title: string, status: string, produces: string, description: string}> }}
+ * @returns {{ milestone: string | null, realizes: string[], status: string, derived: string, actions: Array<{id: string, title: string, status: string, produces: string, description: string, reviewState: string}> }}
  */
 function parsePlanFile(content) {
   if (!content || !content.trim()) {
@@ -66,6 +66,7 @@ function parsePlanFile(content) {
     const [, id, title] = actionHeaderMatch;
     const actionStatus = (extractField(lines, 'Status') || 'PENDING').toUpperCase();
     const produces = extractField(lines, 'Produces') || '';
+    const reviewState = extractField(lines, 'Review') || 'draft';
 
     // Description: remaining non-field lines after the header
     const description = lines.slice(1)
@@ -74,7 +75,7 @@ function parsePlanFile(content) {
       .filter(Boolean)
       .join('\n');
 
-    return { id, title: title.trim(), status: actionStatus, produces, description };
+    return { id, title: title.trim(), status: actionStatus, produces, description, reviewState };
   }).filter(Boolean);
 
   return { milestone, realizes, status, derived, actions };
@@ -110,6 +111,7 @@ function writePlanFile(milestoneId, milestoneTitle, realizes, actions) {
 
     lines.push(`### ${id}: ${action.title}`);
     lines.push(`**Status:** ${status}`);
+    lines.push(`**Review:** ${action.reviewState || 'draft'}`);
     if (produces) {
       lines.push(`**Produces:** ${produces}`);
     }

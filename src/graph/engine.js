@@ -43,6 +43,12 @@ function isCompleted(status) {
 const VALID_TYPES = new Set(['declaration', 'milestone', 'action']);
 
 /**
+ * Valid review states for the review-gated execution system (D-13).
+ * Every node defaults to 'draft' when not explicitly set.
+ */
+const VALID_REVIEW_STATES = new Set(['draft', 'in_review', 'revision_needed', 'approved']);
+
+/**
  * Valid upward-causation edges: from-type -> to-type.
  * Actions cause milestones; milestones realize declarations.
  */
@@ -700,4 +706,4 @@ function computeWorkabilityPath(dag, nodeId) {
   return { nodeId, wholeness: nodeWholeness, steps };
 }
 
-module.exports = { DeclareDag, COMPLETED_STATUSES, isCompleted, findOrphans, computeWholeness, computeWorkabilityPath };
+module.exports = { DeclareDag, VALID_REVIEW_STATES, COMPLETED_STATUSES, isCompleted, findOrphans, computeWholeness, computeWorkabilityPath };
