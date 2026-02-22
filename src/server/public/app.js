@@ -1331,6 +1331,72 @@ async function openFileViewer(filePath) {
 }
 function closeFileViewer() { document.getElementById('file-viewer-modal').classList.remove('open'); }
 
+// ─── Reference section for declarations ──────────────────────────────────────
+
+/** @type {string|null} Declaration currently showing ref editor */
+let refEditingDeclId = null;
+
+function renderRefSection(item) {
+  const ref = item.ref || {};
+  const hasRef = ref.url || ref.path;
+  const isEditing = refEditingDeclId === item.id;
+  let html = '<div class="detail-section ref-section">';
+  html += '<div class="detail-label" style="display:flex;align-items:center;justify-content:space-between">Reference';
+  html += '<button class="ref-edit-toggle" id="ref-edit-toggle" style="font-size:10px;padding:2px 8px;cursor:pointer;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text-dim)">' + (isEditing ? 'Cancel' : (hasRef ? 'Edit' : '+ Add')) + '</button>';
+  html += '</div>';
+  if (isEditing) {
+    html += '<div class="ref-editor" style="margin-top:8px">';
+    html += '<label style="font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-dim);display:block;margin-bottom:4px">URL</label>';
+    html += '<input type="text" id="ref-url-input" class="ref-input" placeholder="https://github.com/org/repo" value="' + escHtml(ref.url || '') + '" />';
+    html += '<label style="font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-dim);display:block;margin-bottom:4px;margin-top:8px">Local Path</label>';
+    html += '<input type="text" id="ref-path-input" class="ref-input" placeholder="/path/to/project" value="' + escHtml(ref.path || '') + '" />';
+    html += '<div style="margin-top:8px;display:flex;gap:8px"><button class="ref-save-btn" id="ref-save-btn">Save</button>';
+    html += '<span class="form-error" id="ref-save-error" style="color:var(--broken-color);font-size:12px;line-height:28px"></span></div></div>';
+  } else if (hasRef) {
+    html += '<div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px">';
+    if (ref.url) html += '<a href="' + escHtml(ref.url) + '" target="_blank" rel="noopener" class="ref-link-badge ref-url-badge" title="' + escHtml(ref.url) + '">' + escHtml(truncate(ref.url, 40)) + '</a>';
+    if (ref.path) html += '<span class="ref-link-badge ref-path-badge" title="' + escHtml(ref.path) + '">' + escHtml(truncate(ref.path, 40)) + '</span>';
+    html += '</div>';
+  } else {
+    html += '<div style="margin-top:6px;color:var(--text-dim);font-size:11px;opacity:0.5;font-style:italic">No reference set</div>';
+  }
+  html += '</div>';
+  return html;
+}
+
+function wireRefSection(item) {
+  const toggleBtn = document.getElementById('ref-edit-toggle');
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', function() {
+      refEditingDeclId = (refEditingDeclId === item.id) ? null : item.id;
+      renderPanelChain(item, 'declaration');
+    });
+  }
+  const saveBtn = document.getElementById('ref-save-btn');
+  if (saveBtn) {
+    saveBtn.addEventListener('click', async function() {
+      const urlInput = document.getElementById('ref-url-input');
+      const pathInput = document.getElementById('ref-path-input');
+      const errorEl = document.getElementById('ref-save-error');
+      const url = urlInput ? urlInput.value.trim() : '';
+      const refPath = pathInput ? pathInput.value.trim() : '';
+      saveBtn.disabled = true;
+      try {
+        const res = await fetch('/api/declarations/' + item.id + '/ref', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: url || null, path: refPath || null }),
+        });
+        const data = await res.json();
+        if (data.error) { if (errorEl) errorEl.textContent = data.error; saveBtn.disabled = false; return; }
+        item.ref = data.ref;
+        refEditingDeclId = null;
+        renderPanelChain(item, 'declaration');
+      } catch (err) { if (errorEl) errorEl.textContent = String(err); saveBtn.disabled = false; }
+    });
+  }
+}
+
 // ─── Chain panel renderer ─────────────────────────────────────────────────────
 
 /**
@@ -1574,6 +1640,12 @@ function renderPanelChain(item, type) {
     });
   });
 
+  // Wire reference section handlers
+  const focusSectionForRef = sections.find(s => s.role === 'focus');
+  if (focusSectionForRef && focusSectionForRef.type === 'declaration') {
+    wireRefSection(focusSectionForRef.item);
+  }
+
   // Wire declaration Edit/Delete buttons
   const focusSection = sections.find(s => s.role === 'focus');
   if (focusSection && focusSection.type === 'declaration') {
@@ -1619,6 +1691,34 @@ function renderPanelChain(item, type) {
     if (actionDeriveBtn) {
       actionDeriveBtn.addEventListener('click', () => startActionDerivation(focusSection.item.id));
     }
+
+    // Wire classification toggle buttons
+    const classAgentBtn = document.getElementById('classify-agent-btn');
+    const classHumanBtn = document.getElementById('classify-human-btn');
+    if (classAgentBtn) classAgentBtn.addEventListener('click', () => setClassification(focusSection.item.id, 'agent'));
+    if (classHumanBtn) classHumanBtn.addEventListener('click', () => setClassification(focusSection.item.id, 'human'));
+
+    // Wire dependency editor
+    const depAddBtn = document.getElementById('dep-add-btn');
+    if (depAddBtn) {
+      depAddBtn.addEventListener('click', () => {
+        const sel = document.getElementById('dep-add-select');
+        if (sel && sel.value) addDependency(focusSection.item.id, sel.value);
+      });
+    }
+    // Wire remove buttons on existing deps
+    $panelBody.querySelectorAll('.dep-remove').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        removeDependency(focusSection.item.id, btn.dataset.removeDep);
+      });
+    });
+    // Wire dep tag clicks to navigate to that milestone
+    $panelBody.querySelectorAll('.dep-tag').forEach(tag => {
+      tag.addEventListener('click', () => {
+        selectNode(tag.dataset.depId, 'milestone');
+      });
+    });
 
     loadMilestoneLog(focusSection.item.id);
     const refreshLogBtn = document.getElementById('refresh-log-btn');
@@ -2523,6 +2623,56 @@ async function stopDerivation() {
 
   try {
     await fetch('/api/milestones/derive/stop', { method: 'POST' });
+  } catch (_) {}
+}
+
+// ─── Classification & Dependency helpers ──────────────────────────────────────
+
+async function setClassification(milestoneId, classification) {
+  try {
+    const res = await fetch(`/api/milestones/${encodeURIComponent(milestoneId)}/classify`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ classification }),
+    });
+    if (res.ok) {
+      await loadData();
+      if (selectedNodeId === milestoneId && graphData) {
+        const updated = graphData.milestones.find(m => m.id === milestoneId);
+        if (updated) renderPanelChain(updated, 'milestone');
+      }
+    }
+  } catch (_) {}
+}
+
+async function addDependency(milestoneId, depId) {
+  if (!graphData) return;
+  const m = graphData.milestones.find(x => x.id === milestoneId);
+  if (!m) return;
+  await saveDependencies(milestoneId, [...(m.dependsOn || []), depId]);
+}
+
+async function removeDependency(milestoneId, depId) {
+  if (!graphData) return;
+  const m = graphData.milestones.find(x => x.id === milestoneId);
+  if (!m) return;
+  await saveDependencies(milestoneId, (m.dependsOn || []).filter(d => d !== depId));
+}
+
+async function saveDependencies(milestoneId, dependsOn) {
+  try {
+    const res = await fetch(`/api/milestones/${encodeURIComponent(milestoneId)}/depends-on`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dependsOn }),
+    });
+    if (res.ok) {
+      await loadData();
+      if (selectedNodeId === milestoneId && graphData) {
+        const updated = graphData.milestones.find(m => m.id === milestoneId);
+        if (updated) renderPanelChain(updated, 'milestone');
+      }
+    }
   } catch (_) {}
 }
 
