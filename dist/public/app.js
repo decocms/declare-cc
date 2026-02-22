@@ -2718,6 +2718,162 @@ async function saveDependencies(milestoneId, dependsOn) {
 // at their original positions via position:fixed for the directional slide-out.
 // Subtree nodes: FLIP'd from old positions to new centered positions simultaneously.
 
+// ─── Action Derivation controls ────────────────────────────────────────────────
+
+async function startActionDerivation(milestoneId) {
+  const btn = document.getElementById('action-derive-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Deriving...'; }
+  const logEl = document.getElementById('action-derivation-log');
+  if (logEl) { logEl.style.display = ''; logEl.innerHTML = ''; }
+  try {
+    const res = await fetch('/api/milestones/' + encodeURIComponent(milestoneId) + '/actions/derive', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (logEl) logEl.textContent = 'Error: ' + (data.error || 'Failed to start action derivation');
+      if (btn) { btn.disabled = false; btn.textContent = 'Derive Actions'; }
+      return;
+    }
+    actionDerivationSessionId = data.sessionId;
+    actionDerivationMilestoneId = milestoneId;
+    actionDerivationProposals = null;
+  } catch (err) {
+    if (logEl) logEl.textContent = 'Error: ' + err.message;
+    if (btn) { btn.disabled = false; btn.textContent = 'Derive Actions'; }
+  }
+}
+
+function handleActionDerivationOutput(e) {
+  try {
+    const { sessionId, text } = JSON.parse(e.data);
+    if (sessionId !== actionDerivationSessionId) return;
+    const logEl = document.getElementById('action-derivation-log');
+    if (!logEl) return;
+    logEl.appendChild(document.createTextNode(text + '\n'));
+    logEl.scrollTop = logEl.scrollHeight;
+  } catch (_) {}
+}
+
+function handleActionDerivationComplete(e) {
+  try {
+    const { sessionId, exitCode, actions } = JSON.parse(e.data);
+    if (sessionId !== actionDerivationSessionId) return;
+    actionDerivationSessionId = null;
+    const btn = document.getElementById('action-derive-btn');
+    if (btn) { btn.disabled = false; btn.textContent = 'Derive Actions'; }
+    if (exitCode !== 0) {
+      const logEl = document.getElementById('action-derivation-log');
+      if (logEl) {
+        const span = document.createElement('span');
+        span.style.color = 'var(--broken-color)';
+        span.style.fontWeight = '700';
+        span.textContent = '\nAction derivation failed (exit code ' + exitCode + ')';
+        logEl.appendChild(span);
+      }
+      return;
+    }
+    if (actions && Array.isArray(actions)) {
+      actionDerivationProposals = actions;
+      renderActionProposals();
+    } else {
+      const logEl = document.getElementById('action-derivation-log');
+      if (logEl) {
+        const span = document.createElement('span');
+        span.style.color = 'var(--integrity-partial)';
+        span.style.fontWeight = '600';
+        span.textContent = '\nDerivation finished but output could not be parsed. Check the log above.';
+        logEl.appendChild(span);
+      }
+    }
+  } catch (_) {}
+}
+
+function renderActionProposals() {
+  const container = document.getElementById('action-derivation-proposals');
+  if (!container || !actionDerivationProposals) return;
+  container.style.display = 'block';
+  let html = '<h4 style="margin:8px 0;color:var(--text-bright);font-size:13px">Proposed Actions</h4>';
+  html += '<ul class="derivation-checklist">';
+  actionDerivationProposals.forEach((a, idx) => {
+    html += '<li>';
+    html += '<input type="checkbox" checked data-idx="' + idx + '">';
+    html += '<input type="text" value="' + escHtml(a.title || '') + '" data-idx="' + idx + '">';
+    html += '</li>';
+    if (a.produces) {
+      html += '<li style="border-bottom:none;padding:0"><span class="reason">Produces: ' + escHtml(a.produces) + '</span></li>';
+    }
+    if (a.reason) {
+      html += '<li style="border-bottom:none;padding:0"><span class="reason">' + escHtml(a.reason) + '</span></li>';
+    }
+  });
+  html += '</ul>';
+  html += '<div style="margin-top:12px">';
+  html += '<button class="derive-accept-btn" onclick="acceptActionDerivation()">Accept Selected</button>';
+  html += '<button class="derive-cancel-btn" onclick="cancelActionDerivation()">Cancel</button>';
+  html += '</div>';
+  container.innerHTML = html;
+}
+
+async function acceptActionDerivation() {
+  const container = document.getElementById('action-derivation-proposals');
+  if (!container || !actionDerivationProposals || !actionDerivationMilestoneId) return;
+  const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+  const textInputs = container.querySelectorAll('input[type="text"]');
+  const selected = [];
+  checkboxes.forEach((cb) => {
+    if (cb.checked) {
+      const idx = parseInt(cb.dataset.idx, 10);
+      const titleInput = textInputs[idx];
+      const proposal = actionDerivationProposals[idx];
+      if (proposal && titleInput) {
+        selected.push({ title: titleInput.value || proposal.title, produces: proposal.produces || '' });
+      }
+    }
+  });
+  if (selected.length === 0) { cancelActionDerivation(); return; }
+  try {
+    const res = await fetch('/api/milestones/' + encodeURIComponent(actionDerivationMilestoneId) + '/actions/derive/accept', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ actions: selected }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      const logEl = document.getElementById('action-derivation-log');
+      if (logEl) logEl.textContent += '\nError accepting: ' + (data.error || 'Unknown error');
+      return;
+    }
+    actionDerivationProposals = null;
+    actionDerivationMilestoneId = null;
+    const panel = document.getElementById('action-derivation-panel');
+    if (panel) {
+      panel.innerHTML = '<div style="color:var(--act-color);font-weight:600;padding:8px 0">' +
+        selected.length + ' action' + (selected.length !== 1 ? 's' : '') + ' created</div>';
+      setTimeout(() => { if (panel) panel.innerHTML = ''; }, 3000);
+    }
+  } catch (err) {
+    const logEl = document.getElementById('action-derivation-log');
+    if (logEl) logEl.textContent += '\nError: ' + err.message;
+  }
+}
+
+async function cancelActionDerivation() {
+  if (actionDerivationSessionId && actionDerivationMilestoneId) {
+    try {
+      await fetch('/api/milestones/' + encodeURIComponent(actionDerivationMilestoneId) + '/actions/derive/stop', { method: 'POST' });
+    } catch (_) {}
+  }
+  actionDerivationSessionId = null;
+  actionDerivationMilestoneId = null;
+  actionDerivationProposals = null;
+  const logEl = document.getElementById('action-derivation-log');
+  if (logEl) { logEl.style.display = 'none'; logEl.innerHTML = ''; }
+  const proposals = document.getElementById('action-derivation-proposals');
+  if (proposals) { proposals.style.display = 'none'; proposals.innerHTML = ''; }
+  const btn = document.getElementById('action-derive-btn');
+  if (btn) { btn.disabled = false; btn.textContent = 'Derive Actions'; }
+}
+
 const $focusHint = document.getElementById('focus-hint');
 const FOCUS_DUR = 380;
 
