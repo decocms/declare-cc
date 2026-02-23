@@ -50,6 +50,7 @@ const { computeWorkflowState } = require('../commands/workflow-state');
 const { createPlayRunner } = require('../commands/play');
 const { computeReadiness } = require('../commands/readiness');
 const { createPipelineRunner } = require('./pipeline-runner');
+const { createAgentRegistry } = require('./agent-registry');
 
 /** @type {Record<string, string>} */
 const MIME_TYPES = {
@@ -1086,6 +1087,26 @@ function handleIncrementRevisionRound(res, cwd, nodeId) {
 /** @type {Set<http.ServerResponse>} Active SSE clients */
 const sseClients = new Set();
 
+/** @type {ReturnType<typeof createAgentRegistry> | null} */
+let agentRegistry = null;
+
+/**
+ * Get or create the agent registry singleton.
+ * @param {string} cwd
+ * @returns {ReturnType<typeof createAgentRegistry>}
+ */
+function getAgentRegistry(cwd) {
+  if (!agentRegistry) {
+    agentRegistry = createAgentRegistry(cwd, (event, data) => {
+      const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+      for (const client of sseClients) {
+        try { client.write(payload); } catch (_) { sseClients.delete(client); }
+      }
+    });
+  }
+  return agentRegistry;
+}
+
 /** @type {ReturnType<typeof createProcessManager> | null} */
 let processManager = null;
 
@@ -1095,7 +1116,7 @@ let processManager = null;
  * @returns {ReturnType<typeof createProcessManager>}
  */
 function getProcessManager(cwd) {
-  if (!processManager) processManager = createProcessManager(sseClients, cwd);
+  if (!processManager) processManager = createProcessManager(sseClients, cwd, getAgentRegistry(cwd));
   return processManager;
 }
 
@@ -1108,7 +1129,7 @@ let derivationRunner = null;
  * @returns {ReturnType<typeof createDerivationRunner>}
  */
 function getDerivationRunner(cwd) {
-  if (!derivationRunner) derivationRunner = createDerivationRunner(sseClients, cwd);
+  if (!derivationRunner) derivationRunner = createDerivationRunner(sseClients, cwd, getAgentRegistry(cwd));
   return derivationRunner;
 }
 
@@ -1121,7 +1142,7 @@ let actionDerivationRunner = null;
  * @returns {ReturnType<typeof createActionDerivationRunner>}
  */
 function getActionDerivationRunner(cwd) {
-  if (!actionDerivationRunner) actionDerivationRunner = createActionDerivationRunner(sseClients, cwd);
+  if (!actionDerivationRunner) actionDerivationRunner = createActionDerivationRunner(sseClients, cwd, getAgentRegistry(cwd));
   return actionDerivationRunner;
 }
 
@@ -1147,7 +1168,7 @@ let pipelineRunnerInstance = null;
  * @returns {ReturnType<typeof createPipelineRunner>}
  */
 function getPipelineRunner(cwd) {
-  if (!pipelineRunnerInstance) pipelineRunnerInstance = createPipelineRunner(sseClients, cwd);
+  if (!pipelineRunnerInstance) pipelineRunnerInstance = createPipelineRunner(sseClients, cwd, getAgentRegistry(cwd));
   return pipelineRunnerInstance;
 }
 
@@ -1164,7 +1185,7 @@ function getRevisionRunner(cwd) {
     revisionRunner = createRevisionRunner(sseClients, cwd, (nodeId) => {
       setReviewState(cwd, nodeId, 'in_review');
       broadcastChange();
-    });
+    }, getAgentRegistry(cwd));
   }
   return revisionRunner;
 }
