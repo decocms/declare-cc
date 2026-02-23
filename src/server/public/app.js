@@ -2305,8 +2305,8 @@ document.addEventListener('keydown', (e) => {
   if (viewMode !== 'columns') return;
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
-  // Ctrl+Shift+A = Approve All visible entities
-  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'a') {
+  // Ctrl+Shift+A = Approve All visible entities (Ctrl on all platforms, not Cmd)
+  if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'a') {
     e.preventDefault();
     approveAllVisible();
     return;
