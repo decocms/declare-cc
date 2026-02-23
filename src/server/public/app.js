@@ -151,7 +151,7 @@ const $healthBadge   = document.getElementById('health-badge');
 const $lastUpdated   = document.getElementById('last-updated');
 const $refreshBtn    = document.getElementById('refresh-btn');
 const $executeMainBtn = document.getElementById('execute-main-btn');
-const $activityPinned = document.getElementById('activity-pinned');
+// $activityPinned removed — replaced by agent cards panel (A-124)
 const $statusBreadcrumb = document.getElementById('status-breadcrumb');
 
 // Project name click → go back to declarations (home)
@@ -6550,6 +6550,58 @@ function stopCardTimers() {
   }
 }
 
+/** Map of active/recent agent states keyed by agent ID. */
+const agentCardState = new Map();
+
+/**
+ * Re-render the agent cards list in the activity panel.
+ * Renders all agents from agentCardState into a container element,
+ * creating/updating the DOM. Starts card timers if running agents exist.
+ */
+function renderAgentPanel() {
+  // Look for the agents tab container first (A-124), fall back to activity-list
+  const container = document.getElementById('agent-cards-list')
+    || document.getElementById('activity-list');
+  if (!container) return;
+
+  if (agentCardState.size === 0) {
+    // Only clear if there is an agent-cards-list container (don't wipe the log tab)
+    const agentContainer = document.getElementById('agent-cards-list');
+    if (agentContainer) agentContainer.innerHTML = '<div class="agent-cards-empty">No active agents</div>';
+    stopCardTimers();
+    return;
+  }
+
+  // Sort: running first, then by startedAt descending
+  const agents = Array.from(agentCardState.values()).sort(function(a, b) {
+    if (a.status === 'running' && b.status !== 'running') return -1;
+    if (b.status === 'running' && a.status !== 'running') return 1;
+    const aTime = new Date(b.startedAt || 0).getTime();
+    const bTime = new Date(a.startedAt || 0).getTime();
+    return aTime - bTime;
+  });
+
+  const html = agents.map(renderAgentCard).join('');
+  // If agent-cards-list exists, use it; otherwise append to activity-list
+  const agentContainer = document.getElementById('agent-cards-list');
+  if (agentContainer) {
+    agentContainer.innerHTML = html;
+  } else {
+    // Fallback: render into a wrapper inside activity-list
+    let wrapper = container.querySelector('.agent-cards-wrapper');
+    if (!wrapper) {
+      wrapper = document.createElement('div');
+      wrapper.className = 'agent-cards-wrapper';
+      container.prepend(wrapper);
+    }
+    wrapper.innerHTML = html;
+  }
+
+  // Start/stop timers based on running agents
+  const hasRunning = agents.some(function(a) { return a.status === 'running'; });
+  if (hasRunning) startCardTimers(); else stopCardTimers();
+}
+
 // ─── Activity topbar ──────────────────────────────────────────────────────────
 
 /** @type {{ actionId: string, milestoneId?: string, startedAt: number } | null} */
@@ -6951,6 +7003,44 @@ function connectSSE() {
       }
     } catch (_) {}
   });
+  // ─── Agent lifecycle SSE events (M-44) ───────────────────────────────────
+  es.addEventListener('agent-start', function(e) {
+    try {
+      const agent = JSON.parse(e.data);
+      agentCardState.set(agent.id, agent);
+      renderAgentPanel();
+      // Flash pulse indicator
+      if ($activityPulse) {
+        $activityPulse.classList.add('live');
+        clearTimeout($activityPulse._timer);
+        $activityPulse._timer = setTimeout(() => $activityPulse.classList.remove('live'), 3000);
+      }
+    } catch (_) {}
+  });
+  es.addEventListener('agent-update', function(e) {
+    try {
+      const agent = JSON.parse(e.data);
+      // Merge with existing state to preserve any client-side additions
+      const existing = agentCardState.get(agent.id);
+      agentCardState.set(agent.id, Object.assign({}, existing || {}, agent));
+      renderAgentPanel();
+    } catch (_) {}
+  });
+  es.addEventListener('agent-complete', function(e) {
+    try {
+      const agent = JSON.parse(e.data);
+      const existing = agentCardState.get(agent.id);
+      agentCardState.set(agent.id, Object.assign({}, existing || {}, agent));
+      renderAgentPanel();
+      // Flash pulse
+      if ($activityPulse) {
+        $activityPulse.classList.add('live');
+        clearTimeout($activityPulse._timer);
+        $activityPulse._timer = setTimeout(() => $activityPulse.classList.remove('live'), 3000);
+      }
+    } catch (_) {}
+  });
+
   es.addEventListener('error', () => {
     // Connection dropped — reconnect after 3s
     es.close();
@@ -6959,6 +7049,17 @@ function connectSSE() {
 }
 
 connectSSE();
+
+// Prune completed agents older than 30 minutes to prevent unbounded growth
+setInterval(function() {
+  const cutoff = Date.now() - 30 * 60 * 1000;
+  for (const [id, agent] of agentCardState) {
+    if (agent.status !== 'running' && agent.completedAt) {
+      const completedTs = new Date(agent.completedAt).getTime();
+      if (completedTs < cutoff) agentCardState.delete(id);
+    }
+  }
+}, 60000);
 
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
 
