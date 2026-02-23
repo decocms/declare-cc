@@ -2457,6 +2457,13 @@ async function startServer(cwd, port) {
     });
   });
 
+  // Restore agent state from previous run
+  const reg = getAgentRegistry(cwd);
+  const restored = reg.restoreFromDisk();
+  if (restored.interrupted > 0) {
+    process.stderr.write(`[declare] Restored agent state: ${restored.interrupted} agent(s) marked as interrupted from previous run\n`);
+  }
+
   const url = `http://localhost:${resolvedPort}`;
   return { server, port: resolvedPort, url };
 }
