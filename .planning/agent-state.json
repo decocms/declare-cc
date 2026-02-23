@@ -1,0 +1,21 @@
+{
+  "agents": {},
+  "recentAgents": [
+    {
+      "id": "exec-A-01-1771814731482",
+      "type": "execution",
+      "target": "A-01",
+      "milestoneId": "M-01",
+      "status": "complete",
+      "startedAt": "2026-02-23T02:45:31.482Z",
+      "updatedAt": "2026-02-23T02:45:31.484Z",
+      "completedAt": "2026-02-23T02:45:31.484Z",
+      "exitCode": 0,
+      "error": null,
+      "result": {
+        "path": "test.md"
+      }
+    }
+  ],
+  "persistedAt": "2026-02-23T02:53:34.527Z"
+}
