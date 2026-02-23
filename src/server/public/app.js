@@ -2261,12 +2261,18 @@ document.addEventListener('keydown', (e) => {
     return;
   }
 
-  // A = Approve focused card
+  // A = Approve focused card (fall back to detail panel approve button)
   if (kl === 'a') {
     const card = getFocusedCard();
-    if (!card) return;
-    const btn = card.querySelector('.drill-review-btn[data-review-action="approved"]');
-    if (btn) { e.preventDefault(); btn.click(); }
+    if (card) {
+      const btn = card.querySelector('.drill-review-btn[data-review-action="approved"]');
+      if (btn) { e.preventDefault(); btn.click(); return; }
+    }
+    const detail = document.getElementById('drill-detail');
+    if (detail) {
+      const btn = detail.querySelector('.drill-review-btn[data-review-action="approved"]');
+      if (btn) { e.preventDefault(); btn.click(); }
+    }
     return;
   }
 });

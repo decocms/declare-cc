@@ -1090,12 +1090,8 @@
     }
     .drill-card.focused {
       background: var(--surface2);
-      border-color: var(--border-strong);
-      box-shadow: inset 2px 0 0 var(--accent);
-    }
-    .drill-card.current-review {
-      border-color: var(--card-tint-border, var(--accent-border));
-      box-shadow: inset 3px 0 0 var(--card-tint, var(--accent)), 0 0 0 1px var(--card-tint-border, var(--accent-border)), 0 4px 16px var(--card-tint-glow, rgba(208, 236, 26, 0.08));
+      border-color: var(--card-tint-border, var(--border-strong));
+      box-shadow: inset 2px 0 0 var(--card-tint, var(--accent));
     }
 
     /* ── Node-type tint colors on cards ── */
@@ -1138,22 +1134,22 @@
       background: linear-gradient(135deg, rgba(147, 197, 253, 0.06) 0%, var(--surface2) 60%);
     }
 
-    /* Current-review card gets stronger tint */
-    .drill-cards[data-node-type="declaration"] .drill-card.current-review {
+    /* Focused card gets stronger tint background */
+    .drill-cards[data-node-type="declaration"] .drill-card.focused {
       background: linear-gradient(135deg, rgba(134, 239, 172, 0.06) 0%, var(--surface2) 60%);
     }
-    .drill-cards[data-node-type="milestone"] .drill-card.current-review {
+    .drill-cards[data-node-type="milestone"] .drill-card.focused {
       background: linear-gradient(135deg, rgba(165, 149, 255, 0.06) 0%, var(--surface2) 60%);
     }
-    .drill-cards[data-node-type="action"] .drill-card.current-review {
+    .drill-cards[data-node-type="action"] .drill-card.focused {
       background: linear-gradient(135deg, rgba(147, 197, 253, 0.06) 0%, var(--surface2) 60%);
     }
-    .drill-card.current-review .drill-review-btn.approve-btn {
+    .drill-card .drill-review-btn.approve-btn {
       background: rgba(134, 239, 172, 0.10);
       border-color: rgba(134, 239, 172, 0.35);
       color: #86efac;
     }
-    .drill-card.current-review .drill-review-btn.revision-btn {
+    .drill-card .drill-review-btn.revision-btn {
       background: rgba(248, 113, 113, 0.06);
       border-color: rgba(248, 113, 113, 0.2);
       color: #f87171;
