@@ -6471,6 +6471,85 @@ function fireConfetti() {
   setTimeout(() => { cancelAnimationFrame(frame); canvas.remove(); }, 8000);
 }
 
+// --- Agent activity cards ---
+
+const AGENT_TYPE_ICONS = { executor: '\uD83E\uDD16', planner: '\uD83D\uDCCB', deriver: '\u26A1', researcher: '\uD83D\uDD0D', revision: '\uD83D\uDD04', default: '\u2699\uFE0F' };
+
+const AGENT_STATUS_LABELS = { running: 'Running', done: 'Done', failed: 'Failed', interrupted: 'Stopped' };
+
+/**
+ * Format elapsed time between two timestamps as a human-readable string.
+ * @param {string|number} startedAt - ISO string or ms timestamp
+ * @param {string|number|null} [completedAt] - ISO string, ms timestamp, or null (for running agents)
+ * @returns {string} e.g. "0:05", "1:23", "1h 05m"
+ */
+function formatElapsed(startedAt, completedAt) {
+  const start = typeof startedAt === 'string' ? new Date(startedAt).getTime() : startedAt;
+  const end = completedAt ? (typeof completedAt === 'string' ? new Date(completedAt).getTime() : completedAt) : Date.now();
+  const diffSec = Math.max(0, Math.floor((end - start) / 1000));
+  if (diffSec >= 3600) {
+    const h = Math.floor(diffSec / 3600);
+    const m = Math.floor((diffSec % 3600) / 60);
+    return `${h}h ${String(m).padStart(2, '0')}m`;
+  }
+  const m = Math.floor(diffSec / 60);
+  const s = diffSec % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+/**
+ * Render a single agent activity card as an HTML string.
+ * @param {{ id: string, type: string, target: string, milestoneId?: string, status: string, startedAt: string|number, updatedAt?: string|number, completedAt?: string|number, exitCode?: number, error?: string, result?: any }} agent
+ * @returns {string} HTML string
+ */
+function renderAgentCard(agent) {
+  const icon = AGENT_TYPE_ICONS[agent.type] || AGENT_TYPE_ICONS.default;
+  const statusLabel = AGENT_STATUS_LABELS[agent.status] || agent.status;
+  const elapsed = formatElapsed(agent.startedAt, agent.completedAt || null);
+  const completedAttr = agent.completedAt ? escHtml(String(agent.completedAt)) : '';
+
+  let errorHtml = '';
+  if (agent.error) {
+    const truncated = agent.error.length > 120 ? agent.error.slice(0, 117) + '...' : agent.error;
+    errorHtml = `<div class="agent-card-error" title="${escHtml(agent.error)}">${escHtml(truncated)}</div>`;
+  }
+
+  return `<div class="agent-card status-${escHtml(agent.status)}" data-agent-id="${escHtml(agent.id)}">
+  <div class="agent-card-header">
+    <span class="agent-card-icon">${icon}</span>
+    <span class="agent-card-target">${escHtml(agent.target || '')}</span>
+    <span class="agent-card-badge badge-${escHtml(agent.status)}">${escHtml(statusLabel)}</span>
+  </div>
+  <div class="agent-card-meta">
+    <span class="agent-card-type">${escHtml(agent.type || '')}</span>
+    <span class="agent-card-timer" data-started="${escHtml(String(agent.startedAt))}" data-completed="${completedAttr}">${elapsed}</span>
+  </div>
+  ${errorHtml}
+</div>`;
+}
+
+let cardTimerInterval = null;
+
+/** Start the 1-second interval that updates elapsed timers on running agent cards. */
+function startCardTimers() {
+  if (cardTimerInterval) return;
+  cardTimerInterval = setInterval(() => {
+    const timers = document.querySelectorAll('.agent-card.status-running .agent-card-timer');
+    timers.forEach(el => {
+      const started = el.getAttribute('data-started');
+      if (started) el.textContent = formatElapsed(started, null);
+    });
+  }, 1000);
+}
+
+/** Stop the card timer interval. */
+function stopCardTimers() {
+  if (cardTimerInterval) {
+    clearInterval(cardTimerInterval);
+    cardTimerInterval = null;
+  }
+}
+
 // ─── Activity topbar ──────────────────────────────────────────────────────────
 
 /** @type {{ actionId: string, milestoneId?: string, startedAt: number } | null} */
