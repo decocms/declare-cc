@@ -152,9 +152,11 @@ function createRevisionRunner(sseClients, cwd, onComplete) {
       // If versioning fails, continue with the revision anyway
     }
 
-    const proc = spawn('claude', ['-p', prompt, '--output-format', 'text', '--no-input'], {
+    const spawnEnv = { ...process.env, FORCE_COLOR: '0' };
+    delete spawnEnv.CLAUDECODE;
+    const proc = spawn('claude', ['-p', prompt, '--output-format', 'text'], {
       cwd,
-      env: { ...process.env, FORCE_COLOR: '0' },
+      env: spawnEnv,
     });
 
     current = { sessionId, proc, nodeId };

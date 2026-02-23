@@ -2,15 +2,15 @@
 
 **Milestone:** M-35
 **Realizes:** D-11
-**Status:** PENDING
+**Status:** DONE
 **Derived:** 2026-02-21
 
 ## Actions
 
 ### A-73: Implement default invocation logic
-**Status:** PENDING
+**Status:** DONE
 **Produces:** CLI behavior: no subcommand → open dashboard for current directory
 
 ### A-74: Handle uninitialized project gracefully
-**Status:** PENDING
+**Status:** DONE
 **Produces:** Init prompt when declare is run in a directory without .planning/

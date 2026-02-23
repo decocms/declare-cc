@@ -578,7 +578,7 @@ describe('full integration round-trip', () => {
 
     // Load actions from milestone folders (simulates load-graph)
     const { loadActionsFromFolders } = require('../commands/load-graph');
-    const parsedActions = loadActionsFromFolders(planningDir);
+    const { actions: parsedActions } = loadActionsFromFolders(planningDir);
 
     // Reconstruct graph
     const dag2 = new DeclareDag();

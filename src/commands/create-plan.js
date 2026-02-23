@@ -87,7 +87,7 @@ function runCreatePlan(cwd, args) {
   }
 
   // Load existing actions from all milestone folders
-  const existingActions = loadActionsFromFolders(planningDir);
+  const { actions: existingActions } = loadActionsFromFolders(planningDir);
   for (const a of existingActions) {
     dag.addNode(a.id, 'action', a.title, a.status || 'PENDING');
   }

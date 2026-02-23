@@ -125,9 +125,12 @@ function createDerivationRunner(sseClients, cwd) {
     const sessionId = `deriv-${Date.now()}`;
     const prompt = buildPrompt(declarationId, declarations);
 
-    const proc = spawn('claude', ['-p', prompt, '--output-format', 'text', '--no-input'], {
+    const env = { ...process.env, FORCE_COLOR: '0' };
+    delete env.CLAUDECODE;
+
+    const proc = spawn('claude', ['-p', prompt, '--output-format', 'text'], {
       cwd,
-      env: { ...process.env, FORCE_COLOR: '0' },
+      env,
     });
 
     current = { sessionId, proc };

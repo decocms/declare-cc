@@ -38,7 +38,7 @@ function extractField(lines, field) {
  */
 function parsePlanFile(content) {
   if (!content || !content.trim()) {
-    return { milestone: null, realizes: [], status: 'PENDING', derived: '', actions: [] };
+    return { milestone: null, realizes: [], status: 'PENDING', derived: '', produces: '', actions: [] };
   }
 
   // Extract milestone ID from header: # Plan: M-XX or # Plan: M-XX -- Title
@@ -55,6 +55,7 @@ function parsePlanFile(content) {
     : [];
   const status = (extractField(headerLines, 'Status') || 'PENDING').toUpperCase();
   const derived = extractField(headerLines, 'Derived') || '';
+  const produces = extractField(headerLines, 'Produces') || '';
 
   // Extract actions from ### sections
   const actionSections = content.split(/^### /m).slice(1);
@@ -78,7 +79,7 @@ function parsePlanFile(content) {
     return { id, title: title.trim(), status: actionStatus, produces, description, reviewState };
   }).filter(Boolean);
 
-  return { milestone, realizes, status, derived, actions };
+  return { milestone, realizes, status, derived, produces, actions };
 }
 
 /**
@@ -88,10 +89,12 @@ function parsePlanFile(content) {
  * @param {string} milestoneTitle - e.g. 'User authentication'
  * @param {string[]} realizes - Declaration IDs e.g. ['D-01', 'D-02']
  * @param {Array<{id?: string, title: string, status?: string, produces?: string, description?: string}>} actions
+ * @param {{ produces?: string }} [options] - Optional milestone-level fields
  * @returns {string} Canonical markdown content
  */
-function writePlanFile(milestoneId, milestoneTitle, realizes, actions) {
+function writePlanFile(milestoneId, milestoneTitle, realizes, actions, options) {
   const today = new Date().toISOString().split('T')[0];
+  const milestoneProduces = (options && options.produces) || '';
   const lines = [
     `# Plan: ${milestoneId} -- ${milestoneTitle}`,
     '',
@@ -99,10 +102,11 @@ function writePlanFile(milestoneId, milestoneTitle, realizes, actions) {
     `**Realizes:** ${realizes.join(', ')}`,
     `**Status:** PENDING`,
     `**Derived:** ${today}`,
-    '',
-    '## Actions',
-    '',
   ];
+  if (milestoneProduces) {
+    lines.push(`**Produces:** ${milestoneProduces}`);
+  }
+  lines.push('', '## Actions', '');
 
   for (const action of actions) {
     const id = action.id || 'A-XX';

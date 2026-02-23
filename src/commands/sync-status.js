@@ -126,7 +126,7 @@ function runSyncStatus(cwd) {
 
   // ── Step 2: Rebuild DAG with updated action statuses ───────────────────────
   // Re-read actions from disk so we see the freshly written DONE statuses.
-  const freshActions = loadActionsFromFolders(planningDir);
+  const { actions: freshActions } = loadActionsFromFolders(planningDir);
   /** @type {Map<string, string[]>} milestoneId → actionIds */
   const milestoneActionIds = new Map();
   /** @type {Map<string, string>} actionId → status */

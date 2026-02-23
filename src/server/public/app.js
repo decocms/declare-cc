@@ -51,6 +51,21 @@ let kbColumn = 0;
 /** @type {number} Column browser keyboard focus item index within the focused column */
 let kbIndex = 0;
 
+// ─── Drill browser state ─────────────────────────────────────────────────────
+/** @type {'declarations'|'milestones'|'actions'} Current drill-down level */
+let drillLevel = 'declarations';
+/** @type {string|null} Selected declaration for Level 2+ */
+let drillDeclId = null;
+/** @type {string|null} Selected milestone for Level 3 */
+let drillMileId = null;
+
+/** Per-level navigation state to restore on back-navigation */
+const drillNavState = {
+  declarations: { focusIndex: 0, scrollTop: 0 },
+  milestones:   { focusIndex: 0, scrollTop: 0 },
+  actions:      { focusIndex: 0, scrollTop: 0 },
+};
+
 /** @type {'dag'|'columns'|'execution'} Current view mode, persisted in localStorage */
 let viewMode = localStorage.getItem('declare-view-mode') || 'columns';
 // Execution mode is only valid during active play; fall back to columns on reload
@@ -135,6 +150,21 @@ const $statActs      = document.getElementById('stat-acts');
 const $healthBadge   = document.getElementById('health-badge');
 const $lastUpdated   = document.getElementById('last-updated');
 const $refreshBtn    = document.getElementById('refresh-btn');
+const $executeMainBtn = document.getElementById('execute-main-btn');
+const $activityPinned = document.getElementById('activity-pinned');
+const $statusBreadcrumb = document.getElementById('status-breadcrumb');
+
+// Project name click → go back to declarations (home)
+if ($projectName) {
+  $projectName.addEventListener('click', () => {
+    if (viewMode !== 'columns') switchView('columns');
+    drillLevel = 'declarations';
+    drillDeclId = null;
+    drillMileId = null;
+    pushDrillHash();
+    renderDrillView();
+  });
+}
 
 const $nodesDecls    = document.getElementById('nodes-declarations');
 const $nodesMiles    = document.getElementById('nodes-milestones');
@@ -150,6 +180,20 @@ const $readinessBanner = document.getElementById('readiness-banner');
 const $colDeclList   = document.getElementById('col-decl-list');
 const $colMileList   = document.getElementById('col-mile-list');
 const $colActList    = document.getElementById('col-act-list');
+
+const $drillBrowser    = document.getElementById('drill-browser');
+const $drillBreadcrumb = document.getElementById('drill-breadcrumb');
+const $drillDetail     = document.getElementById('drill-detail');
+const $drillContext    = document.getElementById('drill-context');
+const $drillList       = document.getElementById('drill-list');
+const $drillPrompt     = document.getElementById('drill-prompt');
+
+// Move activity feed into drill-body so it's part of the 3-panel layout
+(function() {
+  const drillBody = document.getElementById('drill-body');
+  const actFeed = document.getElementById('activity-feed');
+  if (drillBody && actFeed) drillBody.appendChild(actFeed);
+})();
 
 const $viewToggle    = document.getElementById('view-toggle');
 const $viewToggleLabel = document.getElementById('view-toggle-label');
@@ -279,6 +323,7 @@ async function loadData() {
     const [graph, status] = await Promise.all([
       fetchJson(API_GRAPH),
       fetchJson(API_STATUS).catch(() => null), // status is supplementary
+      fetchProjectInfo(),
     ]);
 
     if (graph && graph.error) {
@@ -297,7 +342,8 @@ async function loadData() {
     hideOverlay();
     renderStatusBar();
     renderGraph();
-    renderColumnBrowser();
+    parseDrillHash(); // Restore drill state from URL hash on load
+    renderDrillView();
     updateLastUpdated();
     checkProjectComplete(graph);
     loadWorkflowState();
@@ -354,14 +400,20 @@ function updateRunningIndicators() {
 }
 
 function updateLastUpdated() {
-  $lastUpdated.textContent = `Last updated: ${fmtTime(new Date())}`;
+  if ($lastUpdated) $lastUpdated.textContent = `Last updated: ${fmtTime(new Date())}`;
+  // Update execute button state
+  if ($executeMainBtn) {
+    const canExec = canEnterExecution();
+    $executeMainBtn.disabled = !canExec;
+    $executeMainBtn.title = canExec ? 'Enter execution mode' : 'Approve all actions first';
+  }
 }
 
 // ─── Status bar ───────────────────────────────────────────────────────────────
 
 function renderStatusBar() {
-  // Project name from status or graph stats
-  const project = statusData ? statusData.project : null;
+  // Project name — use folder name from projectInfo or status
+  const project = (projectInfo && projectInfo.folder) || (statusData ? statusData.project : null);
   if (project) $projectName.textContent = project;
 
   // Counts
@@ -377,15 +429,6 @@ function renderStatusBar() {
   $healthBadge.className   = `health-badge health-${healthLabel}`;
 
   // Compute project-wide integrity percentage from wholeness data
-  let perfPill = document.getElementById('perf-pill');
-  if (!perfPill) {
-    perfPill = document.createElement('span');
-    perfPill.id = 'perf-pill';
-    perfPill.style.cssText = 'font-size:11px;color:var(--text-dim);';
-    $healthBadge.after(perfPill);
-  }
-
-  // Count wholeness across all node types
   const allNodes = [
     ...(graphData ? graphData.declarations || [] : []),
     ...(graphData ? graphData.milestones || [] : []),
@@ -395,16 +438,14 @@ function renderStatusBar() {
   const wholeCount = allNodes.filter(n => n.wholeness === 'whole').length;
   const integrityPct = total > 0 ? Math.round((wholeCount / total) * 100) : 0;
 
-  // Alignment from status rollup if available
-  const rollup = (statusData && statusData.performance && statusData.performance.rollup) || {};
-  const align = rollup.alignment ? rollup.alignment.level : null;
-  const perf  = rollup.performance || null;
-
-  let parts = [];
-  if (align) parts.push(`Alignment: ${align}`);
-  parts.push(`Integrity: ${integrityPct}%`);
-  if (perf) parts.push(`Performance: ${perf}`);
-  perfPill.textContent = parts.join('  \u00b7  ');
+  // Update integrity pill in status bar
+  const $integrityPill = document.getElementById('integrity-pill');
+  if ($integrityPill) {
+    const valSpan = $integrityPill.querySelector('.pill-value');
+    if (valSpan) valSpan.textContent = `${integrityPct}%`;
+    $integrityPill.className = 'status-pill' +
+      (integrityPct >= 90 ? ' integrity-ok' : integrityPct >= 60 ? ' integrity-warn' : ' integrity-bad');
+  }
 }
 
 // ─── Node element builder ─────────────────────────────────────────────────────
@@ -1050,6 +1091,930 @@ function renderReadinessBanner() {
   });
 }
 
+// ─── Drill-down browser ────────────────────────────────────────────────────────
+
+/** @type {string} Previous drill level — used to detect level changes and save nav state */
+let drillPrevLevel = 'declarations';
+
+/** Save current scroll + focus for the current drill level */
+function saveDrillNavState() {
+  const $list = document.getElementById('drill-list');
+  drillNavState[drillLevel] = {
+    focusIndex: drillFocusIndex,
+    scrollTop: $list ? $list.scrollTop : 0,
+  };
+}
+
+/** Navigate deeper: save current state then switch level */
+function drillGoDeeper(newLevel) {
+  saveDrillNavState();
+  drillLevel = newLevel;
+  pushDrillHash();
+}
+
+/** Navigate back: save current state then switch level */
+function drillGoBack(newLevel) {
+  saveDrillNavState();
+  drillLevel = newLevel;
+  pushDrillHash();
+}
+
+/** Build the hash string for current drill state */
+function drillHashString() {
+  let hash = '#/';
+  if (drillDeclId) {
+    hash += encodeURIComponent(drillDeclId);
+    if (drillMileId) hash += '/' + encodeURIComponent(drillMileId);
+  }
+  return hash;
+}
+
+/** Push current drill state to URL hash (new history entry) */
+function pushDrillHash() {
+  const hash = drillHashString();
+  if (location.hash !== hash) history.pushState(null, '', hash);
+}
+
+/** Replace current URL hash without creating history entry */
+function syncDrillHash() {
+  const hash = drillHashString();
+  if (location.hash !== hash) history.replaceState(null, '', hash);
+}
+
+/** Parse URL hash and restore drill state. Returns true if state changed. */
+function parseDrillHash() {
+  const hash = location.hash || '#/';
+  const parts = hash.replace('#/', '').split('/').filter(Boolean).map(decodeURIComponent);
+  const prevLevel = drillLevel;
+  const prevDecl = drillDeclId;
+  const prevMile = drillMileId;
+
+  if (parts.length >= 2) {
+    drillDeclId = parts[0];
+    drillMileId = parts[1];
+    drillLevel = 'actions';
+  } else if (parts.length === 1) {
+    drillDeclId = parts[0];
+    drillMileId = null;
+    drillLevel = 'milestones';
+  } else {
+    drillDeclId = null;
+    drillMileId = null;
+    drillLevel = 'declarations';
+  }
+  return drillLevel !== prevLevel || drillDeclId !== prevDecl || drillMileId !== prevMile;
+}
+
+/** Handle browser back/forward */
+window.addEventListener('popstate', () => {
+  if (parseDrillHash()) {
+    renderDrillView();
+  }
+});
+
+/**
+ * Core dispatcher — render the current drill level.
+ */
+function renderDrillView() {
+  if (!$drillBrowser || !graphData) return;
+  syncDrillHash(); // Keep URL in sync without creating history entries
+
+  const { declarations, milestones, actions } = graphData;
+
+  // Compute enriched milestones and declarations
+  const enrichedMilestones = (milestones || []).map(m => ({
+    ...m,
+    ...deriveMilestoneStatus(m, actions || []),
+  }));
+  const enrichedDeclarations = (declarations || []).map(d => ({
+    ...d,
+    displayStatus: deriveDeclarationStatus(d, enrichedMilestones),
+  }));
+
+  if (drillLevel === 'declarations') {
+    renderDrillDeclarations(enrichedDeclarations, enrichedMilestones, actions || []);
+  } else if (drillLevel === 'milestones') {
+    renderDrillMilestones(enrichedDeclarations, enrichedMilestones, actions || []);
+  } else if (drillLevel === 'actions') {
+    renderDrillActions(enrichedDeclarations, enrichedMilestones, actions || []);
+  }
+
+  // Restore or auto-select focus
+  const cards = getDrillCards();
+  const levelChanged = drillPrevLevel !== drillLevel;
+  if (cards.length > 0) {
+    if (levelChanged) {
+      // Restore saved state for this level
+      const saved = drillNavState[drillLevel];
+      drillFocusIndex = (saved && saved.focusIndex >= 0) ? saved.focusIndex : 0;
+    }
+    if (drillFocusIndex < 0) drillFocusIndex = 0;
+    if (drillFocusIndex >= cards.length) drillFocusIndex = cards.length - 1;
+    updateDrillFocus();
+    // Restore scroll position
+    if (levelChanged) {
+      const $list = document.getElementById('drill-list');
+      const saved = drillNavState[drillLevel];
+      if ($list && saved && saved.scrollTop > 0) {
+        requestAnimationFrame(() => { $list.scrollTop = saved.scrollTop; });
+      }
+    }
+  } else {
+    drillFocusIndex = -1;
+  }
+
+  drillPrevLevel = drillLevel;
+
+  // Update status bar breadcrumb
+  updateStatusBreadcrumb(enrichedDeclarations, enrichedMilestones);
+  // Update next/execute button
+  updateNextButton(enrichedDeclarations, enrichedMilestones, actions || []);
+}
+
+/**
+ * Update the inline breadcrumb in the status bar based on current drill level.
+ */
+function updateStatusBreadcrumb(enrichedDeclarations, enrichedMilestones) {
+  if (!$statusBreadcrumb) return;
+  $statusBreadcrumb.innerHTML = '';
+
+  if (drillLevel === 'declarations') {
+    // No extra breadcrumb — project name is the root
+    return;
+  }
+
+  const decl = enrichedDeclarations.find(d => d.id === drillDeclId);
+  if (!decl) return;
+  const declTitle = decl.title || decl.statement || decl.id;
+
+  if (drillLevel === 'milestones') {
+    $statusBreadcrumb.innerHTML = `
+      <span class="bc-sep">&rsaquo;</span>
+      <span class="bc-current">${escHtml(decl.id)}</span>
+      <span class="bc-title">${escHtml(truncate(declTitle, 40))}</span>`;
+  } else if (drillLevel === 'actions') {
+    const mile = enrichedMilestones.find(m => m.id === drillMileId);
+    if (!mile) return;
+    const mileTitle = mile.title || mile.id;
+    $statusBreadcrumb.innerHTML = `
+      <span class="bc-sep">&rsaquo;</span>
+      <span class="bc-link" data-bc-level="milestones">${escHtml(decl.id)}</span>
+      <span class="bc-sep">&rsaquo;</span>
+      <span class="bc-current">${escHtml(mile.id)}</span>
+      <span class="bc-title">${escHtml(truncate(mileTitle, 35))}</span>`;
+
+    const bcLink = $statusBreadcrumb.querySelector('[data-bc-level]');
+    if (bcLink) {
+      bcLink.addEventListener('click', () => {
+        drillLevel = 'milestones';
+        drillMileId = null;
+        renderDrillView();
+      });
+    }
+  }
+}
+
+/**
+ * Find the next unapproved node and update the main button.
+ */
+function updateNextButton(enrichedDeclarations, enrichedMilestones, actions) {
+  if (!$executeMainBtn) return;
+
+  // Find first unapproved node across all levels
+  const unapprovedDecl = enrichedDeclarations.find(d => d.reviewState !== 'approved');
+  const unapprovedMile = enrichedMilestones.find(m => m.reviewState !== 'approved');
+  const unapprovedAction = (actions || []).find(a => a.reviewState !== 'approved' && !COMPLETED.has((a.status || '').toUpperCase()));
+
+  const hasUnapproved = unapprovedDecl || unapprovedMile || unapprovedAction;
+
+  if (hasUnapproved) {
+    $executeMainBtn.innerHTML = '<kbd>N</kbd> Next';
+    $executeMainBtn.className = 'btn-next';
+    $executeMainBtn.id = 'execute-main-btn';
+    $executeMainBtn.disabled = false;
+    $executeMainBtn.title = 'Go to next item needing approval';
+
+    // Store target for click handler
+    $executeMainBtn._nextTarget = { decl: unapprovedDecl, mile: unapprovedMile, action: unapprovedAction };
+    $executeMainBtn._planMode = false;
+  } else {
+    // Check if any declarations still need milestones (PENDING = no milestones planned)
+    const needsPlanning = enrichedDeclarations.some(d => d.displayStatus === 'PENDING');
+
+    if (needsPlanning) {
+      $executeMainBtn.innerHTML = '<kbd>P</kbd> Plan';
+      $executeMainBtn.className = 'btn-plan';
+      $executeMainBtn.id = 'execute-main-btn';
+      $executeMainBtn.disabled = false;
+      $executeMainBtn.title = 'Plan milestones for unplanned declarations';
+      $executeMainBtn._nextTarget = null;
+      $executeMainBtn._planMode = true;
+    } else {
+      $executeMainBtn.innerHTML = '<kbd>E</kbd> Execute';
+      $executeMainBtn.className = '';
+      $executeMainBtn.id = 'execute-main-btn';
+      $executeMainBtn.disabled = !canEnterExecution();
+      $executeMainBtn.title = canEnterExecution() ? 'Enter execution mode' : 'No actions to execute';
+      $executeMainBtn._nextTarget = null;
+      $executeMainBtn._planMode = false;
+    }
+  }
+
+  // Update integrity pill to show approval progress
+  const $integrityPill = document.getElementById('integrity-pill');
+  if ($integrityPill) {
+    const allNodes = [...(enrichedDeclarations || []), ...(enrichedMilestones || []), ...(actions || [])];
+    const total = allNodes.length;
+    const approvedCount = allNodes.filter(n => n.reviewState === 'approved' || COMPLETED.has((n.status || '').toUpperCase())).length;
+    const pct = total > 0 ? Math.round((approvedCount / total) * 100) : 0;
+    const valSpan = $integrityPill.querySelector('.pill-value');
+    if (valSpan) valSpan.textContent = `${pct}%`;
+    $integrityPill.className = 'status-pill' +
+      (pct >= 100 ? ' integrity-ok' : pct >= 60 ? ' integrity-warn' : ' integrity-bad');
+  }
+}
+
+/** @type {{ title: string, description: string, coreValue: string, folder: string } | null} */
+let projectInfo = null;
+
+async function fetchProjectInfo() {
+  try {
+    projectInfo = await fetchJson('/api/project');
+  } catch (_) {}
+}
+
+function renderProjectDetail() {
+  if (!$drillDetail) return;
+  delete $drillDetail.dataset.nodeType;
+  const info = projectInfo || {};
+  const title = info.title || info.folder || 'Project';
+  const desc = info.description || '';
+  const core = info.coreValue || '';
+  const currentState = info.currentState || '';
+
+  // Compute stats
+  const stats = (graphData && graphData.stats) || {};
+  const dCount = stats.declarations || 0;
+  const mCount = stats.milestones || 0;
+  const aCount = stats.actions || 0;
+
+  $drillDetail.innerHTML = `
+    <div class="detail-id" style="color:var(--accent)">PROJECT</div>
+    <div class="detail-title">${escHtml(title)}</div>
+    ${desc ? `<div class="detail-desc">${escHtml(desc)}</div>` : '<div class="detail-desc" style="color:var(--text-dim);font-style:italic">No project description yet. Run /declare:new-project to set one up.</div>'}
+    ${core ? `<div class="detail-section-label">Core Value</div><div class="detail-desc">${escHtml(core)}</div>` : ''}
+    ${currentState ? `<div class="detail-section-label">Current State</div><div class="detail-meta">${escHtml(currentState)}</div>` : ''}
+    <div class="detail-section-label">Graph</div>
+    <div class="detail-meta">${dCount} declarations &middot; ${mCount} milestones &middot; ${aCount} actions</div>
+  `;
+}
+
+/**
+ * Level 1 — List all declarations as cards.
+ */
+function renderDrillDeclarations(enrichedDeclarations, enrichedMilestones, actions) {
+  $drillContext.innerHTML = '';
+  $drillList.innerHTML = '';
+
+  // Show project details in left panel
+  $drillDetail.classList.add('visible');
+  renderProjectDetail();
+
+  if (enrichedDeclarations.length === 0) {
+    $drillList.innerHTML = '<div class="col-empty">No declarations found</div>';
+    $drillPrompt.innerHTML = '';
+    return;
+  }
+
+  let firstUnapproved = null;
+  const container = document.createElement('div');
+  container.className = 'drill-cards';
+  container.dataset.nodeType = 'declaration';
+
+  enrichedDeclarations.forEach(d => {
+    const title = d.title || d.statement || d.id;
+    const desc = d.statement || '';
+    const myMilestones = enrichedMilestones.filter(m => (d.milestones || []).includes(m.id));
+    const needsReview = d.reviewState !== 'approved';
+    const isCurrent = needsReview && !firstUnapproved;
+    if (needsReview && !firstUnapproved) firstUnapproved = d;
+
+    const reviewMiles = myMilestones.filter(m => m.reviewState !== 'approved').length;
+    const statusClass = d.displayStatus === 'DONE' ? 's-done' : d.displayStatus === 'EXECUTING' ? 's-executing' : 's-planned';
+
+    let badgesHtml = `<span class="drill-status-pill ${statusClass}">${escHtml(d.displayStatus)}</span>`;
+    badgesHtml += reviewBadgeHtml(d.id, d.reviewState);
+    if (myMilestones.length > 0) {
+      badgesHtml += `<span class="drill-card-stat">${myMilestones.length} milestones`;
+      if (reviewMiles > 0) badgesHtml += ` <strong>(${reviewMiles} need review)</strong>`;
+      badgesHtml += '</span>';
+    }
+
+    const el = document.createElement('div');
+    el.className = `drill-card${needsReview ? ' needs-review' : ''}${isCurrent ? ' current-review' : ''}`;
+    el.innerHTML = `
+      <div class="drill-card-top">
+        <span class="drill-card-id">${escHtml(d.id)}</span>
+        <div class="drill-card-body">
+          <div class="drill-card-title">${escHtml(title)}</div>
+          <div class="drill-card-desc">${desc !== title ? escHtml(desc) : ''}</div>
+          <div class="drill-card-badges">${badgesHtml}</div>
+        </div>
+      </div>
+      ${renderEntityActions(d.id, d.reviewState)}
+    `;
+
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('.drill-review-btn') || e.target.closest('.drill-action-btn')) return;
+      drillDeclId = d.id;
+      drillGoDeeper('milestones');
+      renderDrillView();
+    });
+
+    container.appendChild(el);
+  });
+
+  $drillList.appendChild(container);
+  wireInlineReviewButtons(container);
+  wireEntityMenus(container);
+
+  // Prompt
+  if (firstUnapproved) {
+    $drillPrompt.innerHTML = `<span class="drill-prompt-text">\u2192 Review <span class="drill-prompt-target" data-drill-target="${escHtml(firstUnapproved.id)}">${escHtml(firstUnapproved.id)}</span> next</span>`;
+    $drillPrompt.querySelector('.drill-prompt-target').addEventListener('click', () => {
+      drillDeclId = firstUnapproved.id;
+      drillLevel = 'milestones';
+      renderDrillView();
+    });
+  } else {
+    $drillPrompt.innerHTML = `<span class="drill-prompt-complete">All declarations reviewed</span>
+      <button class="drill-next-btn" id="drill-next-btn"><kbd>N</kbd> Next</button>`;
+    document.getElementById('drill-next-btn').addEventListener('click', () => drillAdvanceNext());
+  }
+}
+
+/**
+ * Level 2 — Milestones for a selected declaration, as cards.
+ */
+function renderDrillMilestones(enrichedDeclarations, enrichedMilestones, actions) {
+  const decl = enrichedDeclarations.find(d => d.id === drillDeclId);
+  if (!decl) { drillLevel = 'declarations'; renderDrillView(); return; }
+
+  const title = decl.title || decl.statement || decl.id;
+
+  // Breadcrumb is now in status bar (updated by renderDrillView caller)
+
+  // Left detail panel — declaration info + review controls
+  const stmt = decl.statement || decl.title || '';
+  const declStatusClass = decl.displayStatus === 'DONE' ? 's-done' : decl.displayStatus === 'EXECUTING' ? 's-executing' : 's-planned';
+  const declNeedsReview = decl.reviewState !== 'approved';
+
+  $drillDetail.classList.add('visible');
+  $drillDetail.dataset.nodeType = 'declaration';
+  $drillDetail.innerHTML = `
+    <div class="detail-id">${escHtml(decl.id)}</div>
+    <div class="detail-title">${escHtml(title)}</div>
+    <div class="detail-desc">${escHtml(stmt)}</div>
+    <div class="detail-badges">
+      <span class="drill-status-pill ${declStatusClass}">${escHtml(decl.displayStatus)}</span>
+      ${reviewBadgeHtml(decl.id, decl.reviewState)}
+    </div>
+    ${decl.milestones && decl.milestones.length ? `<div class="detail-section-label">Milestones</div>
+    <div class="detail-meta">${decl.milestones.length} total, viewing below</div>` : ''}
+    ${renderEntityActions(decl.id, decl.reviewState, { shift: true })}
+    <div class="refine-container" id="refine-area-${escHtml(decl.id)}"></div>
+  `;
+  wireInlineReviewButtons($drillDetail);
+  wireEntityMenus($drillDetail);
+
+  $drillContext.innerHTML = '';
+
+  const filtered = enrichedMilestones.filter(m => (m.realizes || []).includes(drillDeclId));
+
+  $drillList.innerHTML = '';
+  if (filtered.length === 0) {
+    $drillList.innerHTML = `
+      <div class="col-empty-invite">
+        <div class="empty-invite-title">No milestones yet</div>
+        <div class="empty-invite-desc">Plan milestones to break this declaration into achievable steps.</div>
+        <textarea class="empty-invite-input" id="plan-guidance-input" placeholder="Optional: guide the direction..." rows="2"></textarea>
+        <button class="empty-invite-btn" id="plan-milestones-btn"><kbd>P</kbd> Plan Milestones</button>
+        <div id="derivation-log" class="output-log" style="display:none; min-height:0"></div>
+        <div id="derivation-proposals" style="display:none"></div>
+      </div>`;
+    $drillPrompt.innerHTML = '';
+
+    // Wire the Plan button to trigger derivation
+    const planBtn = document.getElementById('plan-milestones-btn');
+    if (planBtn) {
+      planBtn.addEventListener('click', () => {
+        planBtn.disabled = true;
+        const startTime = Date.now();
+        planBtn.innerHTML = '<span class="derive-spinner"></span> Deriving milestones\u2026 <span class="derive-elapsed">0s</span>';
+        const elSpan = planBtn.querySelector('.derive-elapsed');
+        const timer = setInterval(() => {
+          if (!elSpan || !document.contains(elSpan)) { clearInterval(timer); return; }
+          const sec = Math.floor((Date.now() - startTime) / 1000);
+          elSpan.textContent = sec + 's';
+        }, 1000);
+        planBtn._deriveTimer = timer;
+        startDerivation(drillDeclId);
+      });
+    }
+    return;
+  }
+
+  let firstUnapproved = null;
+  const container = document.createElement('div');
+  container.className = 'drill-cards';
+  container.dataset.nodeType = 'milestone';
+
+  filtered.forEach(m => {
+    const mTitle = m.title || m.id;
+    const needsReview = m.reviewState !== 'approved';
+    const isCurrent = needsReview && !firstUnapproved;
+    if (needsReview && !firstUnapproved) firstUnapproved = m;
+
+    const myActions = (actions || []).filter(a => (a.causes || []).includes(m.id));
+
+    // Build description: milestone produces, or summarize from child action produces
+    let mDesc = m.produces || '';
+    if (!mDesc && myActions.length > 0) {
+      const actionDescs = myActions.map(a => a.produces).filter(Boolean);
+      if (actionDescs.length > 0) mDesc = actionDescs.join(' \u00B7 ');
+    }
+    const actionReviewCount = myActions.filter(a => a.reviewState !== 'approved').length;
+
+    let statusLabel, statusClass;
+    if (m.totalCount > 0) {
+      statusLabel = m.displayStatus === 'EXECUTING' ? `${m.doneCount}/${m.totalCount} DONE` : `${m.doneCount}/${m.totalCount}`;
+      statusClass = m.displayStatus === 'EXECUTING' ? 's-executing' : m.displayStatus === 'DONE' ? 's-done' : 's-planned';
+    } else {
+      statusLabel = m.displayStatus;
+      statusClass = m.displayStatus === 'DONE' ? 's-done' : m.displayStatus === 'EXECUTING' ? 's-executing' : 's-planned';
+    }
+
+    let badgesHtml = `<span class="drill-status-pill ${statusClass}">${escHtml(statusLabel)}</span>`;
+    badgesHtml += reviewBadgeHtml(m.id, m.reviewState);
+    if (myActions.length > 0) {
+      badgesHtml += `<span class="drill-card-stat">${myActions.length} actions`;
+      if (actionReviewCount > 0) badgesHtml += ` <strong>(${actionReviewCount} need review)</strong>`;
+      badgesHtml += '</span>';
+    }
+
+    const el = document.createElement('div');
+    el.className = `drill-card${needsReview ? ' needs-review' : ''}${isCurrent ? ' current-review' : ''}`;
+    el.innerHTML = `
+      <div class="drill-card-top">
+        <span class="drill-card-id">${escHtml(m.id)}</span>
+        <div class="drill-card-body">
+          <div class="drill-card-title">${escHtml(mTitle)}</div>
+          <div class="drill-card-desc">${mDesc !== mTitle ? escHtml(mDesc) : ''}</div>
+          <div class="drill-card-badges">${badgesHtml}</div>
+        </div>
+      </div>
+      ${renderEntityActions(m.id, m.reviewState)}
+    `;
+
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('.drill-review-btn') || e.target.closest('.drill-action-btn')) return;
+      drillMileId = m.id;
+      drillGoDeeper('actions');
+      renderDrillView();
+    });
+
+    container.appendChild(el);
+  });
+
+  $drillList.appendChild(container);
+  wireInlineReviewButtons(container);
+  wireEntityMenus(container);
+
+  // Prompt
+  if (firstUnapproved) {
+    $drillPrompt.innerHTML = `<span class="drill-prompt-text">\u2192 Review <span class="drill-prompt-target" data-drill-target="${escHtml(firstUnapproved.id)}">${escHtml(firstUnapproved.id)}</span> to continue</span>`;
+    $drillPrompt.querySelector('.drill-prompt-target').addEventListener('click', () => {
+      drillMileId = firstUnapproved.id;
+      drillLevel = 'actions';
+      renderDrillView();
+    });
+  } else {
+    $drillPrompt.innerHTML = `<span class="drill-prompt-complete">All milestones approved</span>
+      <button class="drill-next-btn" id="drill-next-btn"><kbd>N</kbd> Next</button>`;
+    document.getElementById('drill-next-btn').addEventListener('click', () => drillAdvanceNext());
+  }
+}
+
+/**
+ * Level 3 — Actions for a selected milestone, as cards.
+ */
+function renderDrillActions(enrichedDeclarations, enrichedMilestones, actions) {
+  const decl = enrichedDeclarations.find(d => d.id === drillDeclId);
+  const mile = enrichedMilestones.find(m => m.id === drillMileId);
+  if (!decl || !mile) { drillLevel = 'milestones'; renderDrillView(); return; }
+
+  const mileTitle = mile.title || mile.id;
+
+  // Breadcrumb is now in status bar (updated by renderDrillView caller)
+
+  // Filter actions for this milestone (used by detail panel and card list)
+  const filtered = (actions || []).filter(a => (a.causes || []).includes(drillMileId));
+
+  // Left detail panel — milestone info + review controls
+  let produces = mile.produces || '';
+  if (!produces && filtered.length > 0) {
+    const actionDescs = filtered.map(a => a.produces).filter(Boolean);
+    if (actionDescs.length > 0) produces = actionDescs.join(' · ');
+  }
+  const mileNeedsReview = mile.reviewState !== 'approved';
+  let mileStatusLabel, mileStatusClass;
+  if (mile.totalCount > 0) {
+    mileStatusLabel = `${mile.doneCount}/${mile.totalCount}`;
+    mileStatusClass = mile.displayStatus === 'EXECUTING' ? 's-executing' : mile.displayStatus === 'DONE' ? 's-done' : 's-planned';
+  } else {
+    mileStatusLabel = mile.displayStatus;
+    mileStatusClass = mile.displayStatus === 'DONE' ? 's-done' : mile.displayStatus === 'EXECUTING' ? 's-executing' : 's-planned';
+  }
+
+  $drillDetail.classList.add('visible');
+  $drillDetail.dataset.nodeType = 'milestone';
+  $drillDetail.innerHTML = `
+    <div class="detail-id">${escHtml(mile.id)}</div>
+    <div class="detail-title">${escHtml(mileTitle)}</div>
+    <div class="detail-desc">${produces ? escHtml(produces) : ''}</div>
+    <div class="detail-badges">
+      <span class="drill-status-pill ${mileStatusClass}">${escHtml(mileStatusLabel)}</span>
+      ${reviewBadgeHtml(mile.id, mile.reviewState)}
+    </div>
+    <div class="detail-section-label">Declaration</div>
+    <div class="detail-meta">${escHtml(decl.id)}: ${escHtml(truncate(decl.title || decl.statement || '', 60))}</div>
+    ${renderEntityActions(mile.id, mile.reviewState, { shift: true })}
+    <div class="refine-container" id="refine-area-${escHtml(mile.id)}"></div>
+  `;
+  wireInlineReviewButtons($drillDetail);
+  wireEntityMenus($drillDetail);
+
+  $drillContext.innerHTML = '';
+
+  $drillList.innerHTML = '';
+  if (filtered.length === 0) {
+    $drillList.innerHTML = '<div class="col-empty">No actions for this milestone</div>';
+    $drillPrompt.innerHTML = '';
+    return;
+  }
+
+  let firstUnapproved = null;
+  const container = document.createElement('div');
+  container.className = 'drill-cards';
+  container.dataset.nodeType = 'action';
+
+  filtered.forEach(a => {
+    const aTitle = a.title || a.id;
+    const aDesc = a.produces || a.title || '';
+    const status = a.status || 'PENDING';
+    const needsReview = a.reviewState !== 'approved';
+    const isCurrent = needsReview && !firstUnapproved;
+    if (needsReview && !firstUnapproved) firstUnapproved = a;
+
+    const statusClass = status === 'DONE' ? 's-done' : status === 'EXECUTING' ? 's-executing' : status === 'PENDING' ? 's-pending' : 's-planned';
+
+    let badgesHtml = `<span class="drill-status-pill ${statusClass}">${escHtml(status)}</span>`;
+    badgesHtml += reviewBadgeHtml(a.id, a.reviewState);
+
+    const el = document.createElement('div');
+    el.className = `drill-card${needsReview ? ' needs-review' : ''}${isCurrent ? ' current-review' : ''}`;
+    el.innerHTML = `
+      <div class="drill-card-top">
+        <span class="drill-card-id">${escHtml(a.id)}</span>
+        <div class="drill-card-body">
+          <div class="drill-card-title">${escHtml(aTitle)}</div>
+          <div class="drill-card-desc">${aDesc !== aTitle ? escHtml(aDesc) : ''}</div>
+          <div class="drill-card-badges">${badgesHtml}</div>
+        </div>
+      </div>
+      <div class="drill-exec-plan-toggle" data-action-id="${escHtml(a.id)}">\u25B6 Show exec-plan</div>
+      <div class="drill-exec-plan-content" id="drill-plan-${escHtml(a.id)}"></div>
+      ${renderEntityActions(a.id, a.reviewState)}
+    `;
+
+    // Exec-plan toggle
+    el.querySelector('.drill-exec-plan-toggle').addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const toggle = e.currentTarget;
+      const content = el.querySelector('.drill-exec-plan-content');
+      if (content.classList.contains('open')) {
+        content.classList.remove('open');
+        toggle.textContent = '\u25B6 Show exec-plan';
+        return;
+      }
+      toggle.textContent = '\u25BC Loading...';
+      try {
+        const res = await fetch(`/api/action/${encodeURIComponent(a.id)}`);
+        const data = await res.json();
+        if (data.error || !data.execPlan) {
+          content.innerHTML = '<span style="opacity:0.5">No exec-plan found</span>';
+        } else {
+          const ep = data.execPlan;
+          let planHtml = '';
+          if (ep.goal) planHtml += `<div style="margin-bottom:6px"><strong>Goal:</strong> ${escHtml(ep.goal)}</div>`;
+          if (ep.tasks && ep.tasks.length) {
+            planHtml += '<div style="margin-bottom:4px"><strong>Tasks:</strong></div><ol style="padding-left:16px;margin:0">';
+            ep.tasks.forEach(t => {
+              const taskTitle = typeof t === 'string' ? t : (t.title || t.description || JSON.stringify(t));
+              planHtml += `<li style="margin-bottom:2px">${escHtml(truncate(taskTitle, 120))}</li>`;
+            });
+            planHtml += '</ol>';
+          }
+          if (!planHtml) planHtml = '<span style="opacity:0.5">Exec-plan loaded (no details)</span>';
+          content.innerHTML = planHtml;
+        }
+      } catch (err) {
+        content.innerHTML = `<span style="color:var(--broken-color)">Error: ${escHtml(err.message)}</span>`;
+      }
+      content.classList.add('open');
+      toggle.textContent = '\u25BC Hide exec-plan';
+    });
+
+    container.appendChild(el);
+  });
+
+  $drillList.appendChild(container);
+  wireInlineReviewButtons(container);
+  wireEntityMenus(container);
+
+  // Prompt
+  const allApproved = filtered.every(a => a.reviewState === 'approved');
+  if (allApproved) {
+    $drillPrompt.innerHTML = `<span class="drill-prompt-complete">All actions approved</span>
+      <button class="drill-next-btn" id="drill-next-btn"><kbd>N</kbd> Next</button>`;
+    document.getElementById('drill-next-btn').addEventListener('click', () => drillAdvanceNext());
+  } else if (firstUnapproved) {
+    $drillPrompt.innerHTML = `<span class="drill-prompt-text">\u2192 Review <span class="drill-prompt-target">${escHtml(firstUnapproved.id)}</span> next</span>`;
+  }
+}
+
+// ─── Drill helper functions ──────────────────────────────────────────────────
+
+/**
+ * Return HTML for inline Approve/Revision buttons.
+ */
+function renderInlineReviewButtons(nodeId) {
+  return `<span class="drill-review-actions">
+    <button class="drill-review-btn approve-btn" data-review-action="approved" data-node-id="${escHtml(nodeId)}"><kbd>A</kbd> Approve</button>
+    <button class="drill-review-btn revision-btn" data-review-action="revision_needed" data-node-id="${escHtml(nodeId)}"><kbd>R</kbd> Revise</button>
+  </span>`;
+}
+
+/**
+ * Return HTML for the unified entity action menu.
+ * Available on ALL entities regardless of review state.
+ */
+function renderEntityActions(nodeId, reviewState, opts) {
+  const shift = opts && opts.shift;
+  const k = (key) => shift ? `⇧${key}` : key;
+  const needsApprove = reviewState !== 'approved';
+  return `<div class="drill-card-actions">
+    ${needsApprove ? `<button class="drill-review-btn approve-btn" data-review-action="approved" data-node-id="${escHtml(nodeId)}"><kbd>${k('A')}</kbd> Approve</button>` : ''}
+    <button class="drill-action-btn" data-action="refine" data-mode="outdated" data-node-id="${escHtml(nodeId)}"><kbd>${k('R')}</kbd> Review</button>
+    <button class="drill-action-btn" data-action="refine" data-mode="write" data-node-id="${escHtml(nodeId)}"><kbd>${k('W')}</kbd> Write</button>
+    <button class="drill-action-btn drill-action-danger" data-action="delete" data-node-id="${escHtml(nodeId)}"><kbd>${k('D')}</kbd> Delete</button>
+  </div>`;
+}
+
+/**
+ * Advance to the next thing needing attention.
+ * If current level is all approved, go back up. If at top and all done, trigger execute.
+ */
+function drillAdvanceNext() {
+  if (!graphData) return;
+  const { declarations, milestones, actions } = graphData;
+  const enrichedMilestones = (milestones || []).map(m => ({ ...m, ...deriveMilestoneStatus(m, actions || []) }));
+  const enrichedDeclarations = (declarations || []).map(d => ({ ...d, displayStatus: deriveDeclarationStatus(d, enrichedMilestones) }));
+
+  // Find first unapproved at each level
+  const uDecl = enrichedDeclarations.find(d => d.reviewState !== 'approved');
+  const uMile = enrichedMilestones.find(m => m.reviewState !== 'approved');
+  const uAct = (actions || []).find(a => a.reviewState !== 'approved' && !COMPLETED.has((a.status || '').toUpperCase()));
+
+  if (uAct) {
+    const mileId = (uAct.causes || [])[0];
+    if (mileId) {
+      const mile = (milestones || []).find(m => m.id === mileId);
+      if (mile && mile.realizes && mile.realizes.length) drillDeclId = mile.realizes[0];
+      drillMileId = mileId;
+    }
+    drillLevel = 'actions';
+  } else if (uMile) {
+    if (uMile.realizes && uMile.realizes.length) drillDeclId = uMile.realizes[0];
+    drillLevel = 'milestones';
+  } else if (uDecl) {
+    drillDeclId = uDecl.id;
+    drillLevel = 'milestones';
+  } else {
+    // Everything approved — go to declarations and offer execute
+    drillLevel = 'declarations';
+    drillDeclId = null;
+    drillMileId = null;
+  }
+  renderDrillView();
+}
+
+/**
+ * Attach click handlers to inline review buttons within a container.
+ */
+function wireInlineReviewButtons($container) {
+  $container.querySelectorAll('.drill-review-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const nodeId = btn.dataset.nodeId;
+      const newState = btn.dataset.reviewAction;
+
+      try {
+        const resp = await fetch(`/api/node/${encodeURIComponent(nodeId)}/review-state`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reviewState: newState }),
+        });
+        if (!resp.ok) {
+          console.error('Failed to update review state');
+          return;
+        }
+
+        // Update local graphData for instant feedback
+        updateLocalReviewState(nodeId, newState);
+
+        // Re-render drill view + refresh activity from server
+        renderDrillView();
+        loadActivity();
+      } catch (err) {
+        console.error('Failed to update review state:', err);
+      }
+    });
+  });
+}
+
+/**
+ * Wire entity action menu triggers and menu item clicks within a container.
+ */
+function wireEntityMenus($container) {
+  // Action button clicks (flat action bar)
+  $container.querySelectorAll('.drill-action-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const nodeId = btn.dataset.nodeId;
+      const action = btn.dataset.action;
+
+      if (action === 'refine') {
+        startRefine(nodeId, btn.dataset.mode);
+      } else if (action === 'delete') {
+        if (confirm(`Delete ${nodeId}? This cannot be undone.`)) {
+          deleteNode(nodeId);
+        }
+      }
+    });
+  });
+}
+
+/** Currently active refine node */
+let refineActiveNodeId = null;
+
+/**
+ * Start a refine session for a node.
+ */
+async function startRefine(nodeId, mode) {
+  if (mode === 'write') {
+    // Show a text input for the user to type direction
+    showWriteInput(nodeId);
+    return;
+  }
+  doRefine(nodeId, mode, '');
+}
+
+function showWriteInput(nodeId) {
+  // Find or create refine area in the detail panel or card
+  const area = document.getElementById(`refine-area-${nodeId}`) || createRefineArea(nodeId);
+  area.innerHTML = `
+    <div class="refine-area">
+      <textarea class="refine-write-input" placeholder="Type your direction for the AI..." rows="3"></textarea>
+      <div class="refine-actions">
+        <button class="refine-accept" id="refine-send-${nodeId}">Send</button>
+        <button class="refine-discard" id="refine-cancel-${nodeId}">Cancel</button>
+      </div>
+    </div>
+  `;
+  const textarea = area.querySelector('.refine-write-input');
+  textarea.focus();
+  area.querySelector(`#refine-send-${nodeId}`).addEventListener('click', () => {
+    const msg = textarea.value.trim();
+    if (msg) doRefine(nodeId, 'write', msg);
+  });
+  area.querySelector(`#refine-cancel-${nodeId}`).addEventListener('click', () => {
+    area.innerHTML = '';
+  });
+  // Allow Enter to submit (Shift+Enter for newline)
+  textarea.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      const msg = textarea.value.trim();
+      if (msg) doRefine(nodeId, 'write', msg);
+    }
+  });
+}
+
+function createRefineArea(nodeId) {
+  // Find the card for this node and append a refine area
+  const card = document.querySelector(`.drill-card .drill-review-btn[data-node-id="${nodeId}"]`)?.closest('.drill-card')
+    || document.querySelector(`.drill-action-btn[data-node-id="${nodeId}"]`)?.closest('.drill-card');
+  if (card) {
+    let area = card.querySelector('.refine-container');
+    if (!area) {
+      area = document.createElement('div');
+      area.className = 'refine-container';
+      area.id = `refine-area-${nodeId}`;
+      card.appendChild(area);
+    }
+    return area;
+  }
+  // Fallback: append to detail panel
+  const det = document.getElementById(`refine-area-${nodeId}`);
+  if (det) return det;
+  return document.createElement('div'); // noop
+}
+
+async function doRefine(nodeId, mode, message) {
+  refineActiveNodeId = nodeId;
+  const area = document.getElementById(`refine-area-${nodeId}`) || createRefineArea(nodeId);
+  area.innerHTML = `<div class="refine-area"><div class="refine-streaming">Thinking...</div>
+    <div class="refine-actions"><button class="refine-discard" id="refine-cancel-${nodeId}">Cancel</button></div></div>`;
+  area.querySelector(`#refine-cancel-${nodeId}`).addEventListener('click', async () => {
+    try { await fetch('/api/refine/stop', { method: 'POST' }); } catch (_) {}
+    area.innerHTML = '';
+    refineActiveNodeId = null;
+  });
+
+  try {
+    const resp = await fetch(`/api/node/${encodeURIComponent(nodeId)}/refine`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode, message }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json();
+      area.innerHTML = `<div class="refine-area" style="border-color:var(--broken-color)">${escHtml(err.error || 'Failed')}</div>`;
+      refineActiveNodeId = null;
+    }
+    // Output will stream via SSE
+  } catch (err) {
+    area.innerHTML = `<div class="refine-area" style="border-color:var(--broken-color)">${escHtml(err.message)}</div>`;
+    refineActiveNodeId = null;
+  }
+}
+
+async function archiveNode(nodeId) {
+  try {
+    const resp = await fetch(`/api/node/${encodeURIComponent(nodeId)}/review-state`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reviewState: 'approved' }),
+    });
+    if (resp.ok) {
+      updateLocalReviewState(nodeId, 'approved');
+      // Also mark status as DONE/KEPT via archive endpoint
+      await fetch(`/api/node/${encodeURIComponent(nodeId)}/archive`, { method: 'POST' });
+      loadData().then(() => renderDrillView());
+      loadActivity();
+    }
+  } catch (err) {
+    console.error('Archive failed:', err);
+  }
+}
+
+async function deleteNode(nodeId) {
+  try {
+    const resp = await fetch(`/api/node/${encodeURIComponent(nodeId)}`, { method: 'DELETE' });
+    if (resp.ok) {
+      loadData().then(() => renderDrillView());
+      loadActivity();
+    }
+  } catch (err) {
+    console.error('Delete failed:', err);
+  }
+}
+
+/**
+ * Update graphData in-memory with new review state for instant feedback.
+ */
+function updateLocalReviewState(nodeId, newState) {
+  if (!graphData) return;
+  const allNodes = [
+    ...(graphData.declarations || []),
+    ...(graphData.milestones || []),
+    ...(graphData.actions || []),
+  ];
+  const node = allNodes.find(n => n.id === nodeId);
+  if (node) node.reviewState = newState;
+}
+
 // ─── Column browser keyboard navigation ──────────────────────────────────────
 
 // Inject kb-focus CSS rule
@@ -1070,7 +2035,8 @@ function renderReadinessBanner() {
  * @returns {boolean}
  */
 function isColumnBrowserActive() {
-  return $colBrowser && $colBrowser.classList.contains('active');
+  return ($drillBrowser && $drillBrowser.classList.contains('active')) ||
+    ($colBrowser && $colBrowser.classList.contains('active'));
 }
 
 /**
@@ -1133,74 +2099,177 @@ function handleColumnKeydown(e) {
 
   const key = e.key;
 
-  if (key === 'ArrowDown') {
-    e.preventDefault();
-    const items = getColumnItems(kbColumn);
-    if (items.length === 0) return;
-    kbIndex = (kbIndex + 1) % items.length;
-    updateKbFocus();
-    return;
-  }
-
-  if (key === 'ArrowUp') {
-    e.preventDefault();
-    const items = getColumnItems(kbColumn);
-    if (items.length === 0) return;
-    kbIndex = (kbIndex - 1 + items.length) % items.length;
-    updateKbFocus();
-    return;
-  }
-
-  if (key === 'ArrowRight') {
-    e.preventDefault();
-    if (kbColumn >= 2) return;
-    // Check if the next column has items before moving
-    const nextItems = getColumnItems(kbColumn + 1);
-    if (nextItems.length === 0) return;
-    kbColumn++;
-    kbIndex = 0;
-    updateKbFocus();
-    return;
-  }
-
-  if (key === 'ArrowLeft') {
-    e.preventDefault();
-    if (kbColumn <= 0) return;
-    kbColumn--;
-    // Try to find the parent item index (the selected item in the column we're moving to)
-    const items = getColumnItems(kbColumn);
-    const selectedItem = items.findIndex(el => el.classList.contains('col-selected'));
-    kbIndex = selectedItem >= 0 ? selectedItem : 0;
-    updateKbFocus();
-    return;
-  }
-
-  if (key === 'Enter') {
-    e.preventDefault();
-    const items = getColumnItems(kbColumn);
-    if (items.length === 0 || kbIndex >= items.length) return;
-    // Simulate click on the focused item
-    items[kbIndex].click();
-    return;
-  }
-
+  // Drill browser: Escape goes back one level
   if (key === 'Escape') {
-    if (kbColumn > 0) {
+    if (drillLevel === 'actions') {
       e.preventDefault();
-      // Move back one column (same as ArrowLeft)
-      kbColumn--;
-      const items = getColumnItems(kbColumn);
-      const selectedItem = items.findIndex(el => el.classList.contains('col-selected'));
-      kbIndex = selectedItem >= 0 ? selectedItem : 0;
-      updateKbFocus();
+      drillGoBack('milestones');
+      drillMileId = null;
+      renderDrillView();
+      return;
+    } else if (drillLevel === 'milestones') {
+      e.preventDefault();
+      drillGoBack('declarations');
+      drillDeclId = null;
+      drillMileId = null;
+      renderDrillView();
+      return;
     }
-    // If kbColumn === 0, let the event propagate (don't interfere with DAG Escape)
+    // At declarations level, let event propagate
     return;
   }
 }
 
 // Register the column browser keyboard handler
 document.addEventListener('keydown', handleColumnKeydown);
+
+// ─── Drill browser focus index ─────────────────────────────────────────────
+/** @type {number} Currently focused card index in the list (-1 = none) */
+let drillFocusIndex = -1;
+
+/** Get all drill cards in the current list view */
+function getDrillCards() {
+  return Array.from(document.querySelectorAll('#drill-list .drill-card'));
+}
+
+/** Update the visual focus ring on drill cards */
+function updateDrillFocus() {
+  const cards = getDrillCards();
+  cards.forEach((c, i) => c.classList.toggle('focused', i === drillFocusIndex));
+  if (drillFocusIndex >= 0 && drillFocusIndex < cards.length) {
+    cards[drillFocusIndex].scrollIntoView({ block: 'nearest' });
+  }
+}
+
+/** Get the focused card element, or the current-review card as fallback */
+function getFocusedCard() {
+  const cards = getDrillCards();
+  if (drillFocusIndex >= 0 && drillFocusIndex < cards.length) return cards[drillFocusIndex];
+  return document.querySelector('.drill-card.current-review');
+}
+
+// ─── Keyboard shortcuts for drill browser ────────────────────────────────────
+document.addEventListener('keydown', (e) => {
+  if (viewMode !== 'columns') return;
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+  const key = e.key;
+  const kl = key.toLowerCase();
+
+  // Arrow Up/Down — move focus in the card list
+  if (key === 'ArrowUp' || key === 'ArrowDown') {
+    e.preventDefault();
+    const cards = getDrillCards();
+    if (cards.length === 0) return;
+    if (key === 'ArrowDown') {
+      drillFocusIndex = drillFocusIndex < cards.length - 1 ? drillFocusIndex + 1 : 0;
+    } else {
+      drillFocusIndex = drillFocusIndex > 0 ? drillFocusIndex - 1 : cards.length - 1;
+    }
+    updateDrillFocus();
+    return;
+  }
+
+  // Arrow Right / Enter — drill into focused card
+  if (key === 'ArrowRight' || key === 'Enter') {
+    const card = getFocusedCard();
+    if (!card) return;
+    e.preventDefault();
+    card.click();
+    return;
+  }
+
+  // Arrow Left — go back one level
+  if (key === 'ArrowLeft') {
+    if (drillLevel === 'actions') {
+      e.preventDefault();
+      drillGoBack('milestones');
+      drillMileId = null;
+      renderDrillView();
+    } else if (drillLevel === 'milestones') {
+      e.preventDefault();
+      drillGoBack('declarations');
+      drillDeclId = null;
+      drillMileId = null;
+      renderDrillView();
+    }
+    return;
+  }
+
+  // P = Plan milestones (empty state or main Plan button)
+  if (kl === 'p') {
+    const planBtn = document.getElementById('plan-milestones-btn');
+    if (planBtn) { e.preventDefault(); planBtn.click(); return; }
+    if ($executeMainBtn && $executeMainBtn._planMode) { e.preventDefault(); $executeMainBtn.click(); return; }
+    return;
+  }
+
+  // E = Execute (main button when in execute mode)
+  if (kl === 'e') {
+    if ($executeMainBtn && !$executeMainBtn._nextTarget && !$executeMainBtn._planMode && !$executeMainBtn.disabled) {
+      e.preventDefault(); $executeMainBtn.click(); return;
+    }
+    return;
+  }
+
+  // N = Next
+  if (kl === 'n') {
+    const nextBtn = document.getElementById('drill-next-btn');
+    if (nextBtn) { e.preventDefault(); nextBtn.click(); return; }
+    if ($executeMainBtn && $executeMainBtn._nextTarget) { e.preventDefault(); $executeMainBtn.click(); return; }
+    return;
+  }
+
+  // Shift+R/W/D/A = act on detail panel entity
+  if (e.shiftKey && (kl === 'r' || kl === 'w' || kl === 'd' || kl === 'a')) {
+    const detail = document.getElementById('drill-detail');
+    if (!detail) return;
+    let btn;
+    if (kl === 'r') btn = detail.querySelector('.drill-action-btn[data-mode="outdated"]');
+    else if (kl === 'w') btn = detail.querySelector('.drill-action-btn[data-mode="write"]');
+    else if (kl === 'd') btn = detail.querySelector('.drill-action-btn[data-action="delete"]');
+    else if (kl === 'a') btn = detail.querySelector('.drill-review-btn[data-review-action="approved"]');
+    if (btn) { e.preventDefault(); btn.click(); }
+    return;
+  }
+
+  // R = Review focused card
+  if (kl === 'r') {
+    const card = getFocusedCard();
+    if (!card) return;
+    const btn = card.querySelector('.drill-action-btn[data-mode="outdated"]');
+    if (btn) { e.preventDefault(); btn.click(); }
+    return;
+  }
+
+  // W = Write on focused card
+  if (kl === 'w') {
+    const card = getFocusedCard();
+    if (!card) return;
+    const btn = card.querySelector('.drill-action-btn[data-mode="write"]');
+    if (btn) { e.preventDefault(); btn.click(); }
+    return;
+  }
+
+  // D = Delete focused card
+  if (kl === 'd') {
+    const card = getFocusedCard();
+    if (!card) return;
+    const btn = card.querySelector('.drill-action-btn[data-action="delete"]');
+    if (btn) { e.preventDefault(); btn.click(); }
+    return;
+  }
+
+  // A = Approve focused card
+  if (kl === 'a') {
+    const card = getFocusedCard();
+    if (!card) return;
+    const btn = card.querySelector('.drill-review-btn[data-review-action="approved"]');
+    if (btn) { e.preventDefault(); btn.click(); }
+    return;
+  }
+});
 
 // ─── Review badge click-to-cycle ──────────────────────────────────────────────
 
@@ -1697,13 +2766,13 @@ async function renderAnnotationPanel(nodeId, type) {
   if (annotations.length === 0 && nodeReviewState === 'revision_needed') {
     const approveHtml = `<div class="ann-approve-section">
       <div class="ann-approve-msg">All annotations resolved</div>
-      <button class="ann-approve-btn" id="ann-approve-btn">Approve</button>
+      <button class="ann-approve-btn" id="ann-approve-btn"><kbd>A</kbd> Approve</button>
     </div>`;
     el.insertAdjacentHTML('beforeend', approveHtml);
   } else if (annotations.length === 0 && nodeReviewState === 'in_review') {
     const approveHtml = `<div class="ann-approve-section">
       <div class="ann-approve-msg">No annotations — ready to approve</div>
-      <button class="ann-approve-btn" id="ann-approve-btn">Approve</button>
+      <button class="ann-approve-btn" id="ann-approve-btn"><kbd>A</kbd> Approve</button>
     </div>`;
     el.insertAdjacentHTML('beforeend', approveHtml);
   }
@@ -2444,7 +3513,7 @@ function renderPanelChain(item, type) {
       const approveActive = reviewState === 'approved' ? ' ra-active' : '';
       const revisionActive = reviewState === 'revision_needed' ? ' ra-active' : '';
       html += `<div class="review-actions" id="review-actions">
-        <button class="ra-btn ra-approve${approveActive}" data-action="approved" data-node-id="${s.item.id}">Approve</button>
+        <button class="ra-btn ra-approve${approveActive}" data-action="approved" data-node-id="${s.item.id}"><kbd>A</kbd> Approve</button>
         <button class="ra-btn ra-revision${revisionActive}" data-action="revision_needed" data-node-id="${s.item.id}">Request Revision</button>
         <span class="ra-state">Review: ${escHtml(reviewLabel)}</span>
       </div>`;
@@ -3846,7 +4915,7 @@ function handlePlayComplete(e) {
  * @param {string} declarationId
  */
 async function startDerivation(declarationId) {
-  const btn = document.getElementById('derive-btn');
+  const btn = document.getElementById('derive-btn') || document.getElementById('plan-milestones-btn');
   if (btn) {
     btn.disabled = true;
     btn.textContent = 'Deriving...';
@@ -3854,7 +4923,6 @@ async function startDerivation(declarationId) {
 
   const logEl = document.getElementById('derivation-log');
   if (logEl) {
-    logEl.style.display = '';
     logEl.innerHTML = '';
   }
 
@@ -3867,16 +4935,16 @@ async function startDerivation(declarationId) {
     const data = await res.json();
 
     if (!res.ok) {
-      if (logEl) logEl.textContent = 'Error: ' + (data.error || 'Failed to start derivation');
-      if (btn) { btn.disabled = false; btn.textContent = 'Derive Milestones'; }
+      if (logEl) { logEl.style.display = ''; logEl.textContent = 'Error: ' + (data.error || 'Failed to start derivation'); }
+      if (btn) { btn.disabled = false; btn.textContent = btn.id === 'plan-milestones-btn' ? 'Plan Milestones' : 'Derive Milestones'; }
       return;
     }
 
     derivationSessionId = data.sessionId;
     derivationProposals = null;
   } catch (err) {
-    if (logEl) logEl.textContent = 'Error: ' + err.message;
-    if (btn) { btn.disabled = false; btn.textContent = 'Derive Milestones'; }
+    if (logEl) { logEl.style.display = ''; logEl.textContent = 'Error: ' + err.message; }
+    if (btn) { btn.disabled = false; btn.textContent = btn.id === 'plan-milestones-btn' ? 'Plan Milestones' : 'Derive Milestones'; }
   }
 }
 
@@ -3890,6 +4958,7 @@ function handleDerivationOutput(e) {
     if (sessionId !== derivationSessionId) return;
     const logEl = document.getElementById('derivation-log');
     if (!logEl) return;
+    if (logEl.style.display === 'none') logEl.style.display = '';
     logEl.appendChild(document.createTextNode(text + '\n'));
     logEl.scrollTop = logEl.scrollHeight;
   } catch (_) {}
@@ -3906,12 +4975,17 @@ function handleDerivationComplete(e) {
 
     derivationSessionId = null;
 
-    const btn = document.getElementById('derive-btn');
-    if (btn) { btn.disabled = false; btn.textContent = 'Derive Milestones'; }
+    const btn = document.getElementById('derive-btn') || document.getElementById('plan-milestones-btn');
+    if (btn) {
+      if (btn._deriveTimer) { clearInterval(btn._deriveTimer); btn._deriveTimer = null; }
+      btn.disabled = false;
+      btn.innerHTML = btn.id === 'plan-milestones-btn' ? '<kbd>P</kbd> Plan Milestones' : 'Derive Milestones';
+    }
 
     if (exitCode !== 0) {
       const logEl = document.getElementById('derivation-log');
       if (logEl) {
+        logEl.style.display = '';
         const span = document.createElement('span');
         span.style.color = 'var(--broken-color)';
         span.style.fontWeight = '700';
@@ -5035,39 +6109,31 @@ function switchView(mode) {
 
   // Hide all views first
   $canvasWrap.style.display = 'none';
-  $colBrowser.classList.remove('active');
+  if ($drillBrowser) $drillBrowser.classList.remove('active');
   if ($readinessBanner) $readinessBanner.classList.remove('active');
   if ($execView) $execView.classList.remove('active');
   document.body.classList.remove('exec-mode');
+  document.body.classList.remove('dag-mode');
 
   if (mode === 'dag') {
     $canvasWrap.style.display = '';
+    document.body.classList.add('dag-mode');
     clearColumnBrowserKbFocus();
-    if ($viewToggle) {
-      $viewToggle.classList.remove('active');
-      $viewToggleLabel.textContent = 'Columns';
-    }
+    if ($viewToggle) $viewToggleLabel.innerHTML = '&#x2630;'; // hamburger = list view
     // Redraw edges since layout changed
     requestAnimationFrame(() => drawEdges());
   } else if (mode === 'columns') {
     // Exit focus mode before switching to columns
     if (focusNodeId) exitFocusMode();
-    $colBrowser.classList.add('active');
-    if ($viewToggle) {
-      $viewToggle.classList.add('active');
-      $viewToggleLabel.textContent = 'Graph';
-    }
-    // Refresh column browser data
-    renderColumnBrowser();
-    initColumnBrowserKbFocus();
+    if ($drillBrowser) $drillBrowser.classList.add('active');
+    if ($viewToggle) $viewToggleLabel.innerHTML = '&#x2B13;'; // graph icon
+    // Refresh drill browser data
+    renderDrillView();
   } else if (mode === 'execution') {
     if (focusNodeId) exitFocusMode();
     if ($execView) $execView.classList.add('active');
     document.body.classList.add('exec-mode');
-    if ($viewToggle) {
-      $viewToggle.classList.add('active');
-      $viewToggleLabel.textContent = 'Columns';
-    }
+    if ($viewToggle) $viewToggleLabel.innerHTML = '&#x2630;';
     orderConfirmed = false;
     preExecWaves = null;
     renderPreExecutionView();
@@ -5075,51 +6141,7 @@ function switchView(mode) {
   }
 }
 
-// ─── Activity topbar (DOM refs — must be before event wiring) ─────────────────
-
-const $activityTopbar = document.getElementById('activity-topbar');
-const $topbarContent  = document.getElementById('topbar-content');
-
 // ─── Event wiring ─────────────────────────────────────────────────────────────
-
-// Topbar click — navigate to the referenced action/milestone in column browser
-if ($activityTopbar) {
-  $activityTopbar.addEventListener('click', function() {
-    var actionId = $activityTopbar.dataset.actionId;
-    var milestoneId = $activityTopbar.dataset.milestoneId;
-    if (!actionId && !milestoneId) return;
-    if (!graphData) return;
-
-    // Switch to column view if not already there
-    if (viewMode !== 'columns') {
-      switchView('columns');
-    }
-
-    // Navigate: find the declaration for this milestone, then select milestone, then action
-    if (milestoneId) {
-      var milestone = (graphData.milestones || []).find(function(m) { return m.id === milestoneId; });
-      if (milestone && milestone.realizes && milestone.realizes.length) {
-        colSelectedDecl = milestone.realizes[0];
-        colSelectedMile = milestoneId;
-        renderColumnBrowser();
-        selectNode(actionId || milestoneId, actionId ? 'action' : 'milestone');
-      }
-    } else if (actionId) {
-      // Try to find the milestone from the action
-      var action = (graphData.actions || []).find(function(a) { return a.id === actionId; });
-      if (action && action.causes && action.causes.length) {
-        var mId = action.causes[0];
-        var mile = (graphData.milestones || []).find(function(m) { return m.id === mId; });
-        if (mile && mile.realizes && mile.realizes.length) {
-          colSelectedDecl = mile.realizes[0];
-        }
-        colSelectedMile = mId;
-      }
-      renderColumnBrowser();
-      selectNode(actionId, 'action');
-    }
-  });
-}
 
 // File viewer modal close handlers
 document.getElementById('file-viewer-close').addEventListener('click', closeFileViewer);
@@ -5187,9 +6209,57 @@ if ($newDeclBtn) {
   });
 }
 
-$refreshBtn.addEventListener('click', () => {
-  loadData();
-});
+if ($refreshBtn) $refreshBtn.addEventListener('click', () => { loadData(); });
+
+// Execute / Next main button
+if ($executeMainBtn) {
+  $executeMainBtn.addEventListener('click', () => {
+    const target = $executeMainBtn._nextTarget;
+    if (target) {
+      // Navigate to first unapproved item
+      if (target.action) {
+        // Find which milestone/declaration this action belongs to
+        const action = target.action;
+        const mileId = (action.causes || [])[0];
+        if (mileId && graphData) {
+          const mile = (graphData.milestones || []).find(m => m.id === mileId);
+          if (mile && mile.realizes && mile.realizes.length) {
+            drillDeclId = mile.realizes[0];
+          }
+          drillMileId = mileId;
+          drillLevel = 'actions';
+        }
+      } else if (target.mile) {
+        const mile = target.mile;
+        if (mile.realizes && mile.realizes.length) {
+          drillDeclId = mile.realizes[0];
+        }
+        drillLevel = 'milestones';
+      } else if (target.decl) {
+        drillDeclId = target.decl.id;
+        drillLevel = 'milestones';
+      }
+      if (viewMode !== 'columns') switchView('columns');
+      else renderDrillView();
+    } else if ($executeMainBtn._planMode) {
+      // Navigate to first unplanned declaration's milestones view
+      if (graphData) {
+        const { declarations, milestones, actions: acts } = graphData;
+        const enrichedM = (milestones || []).map(m => ({ ...m, ...deriveMilestoneStatus(m, acts || []) }));
+        const enrichedD = (declarations || []).map(d => ({ ...d, displayStatus: deriveDeclarationStatus(d, enrichedM) }));
+        const pending = enrichedD.find(d => d.displayStatus === 'PENDING');
+        if (pending) {
+          drillDeclId = pending.id;
+          drillLevel = 'milestones';
+          if (viewMode !== 'columns') switchView('columns');
+          else renderDrillView();
+        }
+      }
+    } else if (canEnterExecution()) {
+      switchView('execution');
+    }
+  });
+}
 
 // Play button
 const $playBtn = document.getElementById('play-btn');
@@ -5347,22 +6417,13 @@ let topbarActiveOp = null;
 let topbarLastOp = null;
 
 function updateTopbar() {
-  if (!$topbarContent) return;
+  if (!$activityPinned) return;
   if (topbarActiveOp) {
     const aLabel = topbarActiveOp.actionId;
-    const mLabel = topbarActiveOp.milestoneId ? ' -- ' + topbarActiveOp.milestoneId : '';
-    $topbarContent.innerHTML = '<span class="topbar-spinner"></span> <span class="topbar-label">EXECUTING ' + escHtml(aLabel) + escHtml(mLabel) + '</span>';
-    $activityTopbar.dataset.actionId = topbarActiveOp.actionId;
-    $activityTopbar.dataset.milestoneId = topbarActiveOp.milestoneId || '';
-  } else if (topbarLastOp) {
-    var ago = formatTimeAgo(topbarLastOp.completedAt);
-    $topbarContent.innerHTML = '<span class="topbar-idle-label">Last: ' + escHtml(topbarLastOp.actionId) + ' completed ' + ago + '</span>';
-    $activityTopbar.dataset.actionId = topbarLastOp.actionId;
-    $activityTopbar.dataset.milestoneId = topbarLastOp.milestoneId || '';
+    const mLabel = topbarActiveOp.milestoneId ? ' \u2014 ' + topbarActiveOp.milestoneId : '';
+    $activityPinned.innerHTML = '<div class="activity-pinned"><span class="pinned-spinner"></span> EXECUTING ' + escHtml(aLabel) + escHtml(mLabel) + '</div>';
   } else {
-    $topbarContent.innerHTML = '<span class="topbar-idle-label">No active operations</span>';
-    $activityTopbar.dataset.actionId = '';
-    $activityTopbar.dataset.milestoneId = '';
+    $activityPinned.innerHTML = '';
   }
 }
 
@@ -5429,44 +6490,63 @@ const $activityPulse  = document.getElementById('activity-pulse');
 const $activityToggle = document.getElementById('activity-toggle');
 let activityExpanded  = false;
 
-$activityToggle.addEventListener('click', () => {
-  activityExpanded = !activityExpanded;
-  $activityFeed.classList.toggle('expanded', activityExpanded);
-});
-
 /**
- * Fetch /api/activity and render the event list.
+ * Fetch /api/activity and render — server is single source of truth.
  */
 async function loadActivity() {
+  if (!$activityList) return;
   try {
     const res = await fetch('/api/activity');
     const { events } = await res.json();
-    if (!events || events.length === 0) return;
+
+    if (!events || events.length === 0) {
+      $activityList.innerHTML = '<div style="padding:16px;color:var(--text-muted);font-size:12px;text-align:center;">No activity yet</div>';
+      return;
+    }
 
     $activityFeed.classList.add('has-events');
 
-    const html = events.slice(0, 50).map(ev => {
+    const html = events.slice(0, 60).map(ev => {
       const time = new Date(ev.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
-      if (ev.tool === 'Task') {
-        const icon = ev.phase === 'start' ? '⟳' : '✓';
-        const cls  = ev.phase === 'start' ? 'agent-start' : 'agent-done';
-        const label = ev.phase === 'start'
-          ? `Spawning ${ev.agent || 'agent'}: ${ev.desc}`
-          : `Done: ${ev.desc}`;
-        return `<div class="activity-event"><span class="ae-time">${time}</span><span class="ae-icon">${icon}</span><span class="ae-text ${cls}">${escHtml(label)}</span></div>`;
+      let icon, label, labelClass, desc;
+
+      if (ev.tool === 'Review') {
+        icon = ev.reviewState === 'approved' ? '\u2705' : '\u270F\uFE0F';
+        label = ev.desc || `Review: ${ev.nodeId}`;
+        labelClass = 'review';
+        desc = ev.reviewState === 'approved' ? 'Marked as approved' : 'Sent back for revision';
+      } else if (ev.tool === 'Task') {
+        icon = ev.phase === 'start' ? '\u27F3' : '\u2713';
+        labelClass = ev.phase === 'start' ? 'agent-start' : 'agent-done';
+        label = ev.phase === 'start' ? `Spawning ${ev.agent || 'agent'}` : 'Done';
+        desc = ev.desc || '';
+      } else if (ev.tool === 'Bash') {
+        icon = '\u25B6';
+        label = 'Command';
+        labelClass = 'bash';
+        desc = ev.cmd || '';
+      } else if (ev.tool === 'Write') {
+        icon = '\u270E';
+        label = 'Write';
+        labelClass = 'write';
+        desc = ev.file || '';
+      } else {
+        return '';
       }
-      if (ev.tool === 'Bash') {
-        const icon = ev.phase === 'start' ? '▶' : '■';
-        return `<div class="activity-event"><span class="ae-time">${time}</span><span class="ae-icon" style="opacity:0.5">${icon}</span><span class="ae-text bash">${escHtml(ev.cmd || '')}</span></div>`;
-      }
-      if (ev.tool === 'Write') {
-        return `<div class="activity-event"><span class="ae-time">${time}</span><span class="ae-icon" style="opacity:0.5">✎</span><span class="ae-text write">${escHtml(ev.file || '')}</span></div>`;
-      }
-      return '';
+
+      return `<div class="activity-event">
+        <div class="ae-top">
+          <span class="ae-icon">${icon}</span>
+          <span class="ae-label ${labelClass}">${escHtml(label)}</span>
+          <span style="flex:1"></span>
+          <span class="ae-time">${time}</span>
+        </div>
+        ${desc ? `<div class="ae-desc">${escHtml(desc)}</div>` : ''}
+      </div>`;
     }).filter(Boolean).join('');
 
-    $activityList.innerHTML = html || $activityList.innerHTML;
+    $activityList.innerHTML = html;
 
     // Flash pulse
     $activityPulse.classList.add('live');
@@ -5657,6 +6737,78 @@ function connectSSE() {
   });
   es.addEventListener('pipeline-resumed', function(e) {
     hideFailureModal();
+  });
+  es.addEventListener('refine-output', function(e) {
+    try {
+      const data = JSON.parse(e.data);
+      if (!refineActiveNodeId || data.nodeId !== refineActiveNodeId.toUpperCase()) return;
+      const area = document.getElementById(`refine-area-${refineActiveNodeId}`);
+      if (!area) return;
+      const streaming = area.querySelector('.refine-streaming');
+      if (streaming) {
+        if (streaming.textContent === 'Thinking...') streaming.textContent = '';
+        streaming.textContent += data.text;
+      }
+    } catch (_) {}
+  });
+  es.addEventListener('refine-complete', function(e) {
+    try {
+      const data = JSON.parse(e.data);
+      if (!refineActiveNodeId || data.nodeId !== refineActiveNodeId.toUpperCase()) return;
+      const nId = refineActiveNodeId;
+      refineActiveNodeId = null;
+      const area = document.getElementById(`refine-area-${nId}`);
+      if (!area) return;
+
+      // Use suggestion from event, or fall back to streamed text already in the area
+      let suggestion = data.suggestion || '';
+      if (!suggestion) {
+        const streaming = area.querySelector('.refine-streaming');
+        const streamedText = streaming ? streaming.textContent || '' : '';
+        if (streamedText && streamedText !== 'Thinking...') suggestion = streamedText;
+      }
+
+      // Handle errors
+      if (data.exitCode !== 0 && !suggestion) {
+        const errMsg = data.error || 'Refine process failed (exit code ' + data.exitCode + ')';
+        area.innerHTML = `<div class="refine-area" style="border-color:var(--broken-color)"><div class="refine-streaming">${escHtml(errMsg)}</div>
+          <div class="refine-actions"><button class="refine-discard" id="refine-dismiss-${nId}">Dismiss</button></div></div>`;
+        area.querySelector(`#refine-dismiss-${nId}`).addEventListener('click', () => { area.innerHTML = ''; });
+        return;
+      }
+
+      // Parse the suggestion for title/statement
+      const titleMatch = suggestion.match(/\*\*Title:\*\*\s*(.+)/);
+      const stmtMatch = suggestion.match(/\*\*Statement:\*\*\s*(.+)/);
+      const newTitle = titleMatch ? titleMatch[1].trim() : '';
+      const newStmt = stmtMatch ? stmtMatch[1].trim() : '';
+      if (suggestion.includes('LGTM') || suggestion.includes('up-to-date') || suggestion.includes('no changes')) {
+        area.innerHTML = `<div class="refine-area"><div class="refine-streaming">${escHtml(suggestion)}</div>
+          <div class="refine-actions"><button class="refine-discard" id="refine-dismiss-${nId}">Dismiss</button></div></div>`;
+        area.querySelector(`#refine-dismiss-${nId}`).addEventListener('click', () => { area.innerHTML = ''; });
+      } else {
+        area.innerHTML = `<div class="refine-area"><div class="refine-streaming">${escHtml(suggestion)}</div>
+          <div class="refine-actions">
+            <button class="refine-accept" id="refine-accept-${nId}">Accept</button>
+            <button class="refine-discard" id="refine-dismiss-${nId}">Discard</button>
+          </div></div>`;
+        area.querySelector(`#refine-accept-${nId}`).addEventListener('click', async () => {
+          try {
+            await fetch('/api/refine/accept', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ nodeId: nId, title: newTitle, statement: newStmt }),
+            });
+            area.innerHTML = '';
+            loadData().then(() => renderDrillView());
+            loadActivity();
+          } catch (err) {
+            console.error('Accept failed:', err);
+          }
+        });
+        area.querySelector(`#refine-dismiss-${nId}`).addEventListener('click', () => { area.innerHTML = ''; });
+      }
+    } catch (_) {}
   });
   es.addEventListener('error', () => {
     // Connection dropped — reconnect after 3s

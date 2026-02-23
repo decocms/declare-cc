@@ -8,84 +8,96 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg: #0e0e12;
-      --surface: #16161e;
-      --surface2: #1e1e2a;
-      --border: #2a2a38;
-      --text: #c8c8d8;
-      --text-dim: #6e6e88;
-      --text-bright: #e8e8f0;
+      /* ── Mesh/Deco-inspired dark palette ── */
+      --bg: #111111;
+      --surface: #1a1a1a;
+      --surface2: #222222;
+      --surface3: #2a2a2a;
+      --border: rgba(255,255,255,0.08);
+      --border-strong: rgba(255,255,255,0.14);
+      --text: #d4d4d4;
+      --text-dim: #999999;
+      --text-bright: #f5f5f5;
+      --text-muted: #6b6b6b;
 
-      --decl-color: #4a9eff;
-      --decl-bg: #0d2240;
-      --decl-border: #1a4880;
+      /* Brand accent — deco lime green */
+      --accent: #d0ec1a;
+      --accent-dim: rgba(208, 236, 26, 0.12);
+      --accent-border: rgba(208, 236, 26, 0.25);
 
-      --mile-color: #a66bff;
-      --mile-bg: #1a0d33;
-      --mile-border: #3d1f6e;
+      --decl-color: #93c5fd;
+      --decl-bg: rgba(147, 197, 253, 0.06);
+      --decl-border: rgba(147, 197, 253, 0.15);
 
-      --act-color: #34d399;
-      --act-bg: #0a2018;
-      --act-border: #1a4d34;
+      --mile-color: #a595ff;
+      --mile-bg: rgba(165, 149, 255, 0.06);
+      --mile-border: rgba(165, 149, 255, 0.15);
 
-      /* done tones — dimmed hue-specific variants, not grey */
-      --decl-done-color: #4a7ab8;
-      --decl-done-bg: #0a1c2e;
-      --decl-done-border: #163454;
+      --act-color: #86efac;
+      --act-bg: rgba(134, 239, 172, 0.06);
+      --act-border: rgba(134, 239, 172, 0.15);
 
-      --mile-done-color: #7050b8;
-      --mile-done-bg: #130c28;
-      --mile-done-border: #251848;
+      /* done tones */
+      --decl-done-color: #6b96c8;
+      --decl-done-bg: rgba(107, 150, 200, 0.05);
+      --decl-done-border: rgba(107, 150, 200, 0.10);
 
-      --act-done-color: #26906a;
-      --act-done-bg: #08180f;
-      --act-done-border: #123428;
+      --mile-done-color: #8878c0;
+      --mile-done-bg: rgba(136, 120, 192, 0.05);
+      --mile-done-border: rgba(136, 120, 192, 0.10);
+
+      --act-done-color: #5cb88a;
+      --act-done-bg: rgba(92, 184, 138, 0.05);
+      --act-done-border: rgba(92, 184, 138, 0.10);
 
       /* workflow progress tones */
-      --planned-color:   #5ba3ff;
-      --planned-bg:      #091828;
-      --planned-border:  #12305a;
+      --planned-color:   #93c5fd;
+      --planned-bg:      rgba(147, 197, 253, 0.06);
+      --planned-border:  rgba(147, 197, 253, 0.15);
 
       --executing-color: #fbbf24;
-      --executing-bg:    #1a1200;
-      --executing-border:#3d2c00;
+      --executing-bg:    rgba(251, 191, 36, 0.06);
+      --executing-border: rgba(251, 191, 36, 0.18);
 
-      --broken-color: #ff4d6d;
-      --broken-bg: #2a0a10;
-      --broken-border: #5a1520;
+      --broken-color: #f87171;
+      --broken-bg: rgba(248, 113, 113, 0.06);
+      --broken-border: rgba(248, 113, 113, 0.18);
 
       /* integrity wholeness indicators */
-      --integrity-whole: #34d399;
-      --integrity-whole-glow: rgba(52, 211, 153, 0.25);
+      --integrity-whole: #86efac;
+      --integrity-whole-glow: rgba(134, 239, 172, 0.2);
       --integrity-partial: #fbbf24;
-      --integrity-partial-glow: rgba(251, 191, 36, 0.25);
-      --integrity-broken: #ff4d6d;
-      --integrity-broken-glow: rgba(255, 77, 109, 0.25);
+      --integrity-partial-glow: rgba(251, 191, 36, 0.2);
+      --integrity-broken: #f87171;
+      --integrity-broken-glow: rgba(248, 113, 113, 0.2);
 
-      /* wholeness border indicators */
-      --wholeness-whole: #34d399;
+      --wholeness-whole: #86efac;
       --wholeness-partial: #fbbf24;
-      --wholeness-broken: #ff4d6d;
+      --wholeness-broken: #f87171;
 
-      --renegotiated-color: #ffa040;
-      --renegotiated-bg: #251400;
-      --renegotiated-border: #5a3000;
+      --renegotiated-color: #fbbf24;
+      --renegotiated-bg: rgba(251, 191, 36, 0.06);
+      --renegotiated-border: rgba(251, 191, 36, 0.18);
 
       --panel-width: 360px;
-      --status-bar-height: 52px;
-      --topbar-height: 28px;
+      --status-bar-height: 48px;
+      --topbar-height: 0px;
+      --radius: 6px;
+      --radius-lg: 10px;
     }
 
     body {
       background: var(--bg);
       color: var(--text);
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-      font-size: 13px;
+      font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 14px;
       line-height: 1.5;
       height: 100vh;
       display: flex;
       flex-direction: column;
       overflow: hidden;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
     }
 
     /* ── Status bar ── */
@@ -95,7 +107,7 @@
       border-bottom: 1px solid var(--border);
       display: flex;
       align-items: center;
-      gap: 24px;
+      gap: 0;
       padding: 0 20px;
       flex-shrink: 0;
       position: relative;
@@ -106,7 +118,39 @@
       font-weight: 600;
       font-size: 14px;
       color: var(--text-bright);
-      margin-right: 8px;
+      letter-spacing: -0.01em;
+      cursor: pointer;
+      transition: color 0.15s;
+    }
+    #status-bar .project-name:hover { color: var(--accent); }
+
+    /* Breadcrumb inline in status bar */
+    #status-breadcrumb {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-left: 0;
+      font-size: 13px;
+    }
+    #status-breadcrumb .bc-sep {
+      color: var(--text-muted);
+      font-size: 11px;
+    }
+    #status-breadcrumb .bc-link {
+      color: var(--text-dim);
+      cursor: pointer;
+      font-weight: 500;
+      transition: color 0.15s;
+    }
+    #status-breadcrumb .bc-link:hover { color: var(--text-bright); }
+    #status-breadcrumb .bc-current {
+      color: var(--text-bright);
+      font-weight: 600;
+    }
+    #status-breadcrumb .bc-title {
+      color: var(--text-dim);
+      font-size: 12px;
+      font-weight: 400;
     }
 
     .stat-group {
@@ -135,7 +179,24 @@
     .health-errors   { background: #2a0a10; color: #ff4d6d; border: 1px solid #5a1520; }
     .health-unknown  { background: var(--surface2); color: var(--text-dim); border: 1px solid var(--border); }
 
+    .status-pill {
+      font-size: 11px;
+      font-weight: 500;
+      padding: 2px 10px;
+      border-radius: 99px;
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      white-space: nowrap;
+    }
+    .status-pill .pill-value {
+      font-weight: 600;
+    }
+    .status-pill.integrity-ok .pill-value { color: var(--integrity-whole); }
+    .status-pill.integrity-warn .pill-value { color: var(--integrity-partial); }
+    .status-pill.integrity-bad .pill-value { color: var(--integrity-broken); }
+
     .spacer { flex: 1; }
+    /* Status bar uses margin-left:auto on .status-right instead of spacer */
 
     #last-updated {
       color: var(--text-dim);
@@ -143,41 +204,78 @@
       white-space: nowrap;
     }
 
-    #refresh-btn {
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      color: var(--text);
-      padding: 5px 14px;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: 12px;
-      transition: background 0.15s, border-color 0.15s;
-    }
-    #refresh-btn:hover { background: #252535; border-color: #3a3a50; }
-    #refresh-btn:active { transform: scale(0.97); }
-
     #view-toggle {
-      background: var(--surface2);
+      background: transparent;
       border: 1px solid var(--border);
-      color: var(--text);
-      padding: 5px 14px;
-      border-radius: 6px;
+      color: var(--text-dim);
+      width: 28px;
+      height: 28px;
+      border-radius: var(--radius);
       cursor: pointer;
-      font-size: 12px;
-      transition: background 0.15s, border-color 0.15s;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s ease;
+      padding: 0;
+      margin-left: 10px;
+      flex-shrink: 0;
     }
-    #view-toggle:hover { background: #252535; border-color: #3a3a50; }
+    #view-toggle:hover { background: var(--surface2); color: var(--text); border-color: var(--border-strong); }
     #view-toggle:active { transform: scale(0.97); }
-    #view-toggle.active {
-      background: var(--decl-bg);
-      border-color: var(--decl-border);
-      color: var(--decl-color);
+
+    /* Right side: integrity + next/execute */
+    .status-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-left: auto;
+      flex-shrink: 0;
     }
+
+    #execute-main-btn {
+      background: var(--accent-dim);
+      border: 1px solid var(--accent-border);
+      color: var(--accent);
+      padding: 6px 18px;
+      border-radius: var(--radius);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      transition: all 0.15s ease;
+      white-space: nowrap;
+    }
+    #execute-main-btn:hover { background: rgba(208, 236, 26, 0.18); border-color: rgba(208, 236, 26, 0.4); }
+    #execute-main-btn:active { transform: scale(0.97); }
+    #execute-main-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    #execute-main-btn kbd {
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 3px;
+      padding: 1px 5px;
+      font-size: 10px;
+      margin-right: 3px;
+      vertical-align: baseline;
+    }
+    #execute-main-btn.btn-next {
+      background: var(--surface2);
+      border-color: var(--border-strong);
+      color: var(--text);
+    }
+    #execute-main-btn.btn-next:hover { background: var(--surface3); }
+    #execute-main-btn.btn-plan {
+      background: var(--accent-dim);
+      border-color: var(--accent-border);
+      color: var(--accent);
+    }
+    #execute-main-btn.btn-plan:hover { background: rgba(208, 236, 26, 0.18); border-color: rgba(208, 236, 26, 0.4); }
 
     /* ── Main layout ── */
     #main {
       flex: 1;
       overflow: hidden;
+      display: flex;
+      flex-direction: column;
     }
 
     /* ── Canvas area — reserve space for fixed sidebar ── */
@@ -666,38 +764,30 @@
     }
     #focus-hint.visible { opacity: 1; }
     /* ── Activity feed ── */
+    /* ── Activity sidebar (right panel in drill-body) ── */
     #activity-feed {
-      position: fixed;
-      bottom: 0;
-      left: 0;
-      right: var(--panel-width);
-      height: 36px;
+      width: 280px;
+      flex-shrink: 0;
       background: var(--surface);
-      border-top: 1px solid var(--border);
+      border-left: 1px solid var(--border);
       display: flex;
-      align-items: center;
+      flex-direction: column;
       overflow: hidden;
-      z-index: 20;
-      transition: height 0.2s ease;
     }
-    #activity-feed.expanded { height: 180px; align-items: flex-start; }
-    #activity-feed.has-events { border-top-color: var(--act-border); }
 
     #activity-toggle {
       flex-shrink: 0;
-      padding: 0 12px;
+      padding: 12px 16px 8px;
       font-size: 10px;
       font-weight: 700;
       letter-spacing: 0.06em;
+      text-transform: uppercase;
       color: var(--text-dim);
-      cursor: pointer;
-      user-select: none;
       display: flex;
       align-items: center;
       gap: 6px;
-      height: 36px;
+      border-bottom: 1px solid var(--border);
     }
-    #activity-toggle:hover { color: var(--text-bright); }
     #activity-pulse {
       width: 6px; height: 6px;
       border-radius: 50%;
@@ -715,34 +805,64 @@
       flex: 1;
       overflow-y: auto;
       overflow-x: hidden;
-      padding: 0 8px;
-      font-size: 11px;
-      font-family: monospace;
+      padding: 8px 0;
+      font-size: 12px;
       display: flex;
       flex-direction: column;
       gap: 0;
     }
-    #activity-feed:not(.expanded) #activity-list { flex-direction: row; align-items: center; gap: 16px; overflow: hidden; white-space: nowrap; }
+    #activity-list::-webkit-scrollbar { width: 4px; }
+    #activity-list::-webkit-scrollbar-track { background: transparent; }
+    #activity-list::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 2px; }
 
     .activity-event {
-      padding: 4px 0;
+      padding: 8px 16px;
       color: var(--text-dim);
-      border-bottom: 1px solid var(--surface2);
       display: flex;
-      align-items: baseline;
-      gap: 8px;
+      flex-direction: column;
+      gap: 3px;
       flex-shrink: 0;
+      border-bottom: 1px solid rgba(255,255,255,0.03);
+      transition: background 0.15s;
     }
-    #activity-feed:not(.expanded) .activity-event { border: none; padding: 0; }
+    .activity-event:hover { background: var(--surface2); }
     .activity-event:last-child { border-bottom: none; }
+    .activity-event.is-new {
+      animation: activity-flash 1.5s ease-out;
+    }
+    @keyframes activity-flash {
+      0% { background: rgba(134, 239, 172, 0.08); }
+      100% { background: transparent; }
+    }
 
-    .ae-time { opacity: 0.4; font-size: 10px; flex-shrink: 0; }
-    .ae-icon { flex-shrink: 0; }
-    .ae-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .ae-text.agent-start { color: var(--act-color); font-weight: 600; }
-    .ae-text.agent-done  { color: var(--mile-color); }
-    .ae-text.bash        { color: var(--text-dim); }
-    .ae-text.write       { color: var(--decl-color); }
+    .ae-top {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .ae-time { opacity: 0.5; font-size: 11px; flex-shrink: 0; font-family: 'SF Mono', 'Fira Code', monospace; }
+    .ae-icon { flex-shrink: 0; font-size: 12px; }
+    .ae-label {
+      font-size: 12px;
+      font-weight: 600;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .ae-label.agent-start { color: var(--act-color); }
+    .ae-label.agent-done  { color: var(--mile-color); }
+    .ae-label.bash        { color: var(--text); }
+    .ae-label.write       { color: var(--decl-color); }
+    .ae-label.review      { color: var(--accent); }
+    .ae-desc {
+      font-size: 12px;
+      color: var(--text-dim);
+      line-height: 1.4;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      padding-left: 18px;
+    }
 
     /* ── Execute/Stop button ── */
     .exec-btn {
@@ -809,101 +929,611 @@
       50% { box-shadow: 0 0 0 3px var(--executing-color), 0 0 24px rgba(251,191,36,0.35); }
     }
 
-    /* ── Column browser ── */
-    #column-browser {
-      display: none; /* hidden by default, A-84 adds toggle */
+    /* ── Drill browser — 3-panel layout ── */
+    #drill-browser {
+      display: none;
       width: 100%;
-      height: 100%;
-      padding-right: var(--panel-width);
+      flex: 1;
+      min-height: 0;
+      flex-direction: column;
     }
-
-    #column-browser.active {
+    #drill-browser.active {
       display: flex;
     }
 
-    .col-panel {
-      flex: 1;
-      min-width: 0;
-      height: 100%;
-      overflow-y: auto;
-      border-right: 1px solid var(--border);
-      padding: 12px 0;
+    #drill-breadcrumb {
+      display: none; /* breadcrumb now lives in status bar */
     }
-    .col-panel:last-child { border-right: none; }
 
-    .col-panel-header {
-      font-size: 10px;
+    /* 3-panel body: left detail + center list + right activity */
+    #drill-body {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+
+    /* Left detail panel — shown at level 2+ */
+    #drill-detail {
+      width: 280px;
+      flex-shrink: 0;
+      overflow-y: auto;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      padding: 20px;
+      display: none;
+      flex-direction: column;
+      gap: 16px;
+    }
+    #drill-detail.visible { display: flex; }
+    #drill-detail[data-node-type="declaration"] {
+      background: linear-gradient(180deg, rgba(134, 239, 172, 0.04) 0%, var(--surface) 40%);
+      border-right-color: rgba(134, 239, 172, 0.12);
+    }
+    #drill-detail[data-node-type="declaration"] .detail-id { color: var(--act-color); }
+    #drill-detail[data-node-type="milestone"] {
+      background: linear-gradient(180deg, rgba(165, 149, 255, 0.04) 0%, var(--surface) 40%);
+      border-right-color: rgba(165, 149, 255, 0.12);
+    }
+    #drill-detail[data-node-type="milestone"] .detail-id { color: var(--mile-color); }
+    #drill-detail[data-node-type="action"] {
+      background: linear-gradient(180deg, rgba(147, 197, 253, 0.04) 0%, var(--surface) 40%);
+      border-right-color: rgba(147, 197, 253, 0.12);
+    }
+    #drill-detail[data-node-type="action"] .detail-id { color: var(--decl-color); }
+    #drill-detail::-webkit-scrollbar { width: 4px; }
+    #drill-detail::-webkit-scrollbar-track { background: transparent; }
+    #drill-detail::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 2px; }
+
+    .detail-id {
+      font-size: 11px;
       font-weight: 700;
-      letter-spacing: 0.12em;
+      letter-spacing: 0.04em;
       text-transform: uppercase;
       color: var(--text-dim);
-      padding: 0 16px 10px;
-      border-bottom: 1px solid var(--border);
-      margin-bottom: 4px;
     }
-
-    .col-item {
-      padding: 10px 16px;
-      cursor: pointer;
-      border-left: 3px solid transparent;
-      transition: background 0.12s;
-      display: flex;
-      flex-direction: column;
-      gap: 3px;
-    }
-    .col-item:hover { background: var(--surface2); }
-    .col-item.col-selected {
-      background: var(--surface2);
-      border-left-color: currentColor;
-    }
-
-    .col-item-id {
-      font-size: 10px;
+    .detail-title {
+      font-size: 18px;
       font-weight: 700;
-      letter-spacing: 0.06em;
-      opacity: 0.6;
-    }
-    .col-item-title {
-      font-size: 12px;
-      font-weight: 500;
       color: var(--text-bright);
       line-height: 1.35;
+      letter-spacing: -0.01em;
     }
-    .col-item-desc {
-      font-size: 11px;
-      color: var(--text-mid);
-      line-height: 1.3;
-      display: block;
-      margin-top: 1px;
+    .detail-desc {
+      font-size: 13px;
+      color: var(--text);
+      line-height: 1.6;
     }
-    .col-item-meta {
+    .detail-desc:empty { display: none; }
+    .detail-badges {
       display: flex;
       align-items: center;
       gap: 6px;
-      margin-top: 2px;
+      flex-wrap: wrap;
+    }
+    .detail-section-label {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin-top: 4px;
+    }
+    .detail-meta {
+      font-size: 12px;
+      color: var(--text);
+      line-height: 1.5;
+    }
+    .detail-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: auto;
+      padding-top: 12px;
+      border-top: 1px solid var(--border);
     }
 
-    /* Column items inherit type coloring via parent class */
-    .col-panel-decl .col-item { color: var(--decl-color); }
-    .col-panel-mile .col-item { color: var(--mile-color); }
-    .col-panel-act .col-item  { color: var(--act-color); }
+    /* Center list panel */
+    #drill-center {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      min-width: 0;
+    }
 
-    .col-panel-decl .col-item.col-selected { border-left-color: var(--decl-color); }
-    .col-panel-mile .col-item.col-selected { border-left-color: var(--mile-color); }
-    .col-panel-act .col-item.col-selected  { border-left-color: var(--act-color); }
+    #drill-context {
+      padding: 12px 24px;
+      font-size: 13px;
+      color: var(--text-dim);
+      line-height: 1.6;
+      flex-shrink: 0;
+      background: var(--bg);
+    }
+    #drill-context:empty { display: none; padding: 0; }
 
-    /* Wholeness indicators on column items */
-    .col-item.wholeness-whole   .col-item-id::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--wholeness-whole); margin-right: 5px; vertical-align: middle; }
-    .col-item.wholeness-partial .col-item-id::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--wholeness-partial); margin-right: 5px; vertical-align: middle; }
-    .col-item.wholeness-broken  .col-item-id::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--wholeness-broken); margin-right: 5px; vertical-align: middle; }
+    #drill-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 24px 32px;
+      background: var(--bg);
+    }
+    #drill-list::-webkit-scrollbar { width: 5px; }
+    #drill-list::-webkit-scrollbar-track { background: transparent; }
+    #drill-list::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
+
+    .drill-cards {
+      max-width: 640px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    /* ── Card item ── */
+    .drill-card {
+      background: var(--surface);
+      border: 1px solid transparent;
+      border-radius: var(--radius-lg);
+      padding: 18px 20px;
+      cursor: pointer;
+      transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.2s ease;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .drill-card:hover {
+      background: var(--surface2);
+      border-color: var(--border-strong);
+      box-shadow: 0 2px 12px rgba(0,0,0,0.15);
+    }
+    .drill-card.needs-review {
+      /* No border — blends into background until focused */
+    }
+    .drill-card.focused {
+      background: var(--surface2);
+      border-color: var(--border-strong);
+      box-shadow: inset 2px 0 0 var(--accent);
+    }
+    .drill-card.current-review {
+      border-color: var(--card-tint-border, var(--accent-border));
+      box-shadow: inset 3px 0 0 var(--card-tint, var(--accent)), 0 0 0 1px var(--card-tint-border, var(--accent-border)), 0 4px 16px var(--card-tint-glow, rgba(208, 236, 26, 0.08));
+    }
+
+    /* ── Node-type tint colors on cards ── */
+    .drill-cards[data-node-type="declaration"] .drill-card {
+      --card-tint: #86efac;
+      --card-tint-border: rgba(134, 239, 172, 0.25);
+      --card-tint-glow: rgba(134, 239, 172, 0.08);
+      background: linear-gradient(135deg, rgba(134, 239, 172, 0.03) 0%, var(--surface) 60%);
+    }
+    .drill-cards[data-node-type="declaration"] .drill-card .drill-card-id {
+      color: var(--act-color);
+    }
+    .drill-cards[data-node-type="milestone"] .drill-card {
+      --card-tint: #a595ff;
+      --card-tint-border: rgba(165, 149, 255, 0.25);
+      --card-tint-glow: rgba(165, 149, 255, 0.08);
+      background: linear-gradient(135deg, rgba(165, 149, 255, 0.03) 0%, var(--surface) 60%);
+    }
+    .drill-cards[data-node-type="milestone"] .drill-card .drill-card-id {
+      color: var(--mile-color);
+    }
+    .drill-cards[data-node-type="action"] .drill-card {
+      --card-tint: #93c5fd;
+      --card-tint-border: rgba(147, 197, 253, 0.25);
+      --card-tint-glow: rgba(147, 197, 253, 0.08);
+      background: linear-gradient(135deg, rgba(147, 197, 253, 0.03) 0%, var(--surface) 60%);
+    }
+    .drill-cards[data-node-type="action"] .drill-card .drill-card-id {
+      color: var(--decl-color);
+    }
+
+    /* Hover state preserves tint gradient */
+    .drill-cards[data-node-type="declaration"] .drill-card:hover {
+      background: linear-gradient(135deg, rgba(134, 239, 172, 0.06) 0%, var(--surface2) 60%);
+    }
+    .drill-cards[data-node-type="milestone"] .drill-card:hover {
+      background: linear-gradient(135deg, rgba(165, 149, 255, 0.06) 0%, var(--surface2) 60%);
+    }
+    .drill-cards[data-node-type="action"] .drill-card:hover {
+      background: linear-gradient(135deg, rgba(147, 197, 253, 0.06) 0%, var(--surface2) 60%);
+    }
+
+    /* Current-review card gets stronger tint */
+    .drill-cards[data-node-type="declaration"] .drill-card.current-review {
+      background: linear-gradient(135deg, rgba(134, 239, 172, 0.06) 0%, var(--surface2) 60%);
+    }
+    .drill-cards[data-node-type="milestone"] .drill-card.current-review {
+      background: linear-gradient(135deg, rgba(165, 149, 255, 0.06) 0%, var(--surface2) 60%);
+    }
+    .drill-cards[data-node-type="action"] .drill-card.current-review {
+      background: linear-gradient(135deg, rgba(147, 197, 253, 0.06) 0%, var(--surface2) 60%);
+    }
+    .drill-card.current-review .drill-review-btn.approve-btn {
+      background: rgba(134, 239, 172, 0.10);
+      border-color: rgba(134, 239, 172, 0.35);
+      color: #86efac;
+    }
+    .drill-card.current-review .drill-review-btn.revision-btn {
+      background: rgba(248, 113, 113, 0.06);
+      border-color: rgba(248, 113, 113, 0.2);
+      color: #f87171;
+    }
+
+    .drill-card-top {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+    }
+    .drill-card-id {
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      flex-shrink: 0;
+      padding-top: 2px;
+      color: var(--text-dim);
+    }
+    .drill-card-body {
+      flex: 1;
+      min-width: 0;
+    }
+    .drill-card-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-bright);
+      line-height: 1.4;
+      letter-spacing: -0.01em;
+      margin-bottom: 4px;
+    }
+    .drill-card-desc {
+      font-size: 13px;
+      color: var(--text);
+      line-height: 1.5;
+      margin-bottom: 8px;
+    }
+    .drill-card-desc:empty { display: none; margin: 0; }
+
+    .drill-card-badges {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .drill-card-stat {
+      font-size: 12px;
+      color: var(--text);
+      font-weight: 400;
+    }
+    .drill-card-stat strong {
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    /* Card-level status pill */
+    .drill-status-pill {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 99px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+    }
+    .drill-status-pill.s-done     { background: var(--act-bg); border-color: var(--act-border); color: var(--act-color); }
+    .drill-status-pill.s-executing { background: var(--executing-bg); border-color: var(--executing-border); color: var(--executing-color); }
+    .drill-status-pill.s-planned  { background: var(--planned-bg); border-color: var(--planned-border); color: var(--planned-color); }
+    .drill-status-pill.s-pending  { background: rgba(255,255,255,0.03); color: var(--text-dim); }
+
+    /* ── Card review actions (centered below content) ── */
+    .drill-card-actions {
+      display: flex;
+      gap: 8px;
+      padding-top: 8px;
+      border-top: 1px solid var(--border);
+    }
+    .drill-review-btn {
+      flex: 1;
+      padding: 8px 14px;
+      border-radius: var(--radius);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid var(--border-strong);
+      background: transparent;
+      color: var(--text);
+      transition: all 0.15s ease;
+      text-align: center;
+    }
+    .drill-review-btn kbd, .drill-action-btn kbd {
+      display: inline-block;
+      padding: 0 5px;
+      border: 1px solid var(--border-strong);
+      border-radius: 3px;
+      font-size: 10px;
+      font-family: inherit;
+      font-weight: 700;
+      color: var(--text-dim);
+      background: var(--surface2);
+      margin-right: 2px;
+      vertical-align: baseline;
+    }
+    .drill-review-btn:hover, .drill-action-btn:hover {
+      background: var(--surface2);
+      border-color: var(--border-strong);
+      color: var(--text);
+    }
+    .drill-review-btn.approve-btn:hover {
+      background: rgba(134, 239, 172, 0.08);
+      border-color: rgba(134, 239, 172, 0.3);
+      color: #86efac;
+    }
+
+    /* ── Flat action bar buttons ── */
+    .drill-action-btn {
+      padding: 6px 12px;
+      border-radius: var(--radius);
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text-dim);
+      transition: all 0.15s ease;
+    }
+    .drill-action-btn:hover {
+      background: var(--surface2);
+      border-color: var(--border-strong);
+      color: var(--text);
+    }
+    .drill-action-btn.drill-action-danger {
+      color: var(--text-dim);
+    }
+    .drill-action-btn.drill-action-danger:hover {
+      background: rgba(248,113,113,0.08);
+      border-color: rgba(248,113,113,0.3);
+      color: #f87171;
+    }
+
+    /* ── Refine suggestion inline area ── */
+    .refine-area {
+      margin-top: 8px;
+      padding: 10px;
+      border: 1px solid var(--accent-border);
+      border-radius: var(--radius);
+      background: rgba(208,236,26,0.03);
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--text);
+    }
+    .refine-area .refine-streaming {
+      white-space: pre-wrap;
+      min-height: 24px;
+    }
+    .refine-area .refine-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .refine-area .refine-accept {
+      padding: 5px 12px;
+      border-radius: var(--radius);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid rgba(134,239,172,0.3);
+      background: rgba(134,239,172,0.08);
+      color: #86efac;
+    }
+    .refine-area .refine-discard {
+      padding: 5px 12px;
+      border-radius: var(--radius);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid var(--border-strong);
+      background: transparent;
+      color: var(--text-dim);
+    }
+    .refine-write-input {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius);
+      background: var(--surface2);
+      color: var(--text);
+      font-size: 13px;
+      font-family: inherit;
+      resize: vertical;
+      min-height: 40px;
+      margin-bottom: 6px;
+    }
+    .refine-write-input:focus {
+      outline: none;
+      border-color: var(--accent-border);
+    }
+
+    /* Expandable exec-plan preview */
+    .drill-exec-plan-toggle {
+      font-size: 11px;
+      color: var(--text-muted);
+      cursor: pointer;
+      padding: 2px 0;
+      user-select: none;
+      font-weight: 500;
+      transition: color 0.12s;
+    }
+    .drill-exec-plan-toggle:hover { color: var(--text); }
+    .drill-exec-plan-content {
+      display: none;
+      margin-top: 6px;
+      padding: 12px 14px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 11px;
+      line-height: 1.6;
+      color: var(--text-dim);
+      max-height: 200px;
+      overflow-y: auto;
+    }
+    .drill-exec-plan-content.open { display: block; }
+
+    /* ── Bottom prompt bar ── */
+    #drill-prompt {
+      padding: 14px 24px;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      flex-shrink: 0;
+      font-size: 13px;
+    }
+    .drill-prompt-text {
+      color: var(--text);
+    }
+    .drill-prompt-text .drill-prompt-target {
+      color: var(--accent);
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .drill-prompt-text .drill-prompt-target:hover { text-decoration: underline; }
+    .drill-prompt-complete {
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .drill-next-btn {
+      background: var(--accent-dim);
+      border: 1px solid var(--accent-border);
+      color: var(--accent);
+      padding: 6px 16px;
+      border-radius: var(--radius);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      margin-left: 12px;
+      transition: all 0.15s ease;
+    }
+    .drill-next-btn:hover { background: rgba(208, 236, 26, 0.18); }
+    .drill-next-btn kbd {
+      display: inline-block;
+      padding: 0 5px;
+      border: 1px solid var(--accent-border);
+      border-radius: 3px;
+      font-size: 10px;
+      font-family: inherit;
+      font-weight: 700;
+      color: var(--accent);
+      background: rgba(208, 236, 26, 0.08);
+      margin-right: 2px;
+    }
 
     .col-empty {
-      padding: 20px 16px;
-      color: var(--text-dim);
-      font-size: 12px;
-      opacity: 0.5;
-      font-style: italic;
+      padding: 40px 20px;
+      color: var(--text-muted);
+      font-size: 13px;
+      text-align: center;
     }
+
+    .col-empty-invite {
+      padding: 60px 32px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+    .empty-invite-title {
+      color: var(--text);
+      font-size: 15px;
+      font-weight: 600;
+    }
+    .empty-invite-desc {
+      color: var(--text-muted);
+      font-size: 13px;
+      max-width: 320px;
+      line-height: 1.5;
+    }
+    .empty-invite-input {
+      width: 100%;
+      max-width: 320px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 12px;
+      padding: 8px 10px;
+      resize: vertical;
+      font-family: inherit;
+    }
+    .empty-invite-input:focus {
+      outline: none;
+      border-color: var(--accent-border);
+    }
+    .empty-invite-input::placeholder {
+      color: var(--text-muted);
+      opacity: 0.6;
+    }
+    .empty-invite-btn {
+      background: var(--accent-dim);
+      border: 1px solid var(--accent-border);
+      color: var(--accent);
+      padding: 8px 20px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .empty-invite-btn:hover {
+      background: rgba(208, 236, 26, 0.18);
+      border-color: rgba(208, 236, 26, 0.4);
+    }
+    .empty-invite-btn kbd {
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 3px;
+      padding: 1px 5px;
+      font-size: 11px;
+      margin-right: 4px;
+    }
+    .col-empty-invite .output-log {
+      width: 100%;
+      max-width: 420px;
+      text-align: left;
+    }
+    .col-empty-invite .derivation-checklist {
+      text-align: left;
+      width: 100%;
+      max-width: 420px;
+    }
+    .derive-spinner {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border: 2px solid rgba(208,236,26,0.3);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: derive-spin 0.8s linear infinite;
+      vertical-align: middle;
+      margin-right: 4px;
+    }
+    @keyframes derive-spin {
+      to { transform: rotate(360deg); }
+    }
+    .derive-elapsed {
+      opacity: 0.5;
+      font-size: 11px;
+      font-weight: 400;
+    }
+
+    /* Hide side panel in drill browser mode */
+    body:not(.dag-mode) #side-panel { display: none; }
+    body.dag-mode #side-panel { display: flex; }
+    body.dag-mode #activity-feed { display: none; }
 
     /* ── Declaration form ── */
     .decl-form-trigger {
@@ -1634,24 +2264,21 @@
     .ref-save-btn:hover { opacity: 0.9; }
     .ref-save-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-    /* ── Activity topbar ── */
-    #activity-topbar {
-      height: 28px;
-      background: var(--bg);
-      border-bottom: 1px solid var(--border);
+    /* ── Activity pinned operation (at top of activity feed) ── */
+    .activity-pinned {
+      padding: 10px 16px;
+      background: var(--executing-bg);
+      border-bottom: 1px solid var(--executing-border);
       display: flex;
       align-items: center;
-      padding: 0 16px;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--executing-color);
+      font-weight: 600;
+      letter-spacing: 0.02em;
       flex-shrink: 0;
-      z-index: 15;
-      font-size: 11px;
-      color: var(--text-dim);
-      gap: 10px;
-      cursor: pointer;
-      user-select: none;
     }
-    #activity-topbar:hover { background: var(--surface); }
-    .topbar-spinner {
+    .activity-pinned .pinned-spinner {
       width: 10px;
       height: 10px;
       border: 2px solid var(--border);
@@ -1659,21 +2286,6 @@
       border-radius: 50%;
       animation: spin 0.7s linear infinite;
       flex-shrink: 0;
-    }
-    .topbar-label {
-      font-weight: 600;
-      color: var(--executing-color);
-      letter-spacing: 0.04em;
-    }
-    .topbar-idle-label {
-      font-weight: 500;
-      color: var(--text-dim);
-      opacity: 0.6;
-    }
-    .topbar-detail {
-      color: var(--text-dim);
-      font-size: 10px;
-      opacity: 0.5;
     }
 
     /* ── Classification toggle buttons ── */
@@ -1778,22 +2390,21 @@
     /* ── Review state badges ── */
     .review-badge {
       display: inline-block;
-      padding: 1px 6px;
-      border-radius: 8px;
-      font-size: 9px;
-      font-weight: 700;
-      letter-spacing: 0.04em;
+      padding: 2px 7px;
+      border-radius: 99px;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
       text-transform: uppercase;
       cursor: pointer;
       user-select: none;
-      margin-left: 4px;
       transition: opacity 0.15s;
     }
     .review-badge:hover { opacity: 0.8; }
-    .review-draft           { background: #e0e0e0; color: #666; border: 1px solid #ccc; }
-    .review-in_review       { background: #dbeafe; color: #1d4ed8; border: 1px solid #93c5fd; }
-    .review-revision_needed { background: #ffedd5; color: #c2410c; border: 1px solid #fdba74; }
-    .review-approved        { background: #dcfce7; color: #15803d; border: 1px solid #86efac; }
+    .review-draft           { background: rgba(255,255,255,0.05); color: var(--text-dim); border: 1px solid var(--border); }
+    .review-in_review       { background: rgba(147,197,253,0.1); color: #93c5fd; border: 1px solid rgba(147,197,253,0.25); }
+    .review-revision_needed { background: rgba(251,191,36,0.1); color: #fbbf24; border: 1px solid rgba(251,191,36,0.25); }
+    .review-approved        { background: rgba(134,239,172,0.1); color: #86efac; border: 1px solid rgba(134,239,172,0.25); }
 
     /* ── Annotation panel ── */
     .annotation-panel {
@@ -2164,20 +2775,21 @@
     .rb-link:hover { opacity: 0.8; }
     .rb-more { color: var(--text-dim); font-size: 12px; }
     .enter-exec-btn {
-      margin-left: auto;
-      padding: 6px 16px;
+      margin-left: 8px;
+      padding: 7px 20px;
       border: none;
-      border-radius: 4px;
+      border-radius: var(--radius);
       font-weight: 600;
       font-size: 13px;
       cursor: pointer;
-      background: var(--act-color);
-      color: #fff;
-      transition: opacity 0.15s;
+      background: var(--accent);
+      color: #111;
+      transition: opacity 0.15s, transform 0.1s;
     }
-    .enter-exec-btn:hover:not(:disabled) { opacity: 0.85; }
+    .enter-exec-btn:hover:not(:disabled) { opacity: 0.9; transform: translateY(-1px); }
+    .enter-exec-btn:active:not(:disabled) { transform: scale(0.98); }
     .enter-exec-btn:disabled {
-      opacity: 0.4;
+      opacity: 0.3;
       cursor: not-allowed;
     }
 
@@ -2558,30 +3170,28 @@
 </head>
 <body>
 
-<!-- Activity topbar — persistent strip showing current running operation -->
-<div id="activity-topbar">
-  <span class="topbar-idle-label" id="topbar-content">No active operations</span>
-</div>
-
-<!-- Status bar -->
+<!-- Status bar — project name + breadcrumb + nav | integrity + next/execute -->
 <div id="status-bar">
   <span class="project-name" id="project-name">Declare</span>
-  <span class="stat-group"><span class="value" id="stat-decls">–</span> Declarations</span>
-  <span class="stat-group"><span class="value" id="stat-miles">–</span> Milestones</span>
-  <span class="stat-group"><span class="value" id="stat-acts">–</span> Actions</span>
-  <span id="health-badge" class="health-badge health-unknown">–</span>
-  <span class="spacer"></span>
-  <button id="new-decl-btn" class="new-decl-btn">+ Declaration</button>
-  <button id="play-btn" class="play-btn" title="Execute all ready agent milestones in dependency order">Play All</button>
-  <span id="last-updated"></span>
-  <button id="view-toggle" class="active" title="Switch view">
-    <span id="view-toggle-label">Graph</span>
+  <div id="status-breadcrumb"></div>
+  <button id="view-toggle" title="Toggle graph view">
+    <span id="view-toggle-label">&#x2B13;</span>
   </button>
-  <button id="refresh-btn">Refresh</button>
+  <div class="status-right">
+    <span class="status-pill" id="integrity-pill"><span class="pill-value">–</span></span>
+    <button id="execute-main-btn">Next</button>
+  </div>
+  <button id="new-decl-btn" class="new-decl-btn" style="display:none">+ Declaration</button>
+  <button id="play-btn" class="play-btn" title="Execute all ready agent milestones in dependency order" style="display:none">Play All</button>
 </div>
-
-<!-- Workflow next-step banner -->
-<div id="workflow-banner">
+<!-- Hidden stat/compat elements -->
+<span id="stat-decls" style="display:none">0</span>
+<span id="stat-miles" style="display:none">0</span>
+<span id="stat-acts" style="display:none">0</span>
+<span id="health-badge" style="display:none"></span>
+<span id="last-updated" style="display:none"></span>
+<!-- Legacy workflow banner (hidden, rendered inside status bar now) -->
+<div id="workflow-banner" style="display:none">
   <span class="wf-state-label" id="wf-state-label"></span>
   <div class="wf-progress-bar"><div class="wf-progress-fill" id="wf-progress-fill"></div></div>
   <span class="wf-pct" id="wf-pct"></span>
@@ -2616,28 +3226,30 @@
     </div>
   </div>
 
-  <!-- Readiness banner — shows approval progress above column browser -->
+  <!-- Readiness banner — hidden, replaced by drill prompts -->
   <div id="readiness-banner"></div>
 
-  <!-- Column browser — Finder-style D→M→A navigation (hidden until toggled) -->
-  <div id="column-browser" class="active">
-    <div class="col-panel col-panel-decl" id="col-declarations">
-      <div class="col-panel-header" style="display:flex;align-items:center;gap:8px">
-        <span>Declarations</span>
-        <button class="decl-form-trigger" id="col-decl-add-btn" title="New declaration">+</button>
+  <!-- Drill browser — 3-panel drill-down: detail | list | activity -->
+  <div id="drill-browser" class="active">
+    <div id="drill-breadcrumb"></div>
+    <div id="drill-body">
+      <div id="drill-detail"></div>
+      <div id="drill-center">
+        <div id="drill-context"></div>
+        <div id="drill-list"></div>
+        <div id="drill-prompt"></div>
       </div>
-      <div id="decl-form-container"></div>
-      <div id="col-decl-list"></div>
-    </div>
-    <div class="col-panel col-panel-mile" id="col-milestones">
-      <div class="col-panel-header">Milestones</div>
-      <div id="col-mile-list"></div>
-    </div>
-    <div class="col-panel col-panel-act" id="col-actions">
-      <div class="col-panel-header">Actions</div>
-      <div id="col-act-list"></div>
     </div>
   </div>
+
+  <!-- Legacy column browser elements (hidden, kept for DOM ref compat) -->
+  <div id="column-browser" style="display:none">
+    <div id="col-decl-list"></div>
+    <div id="col-mile-list"></div>
+    <div id="col-act-list"></div>
+  </div>
+  <div id="decl-form-container" style="display:none"></div>
+  <button id="col-decl-add-btn" style="display:none"></button>
 
   <!-- Execution view — CI pipeline layout with live output panel -->
   <div id="execution-view">
@@ -2685,14 +3297,15 @@
   </div>
 </div>
 
-<!-- Activity feed — live agent/tool event stream -->
+<!-- Activity feed placeholder (moved into drill-body via JS) -->
 <div id="activity-feed">
+  <div id="activity-pinned"></div>
   <div id="activity-toggle">
     <div id="activity-pulse"></div>
     <span id="activity-label">ACTIVITY</span>
   </div>
   <div id="activity-list">
-    <span style="color:var(--text-dim);font-size:10px;opacity:0.4">No activity yet — agents will appear here when running</span>
+    <div style="padding:16px;color:var(--text-muted);font-size:11px;text-align:center;">No activity yet</div>
   </div>
 </div>
 
@@ -2717,6 +3330,6 @@
   </div>
 </div>
 
-<script src="/public/app.js"></script>
+<script src="/public/app.js?v=2"></script>
 </body>
 </html>

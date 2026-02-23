@@ -20,15 +20,18 @@ const { DeclareDag } = require('../graph/engine');
 
 /**
  * Load actions from all milestone folder PLAN.md files.
+ * Also collects milestone-level produces fields.
  *
  * @param {string} planningDir - Path to .planning directory
- * @returns {Array<{id: string, title: string, status: string, produces: string, causes: string[]}>}
+ * @returns {{ actions: Array<{id: string, title: string, status: string, produces: string, causes: string[]}>, milestoneProduces: Record<string, string> }}
  */
 function loadActionsFromFolders(planningDir) {
   const milestonesDir = join(planningDir, 'milestones');
-  if (!existsSync(milestonesDir)) return [];
+  if (!existsSync(milestonesDir)) return { actions: [], milestoneProduces: {} };
 
   const allActions = [];
+  /** @type {Record<string, string>} */
+  const milestoneProduces = {};
   const entries = readdirSync(milestonesDir, { withFileTypes: true });
 
   for (const entry of entries) {
@@ -37,7 +40,11 @@ function loadActionsFromFolders(planningDir) {
     if (!existsSync(planPath)) continue;
 
     const content = readFileSync(planPath, 'utf-8');
-    const { milestone, actions } = parsePlanFile(content);
+    const { milestone, actions, produces } = parsePlanFile(content);
+
+    if (milestone && produces) {
+      milestoneProduces[milestone] = produces;
+    }
 
     for (const action of actions) {
       allActions.push({
@@ -51,7 +58,7 @@ function loadActionsFromFolders(planningDir) {
     }
   }
 
-  return allActions;
+  return { actions: allActions, milestoneProduces };
 }
 
 /**
@@ -79,7 +86,20 @@ function buildDagFromDisk(cwd) {
 
   const declarations = parseFutureFile(futureContent);
   const { milestones } = parseMilestonesFile(milestonesContent);
-  const actions = loadActionsFromFolders(planningDir);
+  const { actions: allLoadedActions, milestoneProduces } = loadActionsFromFolders(planningDir);
+
+  // Filter actions to only those whose parent milestone is in MILESTONES.md
+  const milestoneIds = new Set(milestones.map(m => m.id.toUpperCase()));
+  const actions = allLoadedActions.filter(a =>
+    a.causes.some(c => milestoneIds.has(c.toUpperCase()))
+  );
+
+  // Merge milestone-level produces from PLAN.md into milestone records
+  for (const m of milestones) {
+    if (milestoneProduces[m.id]) {
+      m.produces = milestoneProduces[m.id];
+    }
+  }
 
   // Build the DAG
   const dag = new DeclareDag();
@@ -92,6 +112,7 @@ function buildDagFromDisk(cwd) {
   for (const m of milestones) {
     dag.addNode(m.id, 'milestone', m.title, m.status || 'PENDING', {
       description: m.description || '',
+      produces: m.produces || '',
       classification: m.classification || 'agent',
       dependsOn: m.dependsOn || [],
       reviewState: m.reviewState || 'draft',

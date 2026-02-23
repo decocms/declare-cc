@@ -9,8 +9,10 @@
 
 ### A-75: Add mesh registration to the local server
 **Status:** PENDING
+**Review:** approved
 **Produces:** On server start, POST to mesh daemon announcing project name, port, and health endpoint; deregister on stop
 
 ### A-76: Add health and metadata endpoint
 **Status:** PENDING
+**Review:** approved
 **Produces:** GET /api/meta returning project name, port, dashboard URL, and git remote for mesh discovery

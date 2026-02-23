@@ -44,7 +44,7 @@ const { buildDagFromDisk } = require('../commands/build-dag');
 const { computeWorkabilityPath, VALID_REVIEW_STATES } = require('../graph/engine');
 const { findMilestoneFolder } = require('../artifacts/milestone-folders');
 const { parseFutureFile, writeFutureFile } = require('../artifacts/future');
-const { parsePlanFile, writePlanFile } = require('../artifacts/plan');
+const { parsePlanFile, writePlanFile, updateActionStatus } = require('../artifacts/plan');
 const { parseMilestonesFile, writeMilestonesFile } = require('../artifacts/milestones');
 const { computeWorkflowState } = require('../commands/workflow-state');
 const { createPlayRunner } = require('../commands/play');
@@ -156,6 +156,7 @@ function sendFile(res, filePath) {
     res.writeHead(200, {
       'Content-Type': contentType,
       'Content-Length': data.length,
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
     });
     res.end(data);
   });
@@ -899,6 +900,22 @@ async function handleUpdateReviewState(req, res, cwd, nodeId) {
       return;
     }
 
+    // Log review action to activity.jsonl
+    try {
+      const activityFile = path.join(cwd, '.planning', 'activity.jsonl');
+      const entry = {
+        ts: new Date().toISOString(),
+        tool: 'Review',
+        phase: 'end',
+        desc: body.reviewState === 'approved'
+          ? `Approved ${nodeId}`
+          : `Revision needed: ${nodeId}`,
+        nodeId,
+        reviewState: body.reviewState,
+      };
+      fs.appendFileSync(activityFile, JSON.stringify(entry) + '\n');
+    } catch (_) { /* non-critical */ }
+
     sendJson(res, 200, result);
     broadcastChange();
   } catch (err) {
@@ -1369,6 +1386,388 @@ function handleReviseStop(res, cwd) {
   }
 }
 
+// ─── Refine (contextual AI suggestion) ───────────────────────────────────────
+
+/** @type {{ sessionId: string, proc: import('child_process').ChildProcess, nodeId: string, suggestion: string } | null} */
+let refineSession = null;
+
+/**
+ * Build a contextual prompt for refining a node.
+ * Includes the node, its parent, and its siblings.
+ * @param {string} nodeId
+ * @param {object} graph
+ * @param {string} [mode='general'] - Refine mode: 'write','outdated','sharpen','consolidate','expand'
+ * @param {string} [userMessage=''] - User-provided direction (for 'write' mode)
+ */
+function buildRefinePrompt(nodeId, graph, mode, userMessage) {
+  const id = nodeId.toUpperCase();
+  const prefix = id.split('-')[0];
+
+  let nodeContent = '';
+  let parentContent = '';
+  let siblingsContent = '';
+  let nodeType = '';
+
+  if (prefix === 'D') {
+    nodeType = 'declaration';
+    const decl = graph.declarations.find(d => d.id.toUpperCase() === id);
+    if (!decl) return null;
+    nodeContent = `${decl.id}: ${decl.title}\nStatement: ${decl.statement || decl.title}`;
+    // Siblings = all other declarations
+    siblingsContent = graph.declarations
+      .filter(d => d.id !== decl.id)
+      .map(d => `${d.id}: ${d.title}`)
+      .join('\n');
+    parentContent = 'This is a top-level declaration (no parent).';
+  } else if (prefix === 'M') {
+    nodeType = 'milestone';
+    const mile = graph.milestones.find(m => m.id.toUpperCase() === id);
+    if (!mile) return null;
+    nodeContent = `${mile.id}: ${mile.title}\nProduces: ${mile.produces || '(none)'}`;
+    // Parent = the declaration(s) it realizes
+    const parentDecls = graph.declarations.filter(d => (mile.realizes || []).some(r => r === d.id));
+    parentContent = parentDecls.map(d => `${d.id}: ${d.title}\nStatement: ${d.statement || d.title}`).join('\n\n');
+    // Siblings = other milestones realizing the same declarations
+    const siblingMiles = graph.milestones.filter(m => m.id !== mile.id && (mile.realizes || []).some(r => (m.realizes || []).includes(r)));
+    siblingsContent = siblingMiles.map(m => `${m.id}: ${m.title} [${m.status}]`).join('\n');
+  } else if (prefix === 'A') {
+    nodeType = 'action';
+    const action = graph.actions.find(a => a.id.toUpperCase() === id);
+    if (!action) return null;
+    nodeContent = `${action.id}: ${action.title}\nProduces: ${action.produces || '(none)'}`;
+    // Parent = the milestone(s) it causes
+    const parentMiles = graph.milestones.filter(m => (action.causes || []).includes(m.id));
+    parentContent = parentMiles.map(m => `${m.id}: ${m.title}\nProduces: ${m.produces || '(none)'}`).join('\n\n');
+    // Siblings = other actions for the same milestone
+    const milestoneIds = action.causes || [];
+    const siblingActions = graph.actions.filter(a => a.id !== action.id && (a.causes || []).some(c => milestoneIds.includes(c)));
+    siblingsContent = siblingActions.map(a => `${a.id}: ${a.title} [${a.status}]`).join('\n');
+  }
+
+  const modeInstructions = {
+    write: `The user wants to refine this ${nodeType} with specific direction:\n\n"${userMessage || ''}"\n\nApply their feedback to improve the title and statement/produces. Keep the same format and scope level.`,
+    outdated: `Check if this ${nodeType} is still relevant given the current state of its parent and siblings. Some siblings may already be DONE. Consider:\n- Has progress on siblings made this redundant?\n- Does the title/statement still accurately describe what's needed?\n- Should this be reworded to reflect current reality?`,
+    sharpen: `Make this ${nodeType} more specific and actionable. Consider:\n- Is the title vague or generic? Make it concrete.\n- Does the statement/produces describe a clear, verifiable outcome?\n- Could someone read this and know exactly what "done" looks like?`,
+    consolidate: `Check if this ${nodeType} overlaps with its siblings. Consider:\n- Are any siblings covering the same ground?\n- Could this be merged with a sibling for clarity?\n- Is this a subset of another sibling?\n\nIf overlap exists, suggest how to differentiate or merge. If no overlap, say so.`,
+    expand: `This ${nodeType} may be too broad. Consider:\n- Could it be broken into 2-3 more specific items?\n- Are there implicit sub-tasks hiding in the description?\n- Would splitting improve clarity and trackability?\n\nSuggest a breakdown if warranted. If it's already well-scoped, say so.`,
+  };
+
+  const taskBlock = modeInstructions[mode] || `Analyze this ${nodeType} in the context of its parent and siblings. Consider:
+- Is it well-scoped? Too broad or too narrow compared to siblings?
+- Does it overlap with any sibling?
+- Does it clearly contribute to its parent's goal?
+- Is the title/statement clear and specific?`;
+
+  return `You are reviewing a Declare project artifact and suggesting improvements.
+
+## This ${nodeType}
+
+${nodeContent}
+
+## Parent context
+
+${parentContent}
+
+## Sibling ${nodeType === 'declaration' ? 'declarations' : nodeType === 'milestone' ? 'milestones' : 'actions'}
+
+${siblingsContent || '(none)'}
+
+## Task
+
+${taskBlock}
+
+If improvements are possible, suggest a revised version. Output ONLY the improved text in this format:
+
+**Title:** <improved title>
+**Statement:** <improved statement or produces>
+**Reason:** <one sentence explaining why this is better>
+
+If the current version is already good, output exactly: LGTM — no changes needed.`;
+}
+
+/**
+ * Handle POST /api/node/:id/refine
+ * Spawns Claude to suggest contextual improvements.
+ */
+async function handleRefine(req, res, cwd, nodeId) {
+  try {
+    if (refineSession) {
+      sendJson(res, 409, { error: 'A refine session is already running' });
+      return;
+    }
+
+    const body = await readJsonBody(req).catch(() => ({}));
+    const mode = body.mode || 'general';
+    const userMessage = body.message || '';
+
+    const graph = runLoadGraph(cwd);
+    if ('error' in graph) {
+      sendJson(res, 500, { error: graph.error });
+      return;
+    }
+
+    const prompt = buildRefinePrompt(nodeId, graph, mode, userMessage);
+    if (!prompt) {
+      sendJson(res, 404, { error: 'Node not found: ' + nodeId });
+      return;
+    }
+
+    const sessionId = `refine-${Date.now()}`;
+    const { spawn } = require('node:child_process');
+    const spawnEnv = { ...process.env, FORCE_COLOR: '0' };
+    delete spawnEnv.CLAUDECODE;
+    const proc = spawn('claude', ['-p', prompt, '--output-format', 'text'], {
+      cwd,
+      env: spawnEnv,
+    });
+
+    const activityFile = path.join(cwd, '.planning', 'activity.jsonl');
+    refineSession = { sessionId, proc, nodeId: nodeId.toUpperCase(), suggestion: '', stderr: '' };
+
+    // Stream output via SSE
+    if (proc.stdout) {
+      proc.stdout.on('data', (chunk) => {
+        const text = chunk.toString();
+        if (refineSession) refineSession.suggestion += text;
+        const payload = `event: refine-output\ndata: ${JSON.stringify({ sessionId, nodeId: nodeId.toUpperCase(), text })}\n\n`;
+        for (const client of sseClients) {
+          try { client.write(payload); } catch (_) { sseClients.delete(client); }
+        }
+      });
+    }
+
+    if (proc.stderr) {
+      proc.stderr.on('data', (chunk) => {
+        if (refineSession) refineSession.stderr += chunk.toString();
+      });
+    }
+
+    proc.on('close', (exitCode) => {
+      const suggestion = refineSession ? refineSession.suggestion : '';
+      const stderrText = refineSession ? refineSession.stderr : '';
+      const nId = refineSession ? refineSession.nodeId : nodeId.toUpperCase();
+      refineSession = null;
+      if (stderrText) console.error(`[refine ${nId}] stderr:`, stderrText.slice(0, 500));
+      const payload = `event: refine-complete\ndata: ${JSON.stringify({ sessionId, nodeId: nId, exitCode, suggestion, error: exitCode !== 0 ? stderrText.slice(0, 500) : undefined })}\n\n`;
+      for (const client of sseClients) {
+        try { client.write(payload); } catch (_) { sseClients.delete(client); }
+      }
+      // Log completion in activity
+      const phase = exitCode === 0 ? 'done' : 'error';
+      const desc = exitCode === 0
+        ? `Review of ${nId} complete` + (suggestion.includes('LGTM') ? ' — no changes needed' : ' — suggestion ready')
+        : `Review of ${nId} failed (exit ${exitCode})`;
+      const doneEntry = { ts: new Date().toISOString(), tool: 'Task', phase, agent: 'Refine', desc };
+      try { fs.appendFileSync(activityFile, JSON.stringify(doneEntry) + '\n'); } catch (_) {}
+    });
+
+    // Log activity
+    const entry = { ts: new Date().toISOString(), tool: 'Task', phase: 'start', agent: 'Refine', desc: `Analyzing ${nodeId.toUpperCase()} for improvements` };
+    fs.appendFileSync(activityFile, JSON.stringify(entry) + '\n');
+
+    sendJson(res, 202, { ok: true, sessionId });
+  } catch (err) {
+    sendJson(res, 500, { error: String(err) });
+  }
+}
+
+function handleRefineStop(res) {
+  if (!refineSession) {
+    sendJson(res, 404, { error: 'No refine session running' });
+    return;
+  }
+  try { refineSession.proc.kill(); } catch (_) {}
+  refineSession = null;
+  sendJson(res, 200, { ok: true });
+}
+
+async function handleRefineAccept(req, res, cwd) {
+  try {
+    const body = await readJsonBody(req);
+    const { nodeId, title, statement } = body;
+    if (!nodeId) {
+      sendJson(res, 400, { error: 'Missing nodeId' });
+      return;
+    }
+
+    const id = nodeId.toUpperCase();
+    const prefix = id.split('-')[0];
+    const planningDir = path.join(cwd, '.planning');
+
+    if (prefix === 'D') {
+      // Update declaration in FUTURE.md
+      const futurePath = path.join(planningDir, 'FUTURE.md');
+      const content = fs.readFileSync(futurePath, 'utf-8');
+      const declarations = parseFutureFile(content);
+      const decl = declarations.find(d => d.id === id);
+      if (decl) {
+        if (title) decl.title = title;
+        if (statement) decl.statement = statement;
+        const projectNameMatch = content.match(/^# Future:\\s*(.+)/m);
+        const projectName = projectNameMatch ? projectNameMatch[1].trim() : 'Project';
+        fs.writeFileSync(futurePath, writeFutureFile(declarations, projectName), 'utf-8');
+      }
+    } else if (prefix === 'M') {
+      // Update milestone title in MILESTONES.md
+      const msPath = path.join(planningDir, 'MILESTONES.md');
+      const content = fs.readFileSync(msPath, 'utf-8');
+      const { milestones } = parseMilestonesFile(content);
+      const mile = milestones.find(m => m.id === id);
+      if (mile && title) {
+        mile.title = title;
+        const projectNameMatch = content.match(/^# Milestones:\\s*(.+)/m);
+        const projectName = projectNameMatch ? projectNameMatch[1].trim() : 'Project';
+        fs.writeFileSync(msPath, writeMilestonesFile(milestones, projectName), 'utf-8');
+      }
+    }
+    // TODO: handle action title updates in PLAN.md
+
+    // Log activity
+    const activityFile = path.join(cwd, '.planning', 'activity.jsonl');
+    const entry = { ts: new Date().toISOString(), tool: 'Review', phase: 'end', desc: `Refined ${id}`, nodeId: id, reviewState: 'approved' };
+    fs.appendFileSync(activityFile, JSON.stringify(entry) + '\n');
+
+    sendJson(res, 200, { ok: true });
+  } catch (err) {
+    sendJson(res, 500, { error: String(err) });
+  }
+}
+
+/**
+ * Handle POST /api/node/:id/archive — mark node as DONE + approved.
+ */
+function handleArchiveNode(res, cwd, nodeId) {
+  const id = nodeId.toUpperCase();
+  const prefix = id.split('-')[0];
+  const planningDir = path.join(cwd, '.planning');
+
+  try {
+    if (prefix === 'D') {
+      const futurePath = path.join(planningDir, 'FUTURE.md');
+      const content = fs.readFileSync(futurePath, 'utf-8');
+      const declarations = parseFutureFile(content);
+      const decl = declarations.find(d => d.id === id);
+      if (decl) {
+        decl.status = 'DONE';
+        decl.reviewState = 'approved';
+        const projectNameMatch = content.match(/^# Future:\s*(.+)/m);
+        const projectName = projectNameMatch ? projectNameMatch[1].trim() : 'Project';
+        fs.writeFileSync(futurePath, writeFutureFile(declarations, projectName), 'utf-8');
+      }
+    } else if (prefix === 'M') {
+      const msPath = path.join(planningDir, 'MILESTONES.md');
+      const content = fs.readFileSync(msPath, 'utf-8');
+      const { milestones } = parseMilestonesFile(content);
+      const mile = milestones.find(m => m.id === id);
+      if (mile) {
+        mile.status = 'DONE';
+        mile.reviewState = 'approved';
+        const projectNameMatch = content.match(/^# Milestones:\s*(.+)/m);
+        const projectName = projectNameMatch ? projectNameMatch[1].trim() : 'Project';
+        fs.writeFileSync(msPath, writeMilestonesFile(milestones, projectName), 'utf-8');
+      }
+    } else if (prefix === 'A') {
+      // Mark action as DONE in its PLAN.md
+      // findMilestoneFolder imported at top level
+      // Find which milestone this action belongs to
+      const graph = runLoadGraph(cwd);
+      if (!('error' in graph)) {
+        const action = graph.actions.find(a => a.id.toUpperCase() === id);
+        if (action) {
+          for (const mId of (action.causes || [])) {
+            const folder = findMilestoneFolder(planningDir, mId);
+            if (folder) {
+              const planPath = path.join(folder, 'PLAN.md');
+              if (fs.existsSync(planPath)) {
+                const content = fs.readFileSync(planPath, 'utf-8');
+                const updated = updateActionStatus(content, id, 'DONE');
+                fs.writeFileSync(planPath, updated, 'utf-8');
+              }
+            }
+          }
+        }
+      }
+    }
+
+    const activityFile = path.join(planningDir, 'activity.jsonl');
+    const entry = { ts: new Date().toISOString(), tool: 'Review', phase: 'end', desc: `Archived ${id}`, nodeId: id };
+    fs.appendFileSync(activityFile, JSON.stringify(entry) + '\n');
+    const payload = `event: change\ndata: ${JSON.stringify({ reason: 'archive', nodeId: id })}\n\n`;
+    for (const client of sseClients) { try { client.write(payload); } catch (_) { sseClients.delete(client); } }
+    sendJson(res, 200, { ok: true });
+  } catch (err) {
+    sendJson(res, 500, { error: String(err) });
+  }
+}
+
+/**
+ * Handle DELETE /api/node/:id — remove node from project.
+ */
+function handleDeleteNode(res, cwd, nodeId) {
+  const id = nodeId.toUpperCase();
+  const prefix = id.split('-')[0];
+  const planningDir = path.join(cwd, '.planning');
+
+  try {
+    if (prefix === 'D') {
+      const futurePath = path.join(planningDir, 'FUTURE.md');
+      const content = fs.readFileSync(futurePath, 'utf-8');
+      const declarations = parseFutureFile(content);
+      const filtered = declarations.filter(d => d.id !== id);
+      if (filtered.length === declarations.length) {
+        sendJson(res, 404, { error: 'Declaration not found: ' + id });
+        return;
+      }
+      const projectNameMatch = content.match(/^# Future:\s*(.+)/m);
+      const projectName = projectNameMatch ? projectNameMatch[1].trim() : 'Project';
+      fs.writeFileSync(futurePath, writeFutureFile(filtered, projectName), 'utf-8');
+    } else if (prefix === 'M') {
+      const msPath = path.join(planningDir, 'MILESTONES.md');
+      const content = fs.readFileSync(msPath, 'utf-8');
+      const { milestones } = parseMilestonesFile(content);
+      const filtered = milestones.filter(m => m.id !== id);
+      if (filtered.length === milestones.length) {
+        sendJson(res, 404, { error: 'Milestone not found: ' + id });
+        return;
+      }
+      const projectNameMatch = content.match(/^# Milestones:\s*(.+)/m);
+      const projectName = projectNameMatch ? projectNameMatch[1].trim() : 'Project';
+      fs.writeFileSync(msPath, writeMilestonesFile(filtered, projectName), 'utf-8');
+    } else if (prefix === 'A') {
+      // Remove action from PLAN.md — replace section with empty
+      // findMilestoneFolder imported at top level
+      const graph = runLoadGraph(cwd);
+      if (!('error' in graph)) {
+        const action = graph.actions.find(a => a.id.toUpperCase() === id);
+        if (action) {
+          for (const mId of (action.causes || [])) {
+            const folder = findMilestoneFolder(planningDir, mId);
+            if (folder) {
+              const planPath = path.join(folder, 'PLAN.md');
+              if (fs.existsSync(planPath)) {
+                let content = fs.readFileSync(planPath, 'utf-8');
+                // Remove the ### A-XX section
+                const regex = new RegExp(`### ${id}:[\\s\\S]*?(?=### |$)`, 'i');
+                content = content.replace(regex, '');
+                fs.writeFileSync(planPath, content, 'utf-8');
+              }
+            }
+          }
+        }
+      }
+    }
+
+    const activityFile = path.join(planningDir, 'activity.jsonl');
+    const entry = { ts: new Date().toISOString(), tool: 'Review', phase: 'end', desc: `Deleted ${id}`, nodeId: id };
+    fs.appendFileSync(activityFile, JSON.stringify(entry) + '\n');
+    const payload2 = `event: change\ndata: ${JSON.stringify({ reason: 'delete', nodeId: id })}\n\n`;
+    for (const client of sseClients) { try { client.write(payload2); } catch (_) { sseClients.delete(client); } }
+    sendJson(res, 200, { ok: true });
+  } catch (err) {
+    sendJson(res, 500, { error: String(err) });
+  }
+}
+
 /**
  * Route an incoming request to the appropriate handler.
  *
@@ -1612,6 +2011,13 @@ function route(req, res, cwd) {
     return;
   }
 
+  // DELETE /api/node/:id — generic node delete
+  const nodeDeleteMatch = method === 'DELETE' && urlPath.match(/^\/api\/node\/([^/]+)$/);
+  if (nodeDeleteMatch) {
+    handleDeleteNode(res, cwd, nodeDeleteMatch[1]);
+    return;
+  }
+
   // POST routes — action execution
   if (method === 'POST') {
     const executeMatch = urlPath.match(/^\/api\/action\/([^/]+)\/execute$/);
@@ -1665,14 +2071,53 @@ function route(req, res, cwd) {
     }
 
     // Play routes: POST /api/play, POST /api/play/stop
+    // Pipeline runner (manifest-driven) is preferred; play runner is fallback
     if (urlPath === '/api/play') {
-      const pr = getPlayRunner(cwd);
-      const result = pr.start();
-      if (result.error) {
-        const status = result.unapproved ? 403 : 409;
-        sendJson(res, status, { error: result.error, ...(result.unapproved && { unapproved: result.unapproved }) });
+      const manifestPath = path.join(cwd, '.planning', 'execution-manifest.json');
+      const hasManifest = fs.existsSync(manifestPath);
+
+      if (hasManifest) {
+        // Approval gate: check all in-scope actions are approved before pipeline start
+        const graph = runLoadGraph(cwd);
+        if ('error' in graph) {
+          sendJson(res, 500, { error: graph.error });
+          return;
+        }
+        const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+        const actionIds = new Set();
+        for (const wave of manifest.waves || []) {
+          for (const m of wave.milestones || []) {
+            for (const aid of m.actions || []) actionIds.add(aid.toUpperCase());
+          }
+        }
+        const unapproved = (graph.actions || [])
+          .filter(a => actionIds.has(a.id.toUpperCase()) && a.reviewState !== 'approved');
+        if (unapproved.length > 0) {
+          sendJson(res, 403, {
+            error: 'Cannot play: unapproved actions exist',
+            unapproved: unapproved.map(a => ({ id: a.id, title: a.title, reviewState: a.reviewState || 'draft' })),
+          });
+          return;
+        }
+
+        // Start pipeline runner (retry, pause-on-failure, state persistence, reports)
+        const plr = getPipelineRunner(cwd);
+        const result = plr.start();
+        if (result.error) {
+          sendJson(res, 409, { error: result.error });
+        } else {
+          sendJson(res, 202, { ok: true, waves: result.waves });
+        }
       } else {
-        sendJson(res, 202, { ok: true, waves: result.waves });
+        // No manifest — fall back to play runner (computes order from graph)
+        const pr = getPlayRunner(cwd);
+        const result = pr.start();
+        if (result.error) {
+          const status = result.unapproved ? 403 : 409;
+          sendJson(res, status, { error: result.error, ...(result.unapproved && { unapproved: result.unapproved }) });
+        } else {
+          sendJson(res, 202, { ok: true, waves: result.waves });
+        }
       }
       return;
     }
@@ -1714,6 +2159,28 @@ function route(req, res, cwd) {
       return;
     }
 
+    // Archive route: POST /api/node/:id/archive
+    const archiveMatch = urlPath.match(/^\/api\/node\/([^/]+)\/archive$/);
+    if (archiveMatch) {
+      handleArchiveNode(res, cwd, archiveMatch[1]);
+      return;
+    }
+
+    // Refine route: POST /api/node/:id/refine — AI-suggested revision
+    const refineMatch = urlPath.match(/^\/api\/node\/([^/]+)\/refine$/);
+    if (refineMatch) {
+      handleRefine(req, res, cwd, refineMatch[1]);
+      return;
+    }
+    if (urlPath === '/api/refine/stop') {
+      handleRefineStop(res);
+      return;
+    }
+    if (urlPath === '/api/refine/accept') {
+      handleRefineAccept(req, res, cwd);
+      return;
+    }
+
     if (urlPath === '/api/execution-manifest') {
       handleSaveManifest(req, res, cwd);
       return;
@@ -1745,6 +2212,34 @@ function route(req, res, cwd) {
 
   if (urlPath === '/api/status') {
     handleStatus(res, cwd);
+    return;
+  }
+
+  if (urlPath === '/api/project') {
+    try {
+      const projectPath = path.join(cwd, '.planning', 'PROJECT.md');
+      const content = fs.existsSync(projectPath) ? fs.readFileSync(projectPath, 'utf-8') : '';
+      // Extract title and description from PROJECT.md
+      const titleMatch = content.match(/^#\s+(.+)/m);
+      const title = titleMatch ? titleMatch[1].trim() : path.basename(cwd);
+      // Extract "What This Is" section as description
+      const whatMatch = content.match(/## What This Is\s*\n([\s\S]*?)(?=\n##|\n$|$)/);
+      const description = whatMatch ? whatMatch[1].trim() : '';
+      // Extract "Core Value" section
+      const coreMatch = content.match(/## Core Value\s*\n([\s\S]*?)(?=\n##|\n$|$)/);
+      const coreValue = coreMatch ? coreMatch[1].trim() : '';
+      // Extract "Current State" section (last one in file)
+      const stateMatch = content.match(/## Current State\s*\n([\s\S]*?)(?=\n##|\n---|$)/);
+      let currentState = '';
+      if (stateMatch) {
+        // Extract first line or version info
+        const lines = stateMatch[1].trim().split('\n').filter(l => l.trim());
+        currentState = lines.slice(0, 3).map(l => l.replace(/^\*\*/, '').replace(/\*\*/, '')).join(' | ');
+      }
+      sendJson(res, 200, { title, description, coreValue, currentState, folder: path.basename(cwd) });
+    } catch (err) {
+      sendJson(res, 500, { error: String(err) });
+    }
     return;
   }
 

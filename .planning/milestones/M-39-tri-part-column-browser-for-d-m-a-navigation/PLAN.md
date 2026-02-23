@@ -9,6 +9,7 @@
 
 ### A-82: Build tri-part column browser layout
 **Status:** DONE
+**Review:** approved
 **Produces:** Three-column panel (Declaration | Milestone | Action) that fills the main viewport — each column shows the active node in detail, parent columns compress when a child is focused, expanding back on up-navigation
 
 ### A-83: Implement keyboard navigation

@@ -112,9 +112,12 @@ function createActionDerivationRunner(sseClients, cwd) {
     const sessionId = `action-deriv-${Date.now()}`;
     const prompt = buildActionPrompt(milestone, existingActions);
 
-    const proc = spawn('claude', ['-p', prompt, '--output-format', 'text', '--no-input'], {
+    const env = { ...process.env, FORCE_COLOR: '0' };
+    delete env.CLAUDECODE;
+
+    const proc = spawn('claude', ['-p', prompt, '--output-format', 'text'], {
       cwd,
-      env: { ...process.env, FORCE_COLOR: '0' },
+      env,
     });
 
     current = { sessionId, milestoneId: milestone.id, proc };

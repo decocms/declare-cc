@@ -458,7 +458,7 @@ var require_plan = __commonJS({
     }
     function parsePlanFile(content) {
       if (!content || !content.trim()) {
-        return { milestone: null, realizes: [], status: "PENDING", derived: "", actions: [] };
+        return { milestone: null, realizes: [], status: "PENDING", derived: "", produces: "", actions: [] };
       }
       const headerMatch = content.match(/^# Plan:\s*(M-\d+)/m);
       const milestone = headerMatch ? headerMatch[1] : null;
@@ -468,6 +468,7 @@ var require_plan = __commonJS({
       const realizes = realizesRaw ? realizesRaw.split(",").map((s) => s.trim()).filter(Boolean) : [];
       const status = (extractField(headerLines, "Status") || "PENDING").toUpperCase();
       const derived = extractField(headerLines, "Derived") || "";
+      const produces = extractField(headerLines, "Produces") || "";
       const actionSections = content.split(/^### /m).slice(1);
       const actions = actionSections.map((section) => {
         const lines = section.trim().split("\n");
@@ -475,26 +476,28 @@ var require_plan = __commonJS({
         if (!actionHeaderMatch) return null;
         const [, id, title] = actionHeaderMatch;
         const actionStatus = (extractField(lines, "Status") || "PENDING").toUpperCase();
-        const produces = extractField(lines, "Produces") || "";
+        const produces2 = extractField(lines, "Produces") || "";
         const reviewState = extractField(lines, "Review") || "draft";
         const description = lines.slice(1).filter((l) => !l.trim().startsWith("**")).map((l) => l.trim()).filter(Boolean).join("\n");
-        return { id, title: title.trim(), status: actionStatus, produces, description, reviewState };
+        return { id, title: title.trim(), status: actionStatus, produces: produces2, description, reviewState };
       }).filter(Boolean);
-      return { milestone, realizes, status, derived, actions };
+      return { milestone, realizes, status, derived, produces, actions };
     }
-    function writePlanFile(milestoneId, milestoneTitle, realizes, actions) {
+    function writePlanFile(milestoneId, milestoneTitle, realizes, actions, options) {
       const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+      const milestoneProduces = options && options.produces || "";
       const lines = [
         `# Plan: ${milestoneId} -- ${milestoneTitle}`,
         "",
         `**Milestone:** ${milestoneId}`,
         `**Realizes:** ${realizes.join(", ")}`,
         `**Status:** PENDING`,
-        `**Derived:** ${today}`,
-        "",
-        "## Actions",
-        ""
+        `**Derived:** ${today}`
       ];
+      if (milestoneProduces) {
+        lines.push(`**Produces:** ${milestoneProduces}`);
+      }
+      lines.push("", "## Actions", "");
       for (const action of actions) {
         const id = action.id || "A-XX";
         const status = action.status || "PENDING";
@@ -1119,15 +1122,19 @@ var require_build_dag = __commonJS({
     var { DeclareDag } = require_engine();
     function loadActionsFromFolders(planningDir) {
       const milestonesDir = join(planningDir, "milestones");
-      if (!existsSync(milestonesDir)) return [];
+      if (!existsSync(milestonesDir)) return { actions: [], milestoneProduces: {} };
       const allActions = [];
+      const milestoneProduces = {};
       const entries = readdirSync(milestonesDir, { withFileTypes: true });
       for (const entry of entries) {
         if (!entry.isDirectory() || entry.name.startsWith("_")) continue;
         const planPath = join(milestonesDir, entry.name, "PLAN.md");
         if (!existsSync(planPath)) continue;
         const content = readFileSync(planPath, "utf-8");
-        const { milestone, actions } = parsePlanFile(content);
+        const { milestone, actions, produces } = parsePlanFile(content);
+        if (milestone && produces) {
+          milestoneProduces[milestone] = produces;
+        }
         for (const action of actions) {
           allActions.push({
             id: action.id,
@@ -1139,7 +1146,7 @@ var require_build_dag = __commonJS({
           });
         }
       }
-      return allActions;
+      return { actions: allActions, milestoneProduces };
     }
     function buildDagFromDisk(cwd) {
       const planningDir = join(cwd, ".planning");
@@ -1152,7 +1159,16 @@ var require_build_dag = __commonJS({
       const milestonesContent = existsSync(milestonesPath) ? readFileSync(milestonesPath, "utf-8") : "";
       const declarations = parseFutureFile(futureContent);
       const { milestones } = parseMilestonesFile(milestonesContent);
-      const actions = loadActionsFromFolders(planningDir);
+      const { actions: allLoadedActions, milestoneProduces } = loadActionsFromFolders(planningDir);
+      const milestoneIds = new Set(milestones.map((m) => m.id.toUpperCase()));
+      const actions = allLoadedActions.filter(
+        (a) => a.causes.some((c) => milestoneIds.has(c.toUpperCase()))
+      );
+      for (const m of milestones) {
+        if (milestoneProduces[m.id]) {
+          m.produces = milestoneProduces[m.id];
+        }
+      }
       const dag = new DeclareDag();
       for (const d of declarations) {
         const meta = { reviewState: d.reviewState || "draft" };
@@ -1162,6 +1178,7 @@ var require_build_dag = __commonJS({
       for (const m of milestones) {
         dag.addNode(m.id, "milestone", m.title, m.status || "PENDING", {
           description: m.description || "",
+          produces: m.produces || "",
           classification: m.classification || "agent",
           dependsOn: m.dependsOn || [],
           reviewState: m.reviewState || "draft"
@@ -2040,7 +2057,7 @@ var require_create_plan = __commonJS({
       for (const m of milestones) {
         dag.addNode(m.id, "milestone", m.title, m.status || "PENDING");
       }
-      const existingActions = loadActionsFromFolders(planningDir);
+      const { actions: existingActions } = loadActionsFromFolders(planningDir);
       for (const a of existingActions) {
         dag.addNode(a.id, "action", a.title, a.status || "PENDING");
       }
@@ -3382,7 +3399,7 @@ var require_sync_status = __commonJS({
           writeFileSync(planPath, planContent, "utf-8");
         }
       }
-      const freshActions = loadActionsFromFolders(planningDir);
+      const { actions: freshActions } = loadActionsFromFolders(planningDir);
       const milestoneActionIds = /* @__PURE__ */ new Map();
       const actionStatusMap = /* @__PURE__ */ new Map();
       for (const a of freshActions) {
@@ -4288,9 +4305,11 @@ data: ${JSON.stringify(data)}
           return { error: "already_running", status: 409 };
         }
         const prompt = `Run /declare:execute ${milestoneId} for action ${actionId} only. Do not ask questions, execute autonomously.`;
-        const proc = spawn("claude", ["-p", prompt, "--no-input"], {
+        const spawnEnv = { ...process.env, FORCE_COLOR: "0" };
+        delete spawnEnv.CLAUDECODE;
+        const proc = spawn("claude", ["-p", prompt], {
           cwd,
-          env: { ...process.env, FORCE_COLOR: "0" }
+          env: spawnEnv
         });
         const planningDir = path.join(cwd, ".planning");
         const milestoneFolder = findMilestoneFolder(planningDir, milestoneId);
@@ -4400,9 +4419,11 @@ data: ${JSON.stringify(data)}
         }
         const sessionId = `deriv-${Date.now()}`;
         const prompt = buildPrompt(declarationId, declarations);
-        const proc = spawn("claude", ["-p", prompt, "--output-format", "text", "--no-input"], {
+        const env = { ...process.env, FORCE_COLOR: "0" };
+        delete env.CLAUDECODE;
+        const proc = spawn("claude", ["-p", prompt, "--output-format", "text"], {
           cwd,
-          env: { ...process.env, FORCE_COLOR: "0" }
+          env
         });
         current = { sessionId, proc };
         const stdout = { text: "" };
@@ -4520,9 +4541,11 @@ data: ${JSON.stringify(data)}
         }
         const sessionId = `action-deriv-${Date.now()}`;
         const prompt = buildActionPrompt(milestone, existingActions);
-        const proc = spawn("claude", ["-p", prompt, "--output-format", "text", "--no-input"], {
+        const env = { ...process.env, FORCE_COLOR: "0" };
+        delete env.CLAUDECODE;
+        const proc = spawn("claude", ["-p", prompt, "--output-format", "text"], {
           cwd,
-          env: { ...process.env, FORCE_COLOR: "0" }
+          env
         });
         current = { sessionId, milestoneId: milestone.id, proc };
         const stdout = { text: "" };
@@ -4654,9 +4677,11 @@ data: ${JSON.stringify(data)}
           fs.copyFileSync(artifactPath, versionedPath);
         } catch (_) {
         }
-        const proc = spawn("claude", ["-p", prompt, "--output-format", "text", "--no-input"], {
+        const spawnEnv = { ...process.env, FORCE_COLOR: "0" };
+        delete spawnEnv.CLAUDECODE;
+        const proc = spawn("claude", ["-p", prompt, "--output-format", "text"], {
           cwd,
-          env: { ...process.env, FORCE_COLOR: "0" }
+          env: spawnEnv
         });
         current = { sessionId, proc, nodeId };
         const stdout = { text: "" };
@@ -5338,9 +5363,11 @@ data: ${JSON.stringify(data)}
           const startedAt = (/* @__PURE__ */ new Date()).toISOString();
           const startTime = Date.now();
           const prompt = `Run /declare:execute ${milestoneId} for action ${actionId} only. Do not ask questions, execute autonomously.`;
-          const proc = spawn("claude", ["-p", prompt, "--no-input"], {
+          const spawnEnv = { ...process.env, FORCE_COLOR: "0" };
+          delete spawnEnv.CLAUDECODE;
+          const proc = spawn("claude", ["-p", prompt], {
             cwd,
-            env: { ...process.env, FORCE_COLOR: "0" }
+            env: spawnEnv
           });
           activeProcesses.set(actionId, proc);
           const planningDir = path.join(cwd, ".planning");
@@ -5653,7 +5680,7 @@ var require_server = __commonJS({
     var { computeWorkabilityPath, VALID_REVIEW_STATES } = require_engine();
     var { findMilestoneFolder } = require_milestone_folders();
     var { parseFutureFile, writeFutureFile } = require_future();
-    var { parsePlanFile, writePlanFile } = require_plan();
+    var { parsePlanFile, writePlanFile, updateActionStatus } = require_plan();
     var { parseMilestonesFile, writeMilestonesFile } = require_milestones();
     var { computeWorkflowState } = require_workflow_state();
     var { createPlayRunner } = require_play();
@@ -5722,7 +5749,8 @@ var require_server = __commonJS({
         }
         res.writeHead(200, {
           "Content-Type": contentType,
-          "Content-Length": data.length
+          "Content-Length": data.length,
+          "Cache-Control": "no-cache, no-store, must-revalidate"
         });
         res.end(data);
       });
@@ -6225,6 +6253,19 @@ var require_server = __commonJS({
           sendJson(res, result.status || 500, { error: result.error });
           return;
         }
+        try {
+          const activityFile = path.join(cwd, ".planning", "activity.jsonl");
+          const entry = {
+            ts: (/* @__PURE__ */ new Date()).toISOString(),
+            tool: "Review",
+            phase: "end",
+            desc: body.reviewState === "approved" ? `Approved ${nodeId}` : `Revision needed: ${nodeId}`,
+            nodeId,
+            reviewState: body.reviewState
+          };
+          fs.appendFileSync(activityFile, JSON.stringify(entry) + "\n");
+        } catch (_) {
+        }
         sendJson(res, 200, result);
         broadcastChange();
       } catch (err) {
@@ -6505,6 +6546,377 @@ var require_server = __commonJS({
         sendJson(res, 200, { ok: true });
       }
     }
+    var refineSession = null;
+    function buildRefinePrompt(nodeId, graph, mode, userMessage) {
+      const id = nodeId.toUpperCase();
+      const prefix = id.split("-")[0];
+      let nodeContent = "";
+      let parentContent = "";
+      let siblingsContent = "";
+      let nodeType = "";
+      if (prefix === "D") {
+        nodeType = "declaration";
+        const decl = graph.declarations.find((d) => d.id.toUpperCase() === id);
+        if (!decl) return null;
+        nodeContent = `${decl.id}: ${decl.title}
+Statement: ${decl.statement || decl.title}`;
+        siblingsContent = graph.declarations.filter((d) => d.id !== decl.id).map((d) => `${d.id}: ${d.title}`).join("\n");
+        parentContent = "This is a top-level declaration (no parent).";
+      } else if (prefix === "M") {
+        nodeType = "milestone";
+        const mile = graph.milestones.find((m) => m.id.toUpperCase() === id);
+        if (!mile) return null;
+        nodeContent = `${mile.id}: ${mile.title}
+Produces: ${mile.produces || "(none)"}`;
+        const parentDecls = graph.declarations.filter((d) => (mile.realizes || []).some((r) => r === d.id));
+        parentContent = parentDecls.map((d) => `${d.id}: ${d.title}
+Statement: ${d.statement || d.title}`).join("\n\n");
+        const siblingMiles = graph.milestones.filter((m) => m.id !== mile.id && (mile.realizes || []).some((r) => (m.realizes || []).includes(r)));
+        siblingsContent = siblingMiles.map((m) => `${m.id}: ${m.title} [${m.status}]`).join("\n");
+      } else if (prefix === "A") {
+        nodeType = "action";
+        const action = graph.actions.find((a) => a.id.toUpperCase() === id);
+        if (!action) return null;
+        nodeContent = `${action.id}: ${action.title}
+Produces: ${action.produces || "(none)"}`;
+        const parentMiles = graph.milestones.filter((m) => (action.causes || []).includes(m.id));
+        parentContent = parentMiles.map((m) => `${m.id}: ${m.title}
+Produces: ${m.produces || "(none)"}`).join("\n\n");
+        const milestoneIds = action.causes || [];
+        const siblingActions = graph.actions.filter((a) => a.id !== action.id && (a.causes || []).some((c) => milestoneIds.includes(c)));
+        siblingsContent = siblingActions.map((a) => `${a.id}: ${a.title} [${a.status}]`).join("\n");
+      }
+      const modeInstructions = {
+        write: `The user wants to refine this ${nodeType} with specific direction:
+
+"${userMessage || ""}"
+
+Apply their feedback to improve the title and statement/produces. Keep the same format and scope level.`,
+        outdated: `Check if this ${nodeType} is still relevant given the current state of its parent and siblings. Some siblings may already be DONE. Consider:
+- Has progress on siblings made this redundant?
+- Does the title/statement still accurately describe what's needed?
+- Should this be reworded to reflect current reality?`,
+        sharpen: `Make this ${nodeType} more specific and actionable. Consider:
+- Is the title vague or generic? Make it concrete.
+- Does the statement/produces describe a clear, verifiable outcome?
+- Could someone read this and know exactly what "done" looks like?`,
+        consolidate: `Check if this ${nodeType} overlaps with its siblings. Consider:
+- Are any siblings covering the same ground?
+- Could this be merged with a sibling for clarity?
+- Is this a subset of another sibling?
+
+If overlap exists, suggest how to differentiate or merge. If no overlap, say so.`,
+        expand: `This ${nodeType} may be too broad. Consider:
+- Could it be broken into 2-3 more specific items?
+- Are there implicit sub-tasks hiding in the description?
+- Would splitting improve clarity and trackability?
+
+Suggest a breakdown if warranted. If it's already well-scoped, say so.`
+      };
+      const taskBlock = modeInstructions[mode] || `Analyze this ${nodeType} in the context of its parent and siblings. Consider:
+- Is it well-scoped? Too broad or too narrow compared to siblings?
+- Does it overlap with any sibling?
+- Does it clearly contribute to its parent's goal?
+- Is the title/statement clear and specific?`;
+      return `You are reviewing a Declare project artifact and suggesting improvements.
+
+## This ${nodeType}
+
+${nodeContent}
+
+## Parent context
+
+${parentContent}
+
+## Sibling ${nodeType === "declaration" ? "declarations" : nodeType === "milestone" ? "milestones" : "actions"}
+
+${siblingsContent || "(none)"}
+
+## Task
+
+${taskBlock}
+
+If improvements are possible, suggest a revised version. Output ONLY the improved text in this format:
+
+**Title:** <improved title>
+**Statement:** <improved statement or produces>
+**Reason:** <one sentence explaining why this is better>
+
+If the current version is already good, output exactly: LGTM \u2014 no changes needed.`;
+    }
+    async function handleRefine(req, res, cwd, nodeId) {
+      try {
+        if (refineSession) {
+          sendJson(res, 409, { error: "A refine session is already running" });
+          return;
+        }
+        const body = await readJsonBody(req).catch(() => ({}));
+        const mode = body.mode || "general";
+        const userMessage = body.message || "";
+        const graph = runLoadGraph2(cwd);
+        if ("error" in graph) {
+          sendJson(res, 500, { error: graph.error });
+          return;
+        }
+        const prompt = buildRefinePrompt(nodeId, graph, mode, userMessage);
+        if (!prompt) {
+          sendJson(res, 404, { error: "Node not found: " + nodeId });
+          return;
+        }
+        const sessionId = `refine-${Date.now()}`;
+        const { spawn } = require("node:child_process");
+        const spawnEnv = { ...process.env, FORCE_COLOR: "0" };
+        delete spawnEnv.CLAUDECODE;
+        const proc = spawn("claude", ["-p", prompt, "--output-format", "text"], {
+          cwd,
+          env: spawnEnv
+        });
+        const activityFile = path.join(cwd, ".planning", "activity.jsonl");
+        refineSession = { sessionId, proc, nodeId: nodeId.toUpperCase(), suggestion: "", stderr: "" };
+        if (proc.stdout) {
+          proc.stdout.on("data", (chunk) => {
+            const text = chunk.toString();
+            if (refineSession) refineSession.suggestion += text;
+            const payload = `event: refine-output
+data: ${JSON.stringify({ sessionId, nodeId: nodeId.toUpperCase(), text })}
+
+`;
+            for (const client of sseClients) {
+              try {
+                client.write(payload);
+              } catch (_) {
+                sseClients.delete(client);
+              }
+            }
+          });
+        }
+        if (proc.stderr) {
+          proc.stderr.on("data", (chunk) => {
+            if (refineSession) refineSession.stderr += chunk.toString();
+          });
+        }
+        proc.on("close", (exitCode) => {
+          const suggestion = refineSession ? refineSession.suggestion : "";
+          const stderrText = refineSession ? refineSession.stderr : "";
+          const nId = refineSession ? refineSession.nodeId : nodeId.toUpperCase();
+          refineSession = null;
+          if (stderrText) console.error(`[refine ${nId}] stderr:`, stderrText.slice(0, 500));
+          const payload = `event: refine-complete
+data: ${JSON.stringify({ sessionId, nodeId: nId, exitCode, suggestion, error: exitCode !== 0 ? stderrText.slice(0, 500) : void 0 })}
+
+`;
+          for (const client of sseClients) {
+            try {
+              client.write(payload);
+            } catch (_) {
+              sseClients.delete(client);
+            }
+          }
+          const phase = exitCode === 0 ? "done" : "error";
+          const desc = exitCode === 0 ? `Review of ${nId} complete` + (suggestion.includes("LGTM") ? " \u2014 no changes needed" : " \u2014 suggestion ready") : `Review of ${nId} failed (exit ${exitCode})`;
+          const doneEntry = { ts: (/* @__PURE__ */ new Date()).toISOString(), tool: "Task", phase, agent: "Refine", desc };
+          try {
+            fs.appendFileSync(activityFile, JSON.stringify(doneEntry) + "\n");
+          } catch (_) {
+          }
+        });
+        const entry = { ts: (/* @__PURE__ */ new Date()).toISOString(), tool: "Task", phase: "start", agent: "Refine", desc: `Analyzing ${nodeId.toUpperCase()} for improvements` };
+        fs.appendFileSync(activityFile, JSON.stringify(entry) + "\n");
+        sendJson(res, 202, { ok: true, sessionId });
+      } catch (err) {
+        sendJson(res, 500, { error: String(err) });
+      }
+    }
+    function handleRefineStop(res) {
+      if (!refineSession) {
+        sendJson(res, 404, { error: "No refine session running" });
+        return;
+      }
+      try {
+        refineSession.proc.kill();
+      } catch (_) {
+      }
+      refineSession = null;
+      sendJson(res, 200, { ok: true });
+    }
+    async function handleRefineAccept(req, res, cwd) {
+      try {
+        const body = await readJsonBody(req);
+        const { nodeId, title, statement } = body;
+        if (!nodeId) {
+          sendJson(res, 400, { error: "Missing nodeId" });
+          return;
+        }
+        const id = nodeId.toUpperCase();
+        const prefix = id.split("-")[0];
+        const planningDir = path.join(cwd, ".planning");
+        if (prefix === "D") {
+          const futurePath = path.join(planningDir, "FUTURE.md");
+          const content = fs.readFileSync(futurePath, "utf-8");
+          const declarations = parseFutureFile(content);
+          const decl = declarations.find((d) => d.id === id);
+          if (decl) {
+            if (title) decl.title = title;
+            if (statement) decl.statement = statement;
+            const projectNameMatch = content.match(/^# Future:\\s*(.+)/m);
+            const projectName = projectNameMatch ? projectNameMatch[1].trim() : "Project";
+            fs.writeFileSync(futurePath, writeFutureFile(declarations, projectName), "utf-8");
+          }
+        } else if (prefix === "M") {
+          const msPath = path.join(planningDir, "MILESTONES.md");
+          const content = fs.readFileSync(msPath, "utf-8");
+          const { milestones } = parseMilestonesFile(content);
+          const mile = milestones.find((m) => m.id === id);
+          if (mile && title) {
+            mile.title = title;
+            const projectNameMatch = content.match(/^# Milestones:\\s*(.+)/m);
+            const projectName = projectNameMatch ? projectNameMatch[1].trim() : "Project";
+            fs.writeFileSync(msPath, writeMilestonesFile(milestones, projectName), "utf-8");
+          }
+        }
+        const activityFile = path.join(cwd, ".planning", "activity.jsonl");
+        const entry = { ts: (/* @__PURE__ */ new Date()).toISOString(), tool: "Review", phase: "end", desc: `Refined ${id}`, nodeId: id, reviewState: "approved" };
+        fs.appendFileSync(activityFile, JSON.stringify(entry) + "\n");
+        sendJson(res, 200, { ok: true });
+      } catch (err) {
+        sendJson(res, 500, { error: String(err) });
+      }
+    }
+    function handleArchiveNode(res, cwd, nodeId) {
+      const id = nodeId.toUpperCase();
+      const prefix = id.split("-")[0];
+      const planningDir = path.join(cwd, ".planning");
+      try {
+        if (prefix === "D") {
+          const futurePath = path.join(planningDir, "FUTURE.md");
+          const content = fs.readFileSync(futurePath, "utf-8");
+          const declarations = parseFutureFile(content);
+          const decl = declarations.find((d) => d.id === id);
+          if (decl) {
+            decl.status = "DONE";
+            decl.reviewState = "approved";
+            const projectNameMatch = content.match(/^# Future:\s*(.+)/m);
+            const projectName = projectNameMatch ? projectNameMatch[1].trim() : "Project";
+            fs.writeFileSync(futurePath, writeFutureFile(declarations, projectName), "utf-8");
+          }
+        } else if (prefix === "M") {
+          const msPath = path.join(planningDir, "MILESTONES.md");
+          const content = fs.readFileSync(msPath, "utf-8");
+          const { milestones } = parseMilestonesFile(content);
+          const mile = milestones.find((m) => m.id === id);
+          if (mile) {
+            mile.status = "DONE";
+            mile.reviewState = "approved";
+            const projectNameMatch = content.match(/^# Milestones:\s*(.+)/m);
+            const projectName = projectNameMatch ? projectNameMatch[1].trim() : "Project";
+            fs.writeFileSync(msPath, writeMilestonesFile(milestones, projectName), "utf-8");
+          }
+        } else if (prefix === "A") {
+          const graph = runLoadGraph2(cwd);
+          if (!("error" in graph)) {
+            const action = graph.actions.find((a) => a.id.toUpperCase() === id);
+            if (action) {
+              for (const mId of action.causes || []) {
+                const folder = findMilestoneFolder(planningDir, mId);
+                if (folder) {
+                  const planPath = path.join(folder, "PLAN.md");
+                  if (fs.existsSync(planPath)) {
+                    const content = fs.readFileSync(planPath, "utf-8");
+                    const updated = updateActionStatus(content, id, "DONE");
+                    fs.writeFileSync(planPath, updated, "utf-8");
+                  }
+                }
+              }
+            }
+          }
+        }
+        const activityFile = path.join(planningDir, "activity.jsonl");
+        const entry = { ts: (/* @__PURE__ */ new Date()).toISOString(), tool: "Review", phase: "end", desc: `Archived ${id}`, nodeId: id };
+        fs.appendFileSync(activityFile, JSON.stringify(entry) + "\n");
+        const payload = `event: change
+data: ${JSON.stringify({ reason: "archive", nodeId: id })}
+
+`;
+        for (const client of sseClients) {
+          try {
+            client.write(payload);
+          } catch (_) {
+            sseClients.delete(client);
+          }
+        }
+        sendJson(res, 200, { ok: true });
+      } catch (err) {
+        sendJson(res, 500, { error: String(err) });
+      }
+    }
+    function handleDeleteNode(res, cwd, nodeId) {
+      const id = nodeId.toUpperCase();
+      const prefix = id.split("-")[0];
+      const planningDir = path.join(cwd, ".planning");
+      try {
+        if (prefix === "D") {
+          const futurePath = path.join(planningDir, "FUTURE.md");
+          const content = fs.readFileSync(futurePath, "utf-8");
+          const declarations = parseFutureFile(content);
+          const filtered = declarations.filter((d) => d.id !== id);
+          if (filtered.length === declarations.length) {
+            sendJson(res, 404, { error: "Declaration not found: " + id });
+            return;
+          }
+          const projectNameMatch = content.match(/^# Future:\s*(.+)/m);
+          const projectName = projectNameMatch ? projectNameMatch[1].trim() : "Project";
+          fs.writeFileSync(futurePath, writeFutureFile(filtered, projectName), "utf-8");
+        } else if (prefix === "M") {
+          const msPath = path.join(planningDir, "MILESTONES.md");
+          const content = fs.readFileSync(msPath, "utf-8");
+          const { milestones } = parseMilestonesFile(content);
+          const filtered = milestones.filter((m) => m.id !== id);
+          if (filtered.length === milestones.length) {
+            sendJson(res, 404, { error: "Milestone not found: " + id });
+            return;
+          }
+          const projectNameMatch = content.match(/^# Milestones:\s*(.+)/m);
+          const projectName = projectNameMatch ? projectNameMatch[1].trim() : "Project";
+          fs.writeFileSync(msPath, writeMilestonesFile(filtered, projectName), "utf-8");
+        } else if (prefix === "A") {
+          const graph = runLoadGraph2(cwd);
+          if (!("error" in graph)) {
+            const action = graph.actions.find((a) => a.id.toUpperCase() === id);
+            if (action) {
+              for (const mId of action.causes || []) {
+                const folder = findMilestoneFolder(planningDir, mId);
+                if (folder) {
+                  const planPath = path.join(folder, "PLAN.md");
+                  if (fs.existsSync(planPath)) {
+                    let content = fs.readFileSync(planPath, "utf-8");
+                    const regex = new RegExp(`### ${id}:[\\s\\S]*?(?=### |$)`, "i");
+                    content = content.replace(regex, "");
+                    fs.writeFileSync(planPath, content, "utf-8");
+                  }
+                }
+              }
+            }
+          }
+        }
+        const activityFile = path.join(planningDir, "activity.jsonl");
+        const entry = { ts: (/* @__PURE__ */ new Date()).toISOString(), tool: "Review", phase: "end", desc: `Deleted ${id}`, nodeId: id };
+        fs.appendFileSync(activityFile, JSON.stringify(entry) + "\n");
+        const payload2 = `event: change
+data: ${JSON.stringify({ reason: "delete", nodeId: id })}
+
+`;
+        for (const client of sseClients) {
+          try {
+            client.write(payload2);
+          } catch (_) {
+            sseClients.delete(client);
+          }
+        }
+        sendJson(res, 200, { ok: true });
+      } catch (err) {
+        sendJson(res, 500, { error: String(err) });
+      }
+    }
     function route(req, res, cwd) {
       const method = req.method || "GET";
       const url = req.url || "/";
@@ -6710,6 +7122,11 @@ var require_server = __commonJS({
         broadcastChange();
         return;
       }
+      const nodeDeleteMatch = method === "DELETE" && urlPath.match(/^\/api\/node\/([^/]+)$/);
+      if (nodeDeleteMatch) {
+        handleDeleteNode(res, cwd, nodeDeleteMatch[1]);
+        return;
+      }
       if (method === "POST") {
         const executeMatch = urlPath.match(/^\/api\/action\/([^/]+)\/execute$/);
         if (executeMatch) {
@@ -6755,13 +7172,45 @@ var require_server = __commonJS({
           return;
         }
         if (urlPath === "/api/play") {
-          const pr = getPlayRunner(cwd);
-          const result = pr.start();
-          if (result.error) {
-            const status = result.unapproved ? 403 : 409;
-            sendJson(res, status, { error: result.error, ...result.unapproved && { unapproved: result.unapproved } });
+          const manifestPath = path.join(cwd, ".planning", "execution-manifest.json");
+          const hasManifest = fs.existsSync(manifestPath);
+          if (hasManifest) {
+            const graph = runLoadGraph2(cwd);
+            if ("error" in graph) {
+              sendJson(res, 500, { error: graph.error });
+              return;
+            }
+            const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+            const actionIds = /* @__PURE__ */ new Set();
+            for (const wave of manifest.waves || []) {
+              for (const m of wave.milestones || []) {
+                for (const aid of m.actions || []) actionIds.add(aid.toUpperCase());
+              }
+            }
+            const unapproved = (graph.actions || []).filter((a) => actionIds.has(a.id.toUpperCase()) && a.reviewState !== "approved");
+            if (unapproved.length > 0) {
+              sendJson(res, 403, {
+                error: "Cannot play: unapproved actions exist",
+                unapproved: unapproved.map((a) => ({ id: a.id, title: a.title, reviewState: a.reviewState || "draft" }))
+              });
+              return;
+            }
+            const plr = getPipelineRunner(cwd);
+            const result = plr.start();
+            if (result.error) {
+              sendJson(res, 409, { error: result.error });
+            } else {
+              sendJson(res, 202, { ok: true, waves: result.waves });
+            }
           } else {
-            sendJson(res, 202, { ok: true, waves: result.waves });
+            const pr = getPlayRunner(cwd);
+            const result = pr.start();
+            if (result.error) {
+              const status = result.unapproved ? 403 : 409;
+              sendJson(res, status, { error: result.error, ...result.unapproved && { unapproved: result.unapproved } });
+            } else {
+              sendJson(res, 202, { ok: true, waves: result.waves });
+            }
           }
           return;
         }
@@ -6796,6 +7245,24 @@ var require_server = __commonJS({
           handleReviseStop(res, cwd);
           return;
         }
+        const archiveMatch = urlPath.match(/^\/api\/node\/([^/]+)\/archive$/);
+        if (archiveMatch) {
+          handleArchiveNode(res, cwd, archiveMatch[1]);
+          return;
+        }
+        const refineMatch = urlPath.match(/^\/api\/node\/([^/]+)\/refine$/);
+        if (refineMatch) {
+          handleRefine(req, res, cwd, refineMatch[1]);
+          return;
+        }
+        if (urlPath === "/api/refine/stop") {
+          handleRefineStop(res);
+          return;
+        }
+        if (urlPath === "/api/refine/accept") {
+          handleRefineAccept(req, res, cwd);
+          return;
+        }
         if (urlPath === "/api/execution-manifest") {
           handleSaveManifest(req, res, cwd);
           return;
@@ -6821,6 +7288,28 @@ var require_server = __commonJS({
       }
       if (urlPath === "/api/status") {
         handleStatus(res, cwd);
+        return;
+      }
+      if (urlPath === "/api/project") {
+        try {
+          const projectPath = path.join(cwd, ".planning", "PROJECT.md");
+          const content = fs.existsSync(projectPath) ? fs.readFileSync(projectPath, "utf-8") : "";
+          const titleMatch = content.match(/^#\s+(.+)/m);
+          const title = titleMatch ? titleMatch[1].trim() : path.basename(cwd);
+          const whatMatch = content.match(/## What This Is\s*\n([\s\S]*?)(?=\n##|\n$|$)/);
+          const description = whatMatch ? whatMatch[1].trim() : "";
+          const coreMatch = content.match(/## Core Value\s*\n([\s\S]*?)(?=\n##|\n$|$)/);
+          const coreValue = coreMatch ? coreMatch[1].trim() : "";
+          const stateMatch = content.match(/## Current State\s*\n([\s\S]*?)(?=\n##|\n---|$)/);
+          let currentState = "";
+          if (stateMatch) {
+            const lines = stateMatch[1].trim().split("\n").filter((l) => l.trim());
+            currentState = lines.slice(0, 3).map((l) => l.replace(/^\*\*/, "").replace(/\*\*/, "")).join(" | ");
+          }
+          sendJson(res, 200, { title, description, coreValue, currentState, folder: path.basename(cwd) });
+        } catch (err) {
+          sendJson(res, 500, { error: String(err) });
+        }
         return;
       }
       const workabilityMatch = urlPath.match(/^\/api\/workability\/([^/]+)$/);

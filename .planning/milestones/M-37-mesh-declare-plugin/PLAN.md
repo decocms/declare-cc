@@ -9,8 +9,10 @@
 
 ### A-77: Build declare plugin for mesh
 **Status:** PENDING
+**Review:** approved
 **Produces:** mesh plugin at ../mesh that discovers registered declare projects from the mesh daemon and lists them
 
 ### A-78: Embed dashboard inline in mesh UI
 **Status:** PENDING
+**Review:** approved
 **Produces:** Plugin view rendering the declare dashboard in an iframe or API-proxy panel within the mesh UI

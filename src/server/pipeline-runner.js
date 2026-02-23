@@ -246,9 +246,11 @@ function createPipelineRunner(sseClients, cwd) {
       const startTime = Date.now();
 
       const prompt = `Run /declare:execute ${milestoneId} for action ${actionId} only. Do not ask questions, execute autonomously.`;
-      const proc = spawn('claude', ['-p', prompt, '--no-input'], {
+      const spawnEnv = { ...process.env, FORCE_COLOR: '0' };
+      delete spawnEnv.CLAUDECODE;
+      const proc = spawn('claude', ['-p', prompt], {
         cwd,
-        env: { ...process.env, FORCE_COLOR: '0' },
+        env: spawnEnv,
       });
 
       activeProcesses.set(actionId, proc);

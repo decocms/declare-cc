@@ -2,15 +2,15 @@
 
 **Milestone:** M-34
 **Realizes:** D-11
-**Status:** PENDING
+**Status:** DONE
 **Derived:** 2026-02-21
 
 ## Actions
 
 ### A-71: Add bin entry to package.json
-**Status:** PENDING
+**Status:** DONE
 **Produces:** package.json with bin.declare pointing to declare.js wrapper script
 
 ### A-72: Build global CLI entry script
-**Status:** PENDING
+**Status:** DONE
 **Produces:** declare.js that locates project root, delegates to declare-tools.cjs with correct working directory
