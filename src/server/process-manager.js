@@ -16,7 +16,7 @@ const path = require('node:path');
 const { findMilestoneFolder } = require('../artifacts/milestone-folders');
 
 /**
- * @typedef {{ proc: import('child_process').ChildProcess, milestoneId: string, logPath?: string }} ProcessEntry
+ * @typedef {{ proc: import('child_process').ChildProcess, milestoneId: string, logPath?: string, agentId?: string }} ProcessEntry
  */
 
 /**
@@ -41,7 +41,7 @@ function appendLog(logPath, line) {
  * @param {string} cwd - Project root directory
  * @returns {{ execute: (actionId: string, milestoneId: string) => { ok?: boolean, error?: string, status?: number }, stop: (actionId: string) => { ok?: boolean, error?: string, status?: number }, running: () => string[] }}
  */
-function createProcessManager(sseClients, cwd) {
+function createProcessManager(sseClients, cwd, registry) {
   /** @type {Map<string, ProcessEntry>} */
   const processes = new Map();
 
@@ -120,7 +120,14 @@ function createProcessManager(sseClients, cwd) {
       process.stderr.write(`[declare] Warning: milestone folder not found for ${milestoneId}, skipping execution log\n`);
     }
 
-    processes.set(actionId, { proc, milestoneId, logPath });
+    /** @type {string|undefined} */
+    let agentId;
+    if (registry) {
+      const agent = registry.spawn('execution', actionId, milestoneId);
+      agentId = agent.id;
+    }
+
+    processes.set(actionId, { proc, milestoneId, logPath, agentId });
 
     // Write start marker to execution log
     appendLog(logPath, `\n=== START ${actionId} @ ${new Date().toISOString()} ===`);
@@ -138,17 +145,29 @@ function createProcessManager(sseClients, cwd) {
     // Process exited
     proc.on('close', (exitCode) => {
       const entry = processes.get(actionId);
+      const entryAgentId = entry?.agentId;
       appendLog(entry?.logPath, `=== END ${actionId} @ ${new Date().toISOString()} exit=${exitCode ?? -1} ===\n`);
       processes.delete(actionId);
       broadcast('action-complete', { actionId, exitCode: exitCode ?? -1 });
+      if (registry && entryAgentId) {
+        if ((exitCode ?? -1) === 0) {
+          registry.complete(entryAgentId, { exitCode: 0 });
+        } else {
+          registry.fail(entryAgentId, exitCode ?? -1, 'process exited');
+        }
+      }
     });
 
     // Process failed to spawn (e.g. claude not found)
     proc.on('error', (_err) => {
       const entry = processes.get(actionId);
+      const entryAgentId = entry?.agentId;
       appendLog(entry?.logPath, `=== ERROR ${actionId} @ ${new Date().toISOString()} ===\n`);
       processes.delete(actionId);
       broadcast('action-complete', { actionId, exitCode: -1 });
+      if (registry && entryAgentId) {
+        registry.fail(entryAgentId, -1, 'spawn error');
+      }
     });
 
     return { ok: true };

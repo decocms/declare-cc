@@ -135,7 +135,7 @@ ${rows}
   }
 }
 
-function createPipelineRunner(sseClients, cwd) {
+function createPipelineRunner(sseClients, cwd, registry) {
   /** @type {boolean} */
   let isRunning = false;
   /** @type {boolean} */
@@ -154,6 +154,10 @@ function createPipelineRunner(sseClients, cwd) {
   const outputBuffers = {};
   /** @type {number} Total actions across all waves */
   let totalActionCount = 0;
+  /** @type {string|undefined} Agent ID for the pipeline itself */
+  let pipelineAgentId;
+  /** @type {Map<string, string>} Action ID -> Agent ID for per-action tracking */
+  const actionAgentIds = new Map();
 
   /**
    * Persist current pipeline state to disk for browser restore on refresh.
@@ -245,6 +249,12 @@ function createPipelineRunner(sseClients, cwd) {
       const startedAt = new Date().toISOString();
       const startTime = Date.now();
 
+      // Register this action execution with the agent registry
+      if (registry) {
+        const agent = registry.spawn('execution', actionId, milestoneId);
+        actionAgentIds.set(actionId, agent.id);
+      }
+
       const prompt = `Run /declare:execute ${milestoneId} for action ${actionId} only. Do not ask questions, execute autonomously.`;
       const spawnEnv = { ...process.env, FORCE_COLOR: '0' };
       delete spawnEnv.CLAUDECODE;
@@ -310,6 +320,17 @@ function createPipelineRunner(sseClients, cwd) {
         appendLog(logPath, `=== END ${actionId} (pipeline) @ ${completedAt} exit=${code} duration=${durationMs}ms ===\n`);
         activeProcesses.delete(actionId);
         broadcast('action-complete', { actionId, exitCode: code, durationMs });
+        if (registry) {
+          const aId = actionAgentIds.get(actionId);
+          if (aId) {
+            if (code === 0) {
+              registry.complete(aId, { exitCode: 0, durationMs });
+            } else {
+              registry.fail(aId, code, 'process exited');
+            }
+            actionAgentIds.delete(actionId);
+          }
+        }
         resolve({ actionId, milestoneId, exitCode: code, stderrOutput: stderrFull, durationMs, startedAt, completedAt, retried: false, attempts: 1 });
       });
 
@@ -319,6 +340,13 @@ function createPipelineRunner(sseClients, cwd) {
         appendLog(logPath, `=== ERROR ${actionId} (pipeline) @ ${completedAt} ===\n`);
         activeProcesses.delete(actionId);
         broadcast('action-complete', { actionId, exitCode: -1, durationMs });
+        if (registry) {
+          const aId = actionAgentIds.get(actionId);
+          if (aId) {
+            registry.fail(aId, -1, 'spawn error');
+            actionAgentIds.delete(actionId);
+          }
+        }
         resolve({ actionId, milestoneId, exitCode: -1, stderrOutput: stderrFull, durationMs, startedAt, completedAt, retried: false, attempts: 1 });
       });
     });
@@ -343,6 +371,12 @@ function createPipelineRunner(sseClients, cwd) {
     isRunning = true;
     stopRequested = false;
     results = [];
+
+    // Register the pipeline itself as an agent
+    if (registry) {
+      const agent = registry.spawn('pipeline', 'manifest', '');
+      pipelineAgentId = agent.id;
+    }
     pipelineState = {
       currentWave: 0,
       totalWaves: waves.length,
@@ -495,6 +529,21 @@ function createPipelineRunner(sseClients, cwd) {
         reportPath: reportPath ? '.planning/execution-report.md' : null,
       });
 
+      // Complete or fail the pipeline agent in the registry
+      if (registry && pipelineAgentId) {
+        const failed = finalState.failedActions.length;
+        if (failed === 0 && !stopRequested) {
+          registry.complete(pipelineAgentId, {
+            completed: finalState.completedActions.length,
+            failed: 0,
+            reportPath: reportPath ? '.planning/execution-report.md' : null,
+          });
+        } else {
+          registry.fail(pipelineAgentId, 1, stopRequested ? 'stopped by user' : `${failed} action(s) failed`);
+        }
+        pipelineAgentId = undefined;
+      }
+
       stopRequested = false;
       pausedOnFailure = null;
       pipelineState = null;
@@ -504,6 +553,10 @@ function createPipelineRunner(sseClients, cwd) {
       pausedOnFailure = null;
       pipelineState = null;
       persistState(); // Cleans up state file
+      if (registry && pipelineAgentId) {
+        registry.fail(pipelineAgentId, -1, String(_err));
+        pipelineAgentId = undefined;
+      }
       broadcast('pipeline-complete', {
         completed: [],
         failed: [],
@@ -533,8 +586,15 @@ function createPipelineRunner(sseClients, cwd) {
       skipResolve = null;
     }
 
-    for (const [, proc] of activeProcesses) {
+    for (const [actionId, proc] of activeProcesses) {
       try { proc.kill('SIGTERM'); } catch (_) {}
+      if (registry) {
+        const aId = actionAgentIds.get(actionId);
+        if (aId) {
+          registry.fail(aId, -1, 'stopped by user');
+          actionAgentIds.delete(actionId);
+        }
+      }
     }
 
     persistState();

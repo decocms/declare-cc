@@ -60,8 +60,8 @@ function buildPrompt(declarationId, declarations) {
  * @param {string} cwd - Project root directory
  * @returns {{ derive: (declarationId: string|null, declarations: Declaration[]) => { ok?: boolean, error?: string, status?: number, sessionId?: string }, stop: () => { ok?: boolean, error?: string, status?: number }, running: () => string|null }}
  */
-function createDerivationRunner(sseClients, cwd) {
-  /** @type {{ sessionId: string, proc: import('child_process').ChildProcess } | null} */
+function createDerivationRunner(sseClients, cwd, registry) {
+  /** @type {{ sessionId: string, proc: import('child_process').ChildProcess, agentId?: string } | null} */
   let current = null;
 
   /**
@@ -133,7 +133,14 @@ function createDerivationRunner(sseClients, cwd) {
       env,
     });
 
-    current = { sessionId, proc };
+    /** @type {string|undefined} */
+    let agentId;
+    if (registry) {
+      const agent = registry.spawn('derivation', declarationId || 'all', '');
+      agentId = agent.id;
+    }
+
+    current = { sessionId, proc, agentId };
 
     // Accumulator for full stdout text (for JSON parsing on completion)
     const stdout = { text: '' };
@@ -151,6 +158,7 @@ function createDerivationRunner(sseClients, cwd) {
     // Process exited
     proc.on('close', (exitCode) => {
       let milestones = null;
+      const closingAgentId = current ? current.agentId : undefined;
       if (exitCode === 0) {
         try {
           milestones = JSON.parse(stdout.text.trim());
@@ -164,16 +172,27 @@ function createDerivationRunner(sseClients, cwd) {
         exitCode: exitCode ?? -1,
         milestones,
       });
+      if (registry && closingAgentId) {
+        if ((exitCode ?? -1) === 0) {
+          registry.complete(closingAgentId, { milestones });
+        } else {
+          registry.fail(closingAgentId, exitCode ?? -1, 'derivation failed');
+        }
+      }
     });
 
     // Process failed to spawn (e.g. claude not found)
     proc.on('error', (_err) => {
+      const errorAgentId = current ? current.agentId : undefined;
       current = null;
       broadcast('derivation-complete', {
         sessionId,
         exitCode: -1,
         milestones: null,
       });
+      if (registry && errorAgentId) {
+        registry.fail(errorAgentId, -1, 'spawn error');
+      }
     });
 
     return { ok: true, sessionId };

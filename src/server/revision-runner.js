@@ -50,8 +50,8 @@ function buildRevisionPrompt(artifactContent, annotations) {
  * @param {(nodeId: string) => void} onComplete - Callback invoked after successful revision
  * @returns {{ revise: (nodeId: string, artifactPath: string, artifactContent: string, annotations: Array<{line: number, text: string}>) => { ok?: boolean, error?: string, status?: number, sessionId?: string }, stop: () => { ok?: boolean, error?: string, status?: number }, running: () => string|null }}
  */
-function createRevisionRunner(sseClients, cwd, onComplete) {
-  /** @type {{ sessionId: string, proc: import('child_process').ChildProcess, nodeId: string } | null} */
+function createRevisionRunner(sseClients, cwd, onComplete, registry) {
+  /** @type {{ sessionId: string, proc: import('child_process').ChildProcess, nodeId: string, agentId?: string } | null} */
   let current = null;
 
   /**
@@ -159,7 +159,14 @@ function createRevisionRunner(sseClients, cwd, onComplete) {
       env: spawnEnv,
     });
 
-    current = { sessionId, proc, nodeId };
+    /** @type {string|undefined} */
+    let agentId;
+    if (registry) {
+      const agent = registry.spawn('revision', nodeId, '');
+      agentId = agent.id;
+    }
+
+    current = { sessionId, proc, nodeId, agentId };
 
     // Accumulator for full stdout text
     const stdout = { text: '' };
@@ -177,6 +184,7 @@ function createRevisionRunner(sseClients, cwd, onComplete) {
     // Process exited
     proc.on('close', (exitCode) => {
       const completedNodeId = current ? current.nodeId : nodeId;
+      const closingAgentId = current ? current.agentId : undefined;
       current = null;
 
       if (exitCode === 0) {
@@ -210,6 +218,9 @@ function createRevisionRunner(sseClients, cwd, onComplete) {
           if (onComplete) {
             try { onComplete(completedNodeId); } catch (_) { /* ignore */ }
           }
+          if (registry && closingAgentId) {
+            registry.complete(closingAgentId, { revisionRound: newRound });
+          }
         } catch (err) {
           broadcast('revision-complete', {
             sessionId,
@@ -217,6 +228,9 @@ function createRevisionRunner(sseClients, cwd, onComplete) {
             exitCode: -1,
             error: true,
           });
+          if (registry && closingAgentId) {
+            registry.fail(closingAgentId, -1, 'revision post-processing error');
+          }
         }
       } else {
         broadcast('revision-complete', {
@@ -225,11 +239,15 @@ function createRevisionRunner(sseClients, cwd, onComplete) {
           exitCode: exitCode ?? -1,
           error: true,
         });
+        if (registry && closingAgentId) {
+          registry.fail(closingAgentId, exitCode ?? -1, 'revision failed');
+        }
       }
     });
 
     // Process failed to spawn (e.g. claude not found)
     proc.on('error', (_err) => {
+      const errorAgentId = current ? current.agentId : undefined;
       current = null;
       broadcast('revision-complete', {
         sessionId,
@@ -237,6 +255,9 @@ function createRevisionRunner(sseClients, cwd, onComplete) {
         exitCode: -1,
         error: true,
       });
+      if (registry && errorAgentId) {
+        registry.fail(errorAgentId, -1, 'spawn error');
+      }
     });
 
     return { ok: true, sessionId };
