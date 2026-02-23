@@ -6602,6 +6602,37 @@ function formatElapsed(startedAt, completedAt) {
 }
 
 /**
+ * Generate a human-readable completion summary for an agent.
+ * @param {object} agent
+ * @returns {string}
+ */
+function getAgentCompletionSummary(agent) {
+  const result = agent.result || {};
+  switch (agent.type) {
+    case 'execution':
+      return 'Executed ' + (result.actionId || agent.target);
+    case 'derivation': {
+      const count = result.milestones ? result.milestones.length : 0;
+      return count > 0 ? 'Derived ' + count + ' milestone' + (count !== 1 ? 's' : '') : 'Derivation complete';
+    }
+    case 'action-derivation': {
+      const count = result.actionCount;
+      const mId = result.milestoneId || agent.target;
+      return count != null ? 'Derived ' + count + ' action' + (count !== 1 ? 's' : '') + ' for ' + mId : 'Actions derived for ' + mId;
+    }
+    case 'revision':
+      return 'Revised ' + (result.nodeId || agent.target);
+    case 'pipeline': {
+      const c = result.completed || 0;
+      const f = result.failed || 0;
+      return c + ' completed' + (f > 0 ? ', ' + f + ' failed' : '');
+    }
+    default:
+      return 'Completed';
+  }
+}
+
+/**
  * Render a single agent activity card as an HTML string.
  * @param {{ id: string, type: string, target: string, milestoneId?: string, status: string, startedAt: string|number, updatedAt?: string|number, completedAt?: string|number, exitCode?: number, error?: string, result?: any }} agent
  * @returns {string} HTML string
@@ -6618,6 +6649,22 @@ function renderAgentCard(agent) {
     errorHtml = `<div class="agent-card-error" title="${escHtml(agent.error)}">${escHtml(truncated)}</div>`;
   }
 
+  // Completion summary for done agents
+  let summaryHtml = '';
+  if (agent.status === 'done') {
+    const summary = getAgentCompletionSummary(agent);
+    summaryHtml = `<div class="agent-card-summary">${escHtml(summary)}</div>`;
+  }
+
+  // "View Result" button for done agents only (not failed)
+  let viewResultHtml = '';
+  if (agent.status === 'done') {
+    viewResultHtml = `<button class="agent-card-view-result" data-agent-id="${escHtml(agent.id)}">View Result</button>`;
+  }
+
+  // Timer class: final for completed/failed, ticking for running
+  const timerClass = (agent.status === 'done' || agent.status === 'failed') ? 'agent-card-timer agent-timer-final' : 'agent-card-timer';
+
   return `<div class="agent-card status-${escHtml(agent.status)}" data-agent-id="${escHtml(agent.id)}">
   <div class="agent-card-header">
     <span class="agent-card-icon">${icon}</span>
@@ -6626,9 +6673,11 @@ function renderAgentCard(agent) {
   </div>
   <div class="agent-card-meta">
     <span class="agent-card-type">${escHtml(agent.type || '')}</span>
-    <span class="agent-card-timer" data-started="${escHtml(String(agent.startedAt))}" data-completed="${completedAttr}">${elapsed}</span>
+    <span class="${timerClass}" data-started="${escHtml(String(agent.startedAt))}" data-completed="${completedAttr}">${elapsed}</span>
   </div>
   ${errorHtml}
+  ${summaryHtml}
+  ${viewResultHtml}
 </div>`;
 }
 
@@ -6693,6 +6742,18 @@ function renderAgentPanel() {
 
   if (active.length > 0) startCardTimers(); else stopCardTimers();
 }
+
+// Delegated click handler for "View Result" buttons on agent cards (A-128)
+function handleViewResultClick(e) {
+  const btn = e.target.closest('.agent-card-view-result');
+  if (!btn) return;
+  e.stopPropagation();
+  const agentId = btn.getAttribute('data-agent-id');
+  const agent = agentCardState.get(agentId);
+  if (agent) navigateToResult(agent);
+}
+if ($activityCardsActive) $activityCardsActive.addEventListener('click', handleViewResultClick);
+if ($activityCardsRecent) $activityCardsRecent.addEventListener('click', handleViewResultClick);
 
 // Tab switching for Agents/Log tabs (A-124)
 document.querySelectorAll('.activity-tab').forEach(tab => {
