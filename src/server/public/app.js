@@ -1546,7 +1546,7 @@ function renderDrillDeclarations(enrichedDeclarations, enrichedMilestones, actio
   if (firstUnapproved) {
     const unapprovedCount = enrichedDeclarations.filter(d => d.reviewState !== 'approved').length;
     $drillPrompt.innerHTML = `<span class="drill-prompt-text">\u2192 Review <span class="drill-prompt-target" data-drill-target="${escHtml(firstUnapproved.id)}">${escHtml(firstUnapproved.id)}</span> next</span>
-      <button class="drill-approve-all-btn" id="drill-approve-all"><kbd>⌥A</kbd> Approve All (${unapprovedCount})</button>`;
+      <button class="drill-approve-all-btn" id="drill-approve-all"><kbd>⌃⇧A</kbd> Approve All (${unapprovedCount})</button>`;
     $drillPrompt.querySelector('.drill-prompt-target').addEventListener('click', () => {
       drillDeclId = firstUnapproved.id;
       drillLevel = 'milestones';
@@ -1701,7 +1701,7 @@ function renderDrillMilestones(enrichedDeclarations, enrichedMilestones, actions
   if (firstUnapproved) {
     const unapprovedCount = filtered.filter(m => m.reviewState !== 'approved').length;
     $drillPrompt.innerHTML = `<span class="drill-prompt-text">\u2192 Review <span class="drill-prompt-target" data-drill-target="${escHtml(firstUnapproved.id)}">${escHtml(firstUnapproved.id)}</span> to continue</span>
-      <button class="drill-approve-all-btn" id="drill-approve-all"><kbd>⌥A</kbd> Approve All (${unapprovedCount})</button>`;
+      <button class="drill-approve-all-btn" id="drill-approve-all"><kbd>⌃⇧A</kbd> Approve All (${unapprovedCount})</button>`;
     $drillPrompt.querySelector('.drill-prompt-target').addEventListener('click', () => {
       drillMileId = firstUnapproved.id;
       drillLevel = 'actions';
@@ -1861,7 +1861,7 @@ function renderDrillActions(enrichedDeclarations, enrichedMilestones, actions) {
   } else if (firstUnapproved) {
     const unapprovedCount = filtered.filter(a => a.reviewState !== 'approved').length;
     $drillPrompt.innerHTML = `<span class="drill-prompt-text">\u2192 Review <span class="drill-prompt-target">${escHtml(firstUnapproved.id)}</span> next</span>
-      <button class="drill-approve-all-btn" id="drill-approve-all"><kbd>⌥A</kbd> Approve All (${unapprovedCount})</button>`;
+      <button class="drill-approve-all-btn" id="drill-approve-all"><kbd>⌃⇧A</kbd> Approve All (${unapprovedCount})</button>`;
     document.getElementById('drill-approve-all').addEventListener('click', () => approveAllVisible());
   }
 }
@@ -2305,8 +2305,8 @@ document.addEventListener('keydown', (e) => {
   if (viewMode !== 'columns') return;
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
-  // Alt+A = Approve All visible entities
-  if (e.altKey && e.key.toLowerCase() === 'a') {
+  // Ctrl+Shift+A = Approve All visible entities
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'a') {
     e.preventDefault();
     approveAllVisible();
     return;
