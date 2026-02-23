@@ -1119,6 +1119,110 @@ function drillGoBack(newLevel) {
   pushDrillHash();
 }
 
+/**
+ * Navigate the drill browser to the result of a completed agent.
+ * Maps agent type + result metadata to the correct drill state.
+ * @param {object} agent - AgentRecord from the registry
+ */
+function navigateToResult(agent) {
+  if (!graphData) return;
+  const result = agent.result || {};
+  const milestones = graphData.milestones || [];
+
+  switch (agent.type) {
+    case 'execution': {
+      // Navigate to the milestone's action list
+      const mileId = result.milestoneId || agent.milestoneId;
+      if (mileId) {
+        const mile = milestones.find(m => m.id === mileId);
+        if (mile && mile.realizes && mile.realizes.length) {
+          drillDeclId = mile.realizes[0];
+        }
+        drillMileId = mileId;
+        drillLevel = 'actions';
+      }
+      break;
+    }
+    case 'derivation': {
+      // Navigate to the declaration's milestone list
+      // The target is the declaration ID (e.g., "D-16") or "all"
+      const declId = agent.target !== 'all' ? agent.target : null;
+      if (declId) {
+        drillDeclId = declId;
+        drillLevel = 'milestones';
+      } else {
+        // "all" derivation — go to declarations list
+        drillDeclId = null;
+        drillMileId = null;
+        drillLevel = 'declarations';
+      }
+      drillMileId = null;
+      break;
+    }
+    case 'action-derivation': {
+      // Navigate to the milestone's action list
+      const mileId = result.milestoneId || agent.milestoneId || agent.target;
+      if (mileId) {
+        const mile = milestones.find(m => m.id === mileId);
+        if (mile && mile.realizes && mile.realizes.length) {
+          drillDeclId = mile.realizes[0];
+        }
+        drillMileId = mileId;
+        drillLevel = 'actions';
+      }
+      break;
+    }
+    case 'revision': {
+      // Navigate to the revised node — could be declaration or milestone
+      const nodeId = result.nodeId || agent.target;
+      if (nodeId && nodeId.startsWith('M-')) {
+        // Milestone revision — navigate to its action list
+        const mile = milestones.find(m => m.id === nodeId);
+        if (mile && mile.realizes && mile.realizes.length) {
+          drillDeclId = mile.realizes[0];
+        }
+        drillMileId = nodeId;
+        drillLevel = 'actions';
+      } else if (nodeId && nodeId.startsWith('D-')) {
+        // Declaration revision — navigate to its milestone list
+        drillDeclId = nodeId;
+        drillMileId = null;
+        drillLevel = 'milestones';
+      }
+      break;
+    }
+    case 'pipeline': {
+      // Navigate to the milestone targeted by the pipeline
+      const mileId = agent.milestoneId || agent.target;
+      if (mileId && mileId.startsWith('M-')) {
+        const mile = milestones.find(m => m.id === mileId);
+        if (mile && mile.realizes && mile.realizes.length) {
+          drillDeclId = mile.realizes[0];
+        }
+        drillMileId = mileId;
+        drillLevel = 'actions';
+      } else {
+        drillDeclId = null;
+        drillMileId = null;
+        drillLevel = 'declarations';
+      }
+      break;
+    }
+    default: {
+      // Unknown agent type — fall back to declarations
+      drillDeclId = null;
+      drillMileId = null;
+      drillLevel = 'declarations';
+      break;
+    }
+  }
+
+  // Switch to columns view if not already there and render
+  if (viewMode !== 'columns') switchView('columns');
+  pushDrillHash();
+  renderDrillView();
+}
+
 /** Build the hash string for current drill state */
 function drillHashString() {
   let hash = '#/';
