@@ -21,16 +21,29 @@ Performance is the product of alignment and integrity. Declare makes both struct
 - ✓ Alignment tracking — shared future document, drift detection, occurrence checks — v1.0
 - ✓ Performance scoring — alignment x integrity as qualitative HIGH/MEDIUM/LOW — v1.0
 - ✓ DAG visualization (ASCII tree with status markers) — v1.0
-- ✓ Claude Code CLI integration via 10 /declare:* slash commands — v1.0
+- ✓ Claude Code CLI integration via 30+ /declare:* slash commands — v1.0+
 - ✓ Occurrence checks — AI verifies declarations still hold at milestone completion — v1.0
+- ✓ Browser-based dashboard with column browser, planning/execution modes — v2.0
+- ✓ Inline declaration, milestone, and action creation from dashboard — v2.0
+- ✓ Review/approval workflow with iterative annotation cycles — v2.0
+- ✓ Milestone classification (agent-time / human-bound) with dependency-aware scheduling — v2.0
+- ✓ Pipeline runner with wave scheduling, progress tracking, failure recovery — v2.0
+- ✓ Real-time agent output streaming via SSE — v2.0
+- ✓ Inline file viewer with markdown rendering — v2.0
+- ✓ Commit and output linking per action — v2.0
+- ✓ Cross-project references via repo URL or local path — v2.0
+- ✓ Wholeness state computed per node, integrity visualization in dashboard — v2.0
+- ✓ Global CLI binary (`declare`, `dcl`) — v2.0
+- ✓ Real-time agent presence — server-side lifecycle tracking, activity cards, result navigation — v3.0
 
 ### Active
 
-- [ ] Web dashboard with interactive graph visualization (declared future → milestones → actions browsable in browser)
 - [ ] Clearing conversations — guided Assess → Clear → Create cycle for past-derived declarations
 - [ ] Default future detection — project current trajectory vs declared future, surface the gap
 - [ ] Integrity cascade warnings — when one commitment breaks, show downstream risk via graph traversal
 - [ ] GSD migration path — import existing .planning/ structures into Declare format
+- [ ] E2E test suite covering full D→M→A lifecycle via HTTP API
+- [ ] Mesh integration — declare daemon with mesh registration and plugin
 
 ### Out of Scope
 
@@ -92,12 +105,13 @@ Custom graph engine (DeclareDag, 486 lines) with dual adjacency lists and Kahn's
 
 ## Current State
 
-**Version shipped:** v1.0 (2026-02-21)
-**Declarations completed:** D-01 through D-05 (planning pipeline, lifecycle, quality loops, dashboard, namespace)
-**Milestones completed:** M-01 through M-17 (17 total)
-**Known gaps:** None
+**Current version:** v0.6.0
+**Cycles completed:** v1.0 (D-01–D-05, M-01–M-17), v2.0 (D-06–D-15, M-18–M-52), v3.0 partial (D-16, M-43–M-45)
+**Total milestones completed:** 52
+**Total declarations completed:** 16
+**Active declarations:** D-12 (Mesh Integration), D-17 (Quality Gate Infrastructure)
+**Source:** ~26K LOC JavaScript, 40+ CLI commands, 10 agent definitions, 6 workflows
 **Archive:** .planning/milestones/v1.0/
-**Next cycle:** D-06 through D-11 — UI overhaul, human/agent clarity, live execution, cross-project refs, integrity architecture, global CLI
 
 ---
-*Last updated: 2026-02-21 after v1.0 archive*
+*Last updated: 2026-02-23 after v0.6.0 release*
