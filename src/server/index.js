@@ -2288,6 +2288,29 @@ function route(req, res, cwd) {
     return;
   }
 
+  // Agent lifecycle SSE events (broadcast by AgentRegistry via broadcastFn):
+  //   agent-start   — { id, type, target, milestoneId, status: "running", startedAt }
+  //   agent-update  — { id, type, target, milestoneId, status, updatedAt, ...patch }
+  //   agent-complete — { id, type, target, milestoneId, status: "complete"|"failed", completedAt, exitCode, result|error }
+
+  if (urlPath === '/api/agents') {
+    const reg = getAgentRegistry(cwd);
+    sendJson(res, 200, reg.getAll());
+    return;
+  }
+
+  const agentMatch = urlPath.match(/^\/api\/agents\/([^/]+)$/);
+  if (agentMatch) {
+    const reg = getAgentRegistry(cwd);
+    const agent = reg.get(decodeURIComponent(agentMatch[1]));
+    if (agent) {
+      sendJson(res, 200, agent);
+    } else {
+      sendJson(res, 404, { error: 'Agent not found' });
+    }
+    return;
+  }
+
   if (urlPath === '/api/play/status') {
     const pr = getPlayRunner(cwd);
     const plr = getPipelineRunner(cwd);
