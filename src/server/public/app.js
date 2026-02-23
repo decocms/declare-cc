@@ -6553,54 +6553,53 @@ function stopCardTimers() {
 /** Map of active/recent agent states keyed by agent ID. */
 const agentCardState = new Map();
 
+// DOM references for card containers (A-124)
+const $activityCards = document.getElementById('activity-cards');
+const $activityCardsActive = document.getElementById('activity-cards-active');
+const $activityCardsRecent = document.getElementById('activity-cards-recent');
+
 /**
- * Re-render the agent cards list in the activity panel.
- * Renders all agents from agentCardState into a container element,
- * creating/updating the DOM. Starts card timers if running agents exist.
+ * Re-render the agent cards panel.
+ * Splits agents from agentCardState into active (running) and recent (done/failed),
+ * renders them into #activity-cards-active and #activity-cards-recent.
  */
 function renderAgentPanel() {
-  // Look for the agents tab container first (A-124), fall back to activity-list
-  const container = document.getElementById('agent-cards-list')
-    || document.getElementById('activity-list');
-  if (!container) return;
+  if (!$activityCardsActive) return;
 
-  if (agentCardState.size === 0) {
-    // Only clear if there is an agent-cards-list container (don't wipe the log tab)
-    const agentContainer = document.getElementById('agent-cards-list');
-    if (agentContainer) agentContainer.innerHTML = '<div class="agent-cards-empty">No active agents</div>';
+  const agents = Array.from(agentCardState.values());
+  const active = agents
+    .filter(a => a.status === 'running')
+    .sort((a, b) => new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime());
+  const recent = agents
+    .filter(a => a.status === 'done' || a.status === 'failed' || a.status === 'interrupted')
+    .sort((a, b) => new Date(b.completedAt || b.updatedAt || 0).getTime() - new Date(a.completedAt || a.updatedAt || 0).getTime())
+    .slice(0, 10);
+
+  if (active.length === 0 && recent.length === 0) {
+    $activityCardsActive.innerHTML = '<div style="padding:16px;color:var(--text-muted);font-size:11px;text-align:center;">No active agents</div>';
+    $activityCardsRecent.innerHTML = '';
     stopCardTimers();
     return;
   }
 
-  // Sort: running first, then by startedAt descending
-  const agents = Array.from(agentCardState.values()).sort(function(a, b) {
-    if (a.status === 'running' && b.status !== 'running') return -1;
-    if (b.status === 'running' && a.status !== 'running') return 1;
-    const aTime = new Date(b.startedAt || 0).getTime();
-    const bTime = new Date(a.startedAt || 0).getTime();
-    return aTime - bTime;
-  });
+  $activityCardsActive.innerHTML = active.length > 0
+    ? active.map(renderAgentCard).join('')
+    : '<div style="padding:16px;color:var(--text-muted);font-size:11px;text-align:center;">No active agents</div>';
+  $activityCardsRecent.innerHTML = recent.map(renderAgentCard).join('');
 
-  const html = agents.map(renderAgentCard).join('');
-  // If agent-cards-list exists, use it; otherwise append to activity-list
-  const agentContainer = document.getElementById('agent-cards-list');
-  if (agentContainer) {
-    agentContainer.innerHTML = html;
-  } else {
-    // Fallback: render into a wrapper inside activity-list
-    let wrapper = container.querySelector('.agent-cards-wrapper');
-    if (!wrapper) {
-      wrapper = document.createElement('div');
-      wrapper.className = 'agent-cards-wrapper';
-      container.prepend(wrapper);
-    }
-    wrapper.innerHTML = html;
-  }
-
-  // Start/stop timers based on running agents
-  const hasRunning = agents.some(function(a) { return a.status === 'running'; });
-  if (hasRunning) startCardTimers(); else stopCardTimers();
+  if (active.length > 0) startCardTimers(); else stopCardTimers();
 }
+
+// Tab switching for Agents/Log tabs (A-124)
+document.querySelectorAll('.activity-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.activity-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.activity-tab-content').forEach(c => c.classList.remove('active'));
+    tab.classList.add('active');
+    const target = tab.dataset.tab === 'cards' ? $activityCards : document.getElementById('activity-list');
+    if (target) target.classList.add('active');
+  });
+});
 
 /**
  * Fetch current agent state from server and populate card state.
