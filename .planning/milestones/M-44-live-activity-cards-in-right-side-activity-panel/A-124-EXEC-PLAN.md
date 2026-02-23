@@ -2,7 +2,7 @@
 milestone: M-44-live-activity-cards-in-right-side-activity-panel
 action: A-124
 type: execute
-wave: 1
+wave: 2
 depends_on:
   - A-123
 files_modified:

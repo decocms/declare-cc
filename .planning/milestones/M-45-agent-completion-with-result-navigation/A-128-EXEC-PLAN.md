@@ -3,7 +3,7 @@ milestone: M-45-agent-completion-with-result-navigation
 action: A-128
 type: execute
 wave: 2
-depends_on: ["A-129"]
+depends_on: ["A-127", "A-129"]
 files_modified:
   - src/server/public/app.js
   - src/server/public/index.html
