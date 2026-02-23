@@ -1440,12 +1440,15 @@ function renderDrillDeclarations(enrichedDeclarations, enrichedMilestones, actio
 
   // Prompt
   if (firstUnapproved) {
-    $drillPrompt.innerHTML = `<span class="drill-prompt-text">\u2192 Review <span class="drill-prompt-target" data-drill-target="${escHtml(firstUnapproved.id)}">${escHtml(firstUnapproved.id)}</span> next</span>`;
+    const unapprovedCount = enrichedDeclarations.filter(d => d.reviewState !== 'approved').length;
+    $drillPrompt.innerHTML = `<span class="drill-prompt-text">\u2192 Review <span class="drill-prompt-target" data-drill-target="${escHtml(firstUnapproved.id)}">${escHtml(firstUnapproved.id)}</span> next</span>
+      <button class="drill-approve-all-btn" id="drill-approve-all"><kbd>⌥A</kbd> Approve All (${unapprovedCount})</button>`;
     $drillPrompt.querySelector('.drill-prompt-target').addEventListener('click', () => {
       drillDeclId = firstUnapproved.id;
       drillLevel = 'milestones';
       renderDrillView();
     });
+    document.getElementById('drill-approve-all').addEventListener('click', () => approveAllVisible());
   } else {
     $drillPrompt.innerHTML = `<span class="drill-prompt-complete">All declarations reviewed</span>
       <button class="drill-next-btn" id="drill-next-btn"><kbd>N</kbd> Next</button>`;
@@ -1592,12 +1595,15 @@ function renderDrillMilestones(enrichedDeclarations, enrichedMilestones, actions
 
   // Prompt
   if (firstUnapproved) {
-    $drillPrompt.innerHTML = `<span class="drill-prompt-text">\u2192 Review <span class="drill-prompt-target" data-drill-target="${escHtml(firstUnapproved.id)}">${escHtml(firstUnapproved.id)}</span> to continue</span>`;
+    const unapprovedCount = filtered.filter(m => m.reviewState !== 'approved').length;
+    $drillPrompt.innerHTML = `<span class="drill-prompt-text">\u2192 Review <span class="drill-prompt-target" data-drill-target="${escHtml(firstUnapproved.id)}">${escHtml(firstUnapproved.id)}</span> to continue</span>
+      <button class="drill-approve-all-btn" id="drill-approve-all"><kbd>⌥A</kbd> Approve All (${unapprovedCount})</button>`;
     $drillPrompt.querySelector('.drill-prompt-target').addEventListener('click', () => {
       drillMileId = firstUnapproved.id;
       drillLevel = 'actions';
       renderDrillView();
     });
+    document.getElementById('drill-approve-all').addEventListener('click', () => approveAllVisible());
   } else {
     $drillPrompt.innerHTML = `<span class="drill-prompt-complete">All milestones approved</span>
       <button class="drill-next-btn" id="drill-next-btn"><kbd>N</kbd> Next</button>`;
@@ -1749,7 +1755,10 @@ function renderDrillActions(enrichedDeclarations, enrichedMilestones, actions) {
       <button class="drill-next-btn" id="drill-next-btn"><kbd>N</kbd> Next</button>`;
     document.getElementById('drill-next-btn').addEventListener('click', () => drillAdvanceNext());
   } else if (firstUnapproved) {
-    $drillPrompt.innerHTML = `<span class="drill-prompt-text">\u2192 Review <span class="drill-prompt-target">${escHtml(firstUnapproved.id)}</span> next</span>`;
+    const unapprovedCount = filtered.filter(a => a.reviewState !== 'approved').length;
+    $drillPrompt.innerHTML = `<span class="drill-prompt-text">\u2192 Review <span class="drill-prompt-target">${escHtml(firstUnapproved.id)}</span> next</span>
+      <button class="drill-approve-all-btn" id="drill-approve-all"><kbd>⌥A</kbd> Approve All (${unapprovedCount})</button>`;
+    document.getElementById('drill-approve-all').addEventListener('click', () => approveAllVisible());
   }
 }
 
@@ -2015,6 +2024,45 @@ function updateLocalReviewState(nodeId, newState) {
   if (node) node.reviewState = newState;
 }
 
+/**
+ * Approve all visible entities of a given type (or all types at current drill level).
+ * Sends parallel PUT requests and updates local state for instant feedback.
+ */
+async function approveAllVisible() {
+  if (!graphData) return;
+  let nodes;
+  if (drillLevel === 'declarations') {
+    nodes = (graphData.declarations || []).filter(n => n.reviewState !== 'approved');
+  } else if (drillLevel === 'milestones') {
+    const filtered = (graphData.milestones || []).filter(m =>
+      (m.realizes || []).includes(drillDeclId)
+    );
+    nodes = filtered.filter(n => n.reviewState !== 'approved');
+  } else if (drillLevel === 'actions') {
+    const filtered = (graphData.actions || []).filter(a =>
+      (a.causes || []).includes(drillMileId)
+    );
+    nodes = filtered.filter(n => n.reviewState !== 'approved');
+  } else {
+    return;
+  }
+  if (nodes.length === 0) return;
+
+  // Fire all approve requests in parallel
+  const promises = nodes.map(n =>
+    fetch(`/api/node/${encodeURIComponent(n.id)}/review-state`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reviewState: 'approved' }),
+    }).then(resp => {
+      if (resp.ok) updateLocalReviewState(n.id, 'approved');
+    }).catch(err => console.error(`Failed to approve ${n.id}:`, err))
+  );
+  await Promise.all(promises);
+  renderDrillView();
+  loadActivity();
+}
+
 // ─── Column browser keyboard navigation ──────────────────────────────────────
 
 // Inject kb-focus CSS rule
@@ -2152,6 +2200,14 @@ function getFocusedCard() {
 document.addEventListener('keydown', (e) => {
   if (viewMode !== 'columns') return;
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+  // Alt+A = Approve All visible entities
+  if (e.altKey && e.key.toLowerCase() === 'a') {
+    e.preventDefault();
+    approveAllVisible();
+    return;
+  }
+
   if (e.metaKey || e.ctrlKey || e.altKey) return;
 
   const key = e.key;
@@ -2300,10 +2356,10 @@ document.addEventListener('click', async (e) => {
       console.error('Failed to update review state:', err);
       return;
     }
-    // SSE will trigger a refresh, but also update immediately for responsiveness
-    badge.className = `review-badge review-${nextState}`;
-    badge.dataset.reviewState = nextState;
-    badge.textContent = REVIEW_DISPLAY[nextState] || nextState;
+    // Update local data + re-render for instant feedback (don't rely solely on SSE)
+    updateLocalReviewState(nodeId, nextState);
+    renderDrillView();
+    loadActivity();
   } catch (err) {
     console.error('Failed to update review state:', err);
   }
