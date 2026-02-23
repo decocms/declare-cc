@@ -51,7 +51,8 @@ const RECENT_MAX_AGE_MS = 30 * 60 * 1000;
  *   getRecent: (limit?: number) => AgentRecord[],
  *   getAll: () => { active: AgentRecord[], recent: AgentRecord[] },
  *   markInterrupted: (agentIds: string[]) => void,
- *   loadFromDisk: () => { agents: Record<string, AgentRecord>, recentAgents: AgentRecord[], persistedAt: string }|null
+ *   loadFromDisk: () => { agents: Record<string, AgentRecord>, recentAgents: AgentRecord[], persistedAt: string }|null,
+ *   restoreFromDisk: () => { restored: number, interrupted: number }
  * }}
  */
 function createAgentRegistry(cwd, broadcastFn) {
@@ -281,6 +282,55 @@ function createAgentRegistry(cwd, broadcastFn) {
     }
   }
 
+  /**
+   * Restore agent state from disk on startup.
+   * Marks previously-running agents as "interrupted" and loads recent agents.
+   * Idempotent -- safe to call multiple times.
+   *
+   * @returns {{ restored: number, interrupted: number }}
+   */
+  function restoreFromDisk() {
+    const persisted = loadFromDisk();
+    if (!persisted) return { restored: 0, interrupted: 0 };
+
+    const now = new Date().toISOString();
+    let interruptedCount = 0;
+    const seenIds = new Set(recentAgents.map((a) => a.id));
+
+    // Mark previously-running agents as interrupted
+    const persistedAgents = persisted.agents || {};
+    for (const [id, record] of Object.entries(persistedAgents)) {
+      if (seenIds.has(id)) continue;
+      record.status = 'interrupted';
+      record.completedAt = now;
+      record.updatedAt = now;
+      record.exitCode = -1;
+      record.error = 'server restarted';
+      recentAgents.push(record);
+      seenIds.add(id);
+      interruptedCount++;
+    }
+
+    // Restore recent agents that aren't already present and aren't too old
+    const cutoff = Date.now() - RECENT_MAX_AGE_MS;
+    const persistedRecent = persisted.recentAgents || [];
+    for (const record of persistedRecent) {
+      if (seenIds.has(record.id)) continue;
+      const ts = record.completedAt || record.updatedAt;
+      if (new Date(ts).getTime() <= cutoff) continue;
+      recentAgents.push(record);
+      seenIds.add(record.id);
+    }
+
+    // Enforce max size
+    if (recentAgents.length > RECENT_MAX) {
+      recentAgents = recentAgents.slice(recentAgents.length - RECENT_MAX);
+    }
+
+    persistState();
+    return { restored: recentAgents.length, interrupted: interruptedCount };
+  }
+
   return {
     spawn,
     update,
@@ -292,6 +342,7 @@ function createAgentRegistry(cwd, broadcastFn) {
     getAll,
     markInterrupted,
     loadFromDisk,
+    restoreFromDisk,
   };
 }
 
@@ -304,6 +355,8 @@ if (require.main === module) {
   console.log('completed:', reg.get(a.id).status);
   console.log('active:', reg.getActive().length);
   console.log('recent:', reg.getRecent().length);
+  const restored = reg.restoreFromDisk();
+  console.log('restored:', restored.restored, 'interrupted:', restored.interrupted);
   console.log('OK');
 }
 
