@@ -5,6 +5,7 @@
 **Status:** PENDING
 **Review:** approved
 **Milestones:** M-36, M-37
+**Note:** Paused — will revisit after D-16 and D-17 are complete.
 
 ## D-16: Real-Time Agent Presence
 **Statement:** Every agent spawn — execution, revision, derivation, research — appears instantly as a persistent activity card in the dashboard topbar. Cards show the agent type, target node, elapsed time, and live status. Cards survive page refresh and navigation — you can browse other parts of the dashboard, come back, and the card is still there with its current state. When an agent completes, the card transitions to a "done" state with a click-to-navigate action that jumps you to the result — the revised plan, the derived milestones, the execution output. The activity surface is the single source of truth for everything the system is doing right now and everything it just finished.

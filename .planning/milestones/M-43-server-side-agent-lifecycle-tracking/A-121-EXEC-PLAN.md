@@ -2,8 +2,8 @@
 milestone: M-43-server-side-agent-lifecycle-tracking
 action: A-121
 type: execute
-wave: 2
-depends_on: ["A-119"]
+wave: 3
+depends_on: ["A-119", "A-120"]
 files_modified:
   - src/server/index.js
 autonomous: true
