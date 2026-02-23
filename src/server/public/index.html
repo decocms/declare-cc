@@ -2309,6 +2309,76 @@
       flex-shrink: 0;
     }
 
+    /* ── Agent activity cards ── */
+    .agent-card {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      transition: background 0.15s;
+    }
+    .agent-card:hover { background: var(--surface3); }
+    .agent-card.status-running  { border-left: 3px solid var(--executing-color); }
+    .agent-card.status-done     { border-left: 3px solid var(--act-color); opacity: 0.8; }
+    .agent-card.status-failed   { border-left: 3px solid var(--broken-color); opacity: 0.8; }
+    .agent-card-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .agent-card-icon {
+      font-size: 14px;
+      flex-shrink: 0;
+      width: 20px;
+      text-align: center;
+    }
+    .agent-card-target {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-bright);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      flex: 1;
+    }
+    .agent-card-badge {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      padding: 2px 6px;
+      border-radius: 3px;
+      flex-shrink: 0;
+    }
+    .agent-card-badge.badge-running { color: var(--executing-color); background: var(--executing-bg); }
+    .agent-card-badge.badge-done    { color: var(--act-color); background: var(--act-bg); }
+    .agent-card-badge.badge-failed  { color: var(--broken-color); background: var(--broken-bg); }
+    .agent-card-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+    .agent-card-type { text-transform: capitalize; }
+    .agent-card-timer {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+    .status-running .agent-card-timer { color: var(--executing-color); }
+    .agent-card-error {
+      font-size: 11px;
+      color: var(--broken-color);
+      margin-top: 2px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
     /* ── Classification toggle buttons ── */
     .classify-btn {
       background: var(--surface2);
