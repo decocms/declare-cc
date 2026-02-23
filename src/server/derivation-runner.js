@@ -174,7 +174,10 @@ function createDerivationRunner(sseClients, cwd, registry) {
       });
       if (registry && closingAgentId) {
         if ((exitCode ?? -1) === 0) {
-          registry.complete(closingAgentId, { milestones });
+          const milestoneIds = Array.isArray(milestones)
+            ? milestones.map(m => m.id || m.title || 'unknown').filter(Boolean)
+            : [];
+          registry.complete(closingAgentId, { milestones: milestoneIds });
         } else {
           registry.fail(closingAgentId, exitCode ?? -1, 'derivation failed');
         }

@@ -324,7 +324,12 @@ function createPipelineRunner(sseClients, cwd, registry) {
           const aId = actionAgentIds.get(actionId);
           if (aId) {
             if (code === 0) {
-              registry.complete(aId, { exitCode: 0, durationMs });
+              registry.complete(aId, {
+                actionId,
+                milestoneId,
+                logPath: logPath || null,
+                durationMs,
+              });
             } else {
               registry.fail(aId, code, 'process exited');
             }

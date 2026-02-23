@@ -219,7 +219,11 @@ function createRevisionRunner(sseClients, cwd, onComplete, registry) {
             try { onComplete(completedNodeId); } catch (_) { /* ignore */ }
           }
           if (registry && closingAgentId) {
-            registry.complete(closingAgentId, { revisionRound: newRound });
+            registry.complete(closingAgentId, {
+              nodeId: completedNodeId,
+              planPath: artifactPath,
+              revisionRound: newRound,
+            });
           }
         } catch (err) {
           broadcast('revision-complete', {

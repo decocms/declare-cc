@@ -151,7 +151,13 @@ function createProcessManager(sseClients, cwd, registry) {
       broadcast('action-complete', { actionId, exitCode: exitCode ?? -1 });
       if (registry && entryAgentId) {
         if ((exitCode ?? -1) === 0) {
-          registry.complete(entryAgentId, { exitCode: 0 });
+          const milestoneFolder = entry?.logPath ? path.dirname(entry.logPath) : null;
+          registry.complete(entryAgentId, {
+            actionId,
+            milestoneId: entry?.milestoneId || milestoneId,
+            summaryPath: milestoneFolder ? path.join(milestoneFolder, actionId + '-SUMMARY.md') : null,
+            logPath: entry?.logPath || null,
+          });
         } else {
           registry.fail(entryAgentId, exitCode ?? -1, 'process exited');
         }

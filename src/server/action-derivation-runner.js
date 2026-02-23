@@ -157,7 +157,10 @@ function createActionDerivationRunner(sseClients, cwd, registry) {
       });
       if (registry && closingAgentId) {
         if ((exitCode ?? -1) === 0) {
-          registry.complete(closingAgentId, { actions });
+          registry.complete(closingAgentId, {
+            milestoneId: milestone.id,
+            actionCount: Array.isArray(actions) ? actions.length : null,
+          });
         } else {
           registry.fail(closingAgentId, exitCode ?? -1, 'action derivation failed');
         }
