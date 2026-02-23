@@ -1,51 +1,16 @@
 # Future: declare-cc
 
-## D-06: UI as Primary Surface
-**Statement:** The Declare workflow is experienced entirely through the browser UI — declarations emerge in-view as you work, you accept or adjust them inline, milestones derive and appear next, then actions — the process drives you forward without ever switching to a terminal.
-**Status:** PENDING
-**Milestones:** M-18, M-19, M-20, M-21, M-39, M-42
-
-## D-07: Human/Agent Clarity
-**Statement:** During planning, milestones are explicitly classified as agent-time or human-bound, with dependencies declared between them. Agent-time milestones are prioritized and run first — they prepare the outputs and context that human-bound milestones depend on — and when conditions are met, a play action executes all autonomous work in dependency order without interruption.
-**Status:** PENDING
-**Milestones:** M-22, M-23, M-24, M-25, M-38
-
-## D-08: Live Execution Visibility
-**Statement:** As agents execute, their work is visible in real-time in the UI — progress streams, produced files are openable inline with full markdown rendering, and commit outputs are linked — so the human sees results as they emerge without leaving the interface.
-**Status:** PENDING
-**Milestones:** M-26, M-27, M-28, M-29, M-40, M-41
-
-## D-09: Cross-Project References
-**Statement:** A declare node can reference an external project by repo URL or local folder path, so related work across separate repositories or directories is linkable from the graph — whether the sub-project runs locally or remotely is up to the operator.
-**Status:** PENDING
-**Milestones:** M-30
-
-## D-10: Integrity as Architecture
-**Statement:** The Declare system is built on the Erhard model of integrity — every declaration is a word given, every node shows its wholeness state, and the UI's primary function is to reveal where the project is whole and complete versus where integrity is diminished — so the path to full workability is always visible and actionable.
-**Status:** PENDING
-**Milestones:** M-31, M-32, M-33
-
-## D-11: Global CLI
-**Statement:** declare is a global command that opens the dashboard for the current directory — declare and declare . are equivalent — showing the project's live state or prompting to initialize if empty. Subcommands like declare /path/to/project or declare serve extend it, but the default invocation is always: open and show.
-**Status:** DONE
-**Milestones:** M-34, M-35
-
 ## D-12: Mesh Integration
 **Statement:** The Declare dashboard runs as a local daemon that registers with the mesh daemon. The mesh UI discovers active declare projects and renders the dashboard inline as a declare plugin — giving cross-project visibility and control from a single surface without leaving mesh.
 **Status:** PENDING
 **Milestones:** M-36, M-37
 
-## D-13: Plan Verification Before Execution
-**Statement:** Every plan artifact — declaration, milestone, action EXEC-PLAN — passes through explicit human review with inline annotation before becoming executable. The UI supports iterative review cycles: generate plan → annotate with corrections → send back for revision → repeat until approved. Nothing runs until the human says the plan is tight. The review state (draft/in-review/revision-needed/approved) is tracked per node and gates execution.
+## D-16: Real-Time Agent Presence
+**Statement:** Every agent spawn — execution, revision, derivation, research — appears instantly as a persistent activity card in the dashboard topbar. Cards show the agent type, target node, elapsed time, and live status. Cards survive page refresh and navigation — you can browse other parts of the dashboard, come back, and the card is still there with its current state. When an agent completes, the card transitions to a "done" state with a click-to-navigate action that jumps you to the result — the revised plan, the derived milestones, the execution output. The activity surface is the single source of truth for everything the system is doing right now and everything it just finished.
 **Status:** PENDING
-**Milestones:** M-43, M-44, M-45, M-46
+**Milestones:** M-43, M-44, M-45
 
-## D-14: Planning and Execution Are Distinct UX Modes
-**Statement:** Planning and execution are separate UX modes with an explicit transition. Planning mode uses the column browser as its primary view — you walk D → M → A reviewing and approving each artifact, with the review/annotation panel on the right. When all plans in scope are approved, you transition to Execution mode — a dedicated full-screen view showing the ordered execution pipeline, a single "Go" button, and large progress display. You cannot execute from planning mode; you cannot edit plans from execution mode.
+## D-17: Quality Gate Infrastructure
+**Statement:** The Declare project has automated quality gates — E2E tests covering the full D→M→A lifecycle via the HTTP API, with a CI-compatible test runner — so regressions are caught before they ship.
 **Status:** PENDING
-**Milestones:** M-47, M-48, M-49
-
-## D-15: Autonomous Execution to Completion
-**Statement:** Once the plan is verified and the execution order confirmed, a single "Go" runs the entire pipeline to completion without human intervention — because the plan was tight and reviewed. The execution view shows wave progress, live output, and a CI-pipeline-style display. If a critical failure occurs, execution pauses and offers skip-and-continue or stop — but the default path is uninterrupted completion.
-**Status:** PENDING
-**Milestones:** M-50, M-51, M-52
+**Milestones:** M-42
