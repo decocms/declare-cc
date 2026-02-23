@@ -6602,6 +6602,28 @@ function renderAgentPanel() {
   if (hasRunning) startCardTimers(); else stopCardTimers();
 }
 
+/**
+ * Fetch current agent state from server and populate card state.
+ * Called on page load and SSE reconnect to ensure cards survive refresh.
+ */
+async function loadAgentCards() {
+  try {
+    const res = await fetch('/api/agents');
+    if (!res.ok) return; // API not available yet (M-43 not deployed) — fail silently
+    const data = await res.json();
+    const agents = [].concat(data.active || [], data.recent || []);
+
+    // Replace entire state with server truth
+    agentCardState.clear();
+    for (const agent of agents) {
+      agentCardState.set(agent.id, agent);
+    }
+    renderAgentPanel();
+  } catch (_) {
+    // /api/agents not available — M-43 not yet deployed, silently skip
+  }
+}
+
 // ─── Activity topbar ──────────────────────────────────────────────────────────
 
 /** @type {{ actionId: string, milestoneId?: string, startedAt: number } | null} */
@@ -6609,16 +6631,8 @@ let topbarActiveOp = null;
 /** @type {{ actionId: string, milestoneId?: string, completedAt: number } | null} */
 let topbarLastOp = null;
 
-function updateTopbar() {
-  if (!$activityPinned) return;
-  if (topbarActiveOp) {
-    const aLabel = topbarActiveOp.actionId;
-    const mLabel = topbarActiveOp.milestoneId ? ' \u2014 ' + topbarActiveOp.milestoneId : '';
-    $activityPinned.innerHTML = '<div class="activity-pinned"><span class="pinned-spinner"></span> EXECUTING ' + escHtml(aLabel) + escHtml(mLabel) + '</div>';
-  } else {
-    $activityPinned.innerHTML = '';
-  }
-}
+// updateTopbar() — no-op, replaced by agent cards panel (A-124)
+function updateTopbar() {}
 
 function formatTimeAgo(ts) {
   var diff = Math.floor((Date.now() - ts) / 1000);
@@ -6652,25 +6666,13 @@ function topbarOnActionComplete(actionId) {
   updateTopbar();
 }
 
-async function topbarOnActivity() {
-  try {
-    var res = await fetch('/api/activity');
-    var data = await res.json();
-    var events = data.events || [];
-    var taskStart = events.find(function(ev) { return ev.tool === 'Task' && ev.phase === 'start'; });
-    if (taskStart) {
-      var actionMatch = (taskStart.desc || '').match(/A-\d+/i);
-      var mileMatch = (taskStart.desc || '').match(/M-\d+/i);
-      if (actionMatch) {
-        topbarActiveOp = {
-          actionId: actionMatch[0].toUpperCase(),
-          milestoneId: mileMatch ? mileMatch[0].toUpperCase() : '',
-          startedAt: new Date(taskStart.ts).getTime() || Date.now(),
-        };
-        updateTopbar();
-      }
-    }
-  } catch (_) {}
+// topbarOnActivity() — simplified to just pulse the activity indicator (A-124)
+function topbarOnActivity() {
+  if ($activityPulse) {
+    $activityPulse.classList.add('live');
+    clearTimeout($activityPulse._topbarTimer);
+    $activityPulse._topbarTimer = setTimeout(() => $activityPulse.classList.remove('live'), 3000);
+  }
 }
 
 setInterval(function() { if (!topbarActiveOp && topbarLastOp) updateTopbar(); }, 30000);
@@ -6860,9 +6862,14 @@ if ($wfActionBtn) {
 
 function connectSSE() {
   const es = new EventSource('/events');
+  es.addEventListener('open', function() {
+    // Re-sync agent state on reconnect
+    loadAgentCards();
+  });
   es.addEventListener('change', () => {
     if (focusNodeId || focusCleanupTimer) return; // skip during animation
     loadData();
+    loadAgentCards(); // refresh agent cards on any .planning/ change
   });
   es.addEventListener('activity', () => {
     loadActivity();
@@ -7066,3 +7073,4 @@ setInterval(function() {
 showLoading();
 loadData().then(() => restoreExecState());
 loadActivity();
+loadAgentCards();
