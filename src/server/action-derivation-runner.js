@@ -4,15 +4,14 @@
 /**
  * Action derivation runner for browser-based per-milestone action derivation.
  *
- * Spawns a Claude CLI subprocess with a prompt scoped to a single milestone,
- * streams output line-by-line to SSE clients, and parses structured
+ * Uses @anthropic-ai/claude-agent-sdk to run AI queries directly,
+ * streams output via SSE to connected clients, and parses structured
  * JSON results (proposed actions) on completion.
  *
  * Session-based tracking (one action derivation at a time).
- * Zero runtime dependencies — uses Node's built-in child_process only.
  */
 
-const { spawn } = require('node:child_process');
+const { runAI } = require('./ai-runner');
 
 /**
  * Build the action derivation prompt for a specific milestone.
@@ -44,14 +43,15 @@ function buildActionPrompt(milestone, existingActions) {
 }
 
 /**
- * Create an action derivation runner that spawns and tracks Claude CLI action derivation processes.
+ * Create an action derivation runner using the Claude Agent SDK.
  *
  * @param {Set<import('http').ServerResponse>} sseClients - Active SSE clients to broadcast to
  * @param {string} cwd - Project root directory
+ * @param {object} [registry] - Agent registry for tracking
  * @returns {{ derive: (milestone: object, existingActions: Array) => { ok?: boolean, error?: string, status?: number, sessionId?: string }, stop: () => { ok?: boolean, error?: string, status?: number }, running: () => string|null }}
  */
 function createActionDerivationRunner(sseClients, cwd, registry) {
-  /** @type {{ sessionId: string, milestoneId: string, proc: import('child_process').ChildProcess, agentId?: string } | null} */
+  /** @type {{ sessionId: string, milestoneId: string, agentId?: string, abortController: AbortController } | null} */
   let current = null;
 
   /**
@@ -71,34 +71,7 @@ function createActionDerivationRunner(sseClients, cwd, registry) {
   }
 
   /**
-   * Create a line-buffered handler for a stream.
-   * @param {string} sessionId
-   * @param {string} streamName
-   * @param {{ text: string }} accumulator
-   * @returns {(chunk: Buffer) => void}
-   */
-  function createLineHandler(sessionId, streamName, accumulator) {
-    let buffer = '';
-    return (chunk) => {
-      const text = chunk.toString();
-      if (streamName === 'stdout') {
-        accumulator.text += text;
-      }
-      buffer += text;
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-      for (const line of lines) {
-        broadcast('action-derivation-output', {
-          sessionId,
-          text: line,
-          stream: streamName,
-        });
-      }
-    };
-  }
-
-  /**
-   * Spawn a Claude CLI process to derive actions for a milestone.
+   * Derive actions for a milestone using the Claude Agent SDK.
    *
    * @param {{ id: string, title: string, status: string, realizes: string[] }} milestone
    * @param {Array<{ id: string, title: string, status: string, produces: string }>} existingActions
@@ -111,14 +84,7 @@ function createActionDerivationRunner(sseClients, cwd, registry) {
 
     const sessionId = `action-deriv-${Date.now()}`;
     const prompt = buildActionPrompt(milestone, existingActions);
-
-    const env = { ...process.env, FORCE_COLOR: '0' };
-    delete env.CLAUDECODE;
-
-    const proc = spawn('claude', ['-p', prompt, '--output-format', 'text'], {
-      cwd,
-      env,
-    });
+    const abortController = new AbortController();
 
     /** @type {string|undefined} */
     let agentId;
@@ -127,56 +93,54 @@ function createActionDerivationRunner(sseClients, cwd, registry) {
       agentId = agent.id;
     }
 
-    current = { sessionId, milestoneId: milestone.id, proc, agentId };
+    current = { sessionId, milestoneId: milestone.id, agentId, abortController };
 
-    const stdout = { text: '' };
-
-    if (proc.stdout) {
-      proc.stdout.on('data', createLineHandler(sessionId, 'stdout', stdout));
-    }
-
-    if (proc.stderr) {
-      proc.stderr.on('data', createLineHandler(sessionId, 'stderr', stdout));
-    }
-
-    proc.on('close', (exitCode) => {
-      let actions = null;
+    // Run AI asynchronously
+    runAI(prompt, {
+      cwd,
+      model: 'haiku',
+      maxTurns: 1,
+      abortController,
+      onText: (text) => {
+        broadcast('action-derivation-output', {
+          sessionId,
+          text,
+          stream: 'stdout',
+        });
+      },
+    }).then(({ text, error }) => {
       const closingAgentId = current ? current.agentId : undefined;
-      if (exitCode === 0) {
+      current = null;
+
+      let actions = null;
+      const exitCode = error ? 1 : 0;
+      if (!error && text) {
         try {
-          actions = JSON.parse(stdout.text.trim());
+          actions = JSON.parse(text.trim());
         } catch (_) {
-          // Parse failure — actions stays null, UI can show raw output
+          // Try to extract JSON from the text (model may include extra text)
+          const jsonMatch = text.match(/\[[\s\S]*\]/);
+          if (jsonMatch) {
+            try { actions = JSON.parse(jsonMatch[0]); } catch (_2) {}
+          }
         }
       }
-      current = null;
+
       broadcast('action-derivation-complete', {
         sessionId,
-        exitCode: exitCode ?? -1,
+        exitCode,
         actions,
       });
+
       if (registry && closingAgentId) {
-        if ((exitCode ?? -1) === 0) {
+        if (exitCode === 0) {
           registry.complete(closingAgentId, {
             milestoneId: milestone.id,
             actionCount: Array.isArray(actions) ? actions.length : null,
           });
         } else {
-          registry.fail(closingAgentId, exitCode ?? -1, 'action derivation failed');
+          registry.fail(closingAgentId, 1, error || 'action derivation failed');
         }
-      }
-    });
-
-    proc.on('error', (_err) => {
-      const errorAgentId = current ? current.agentId : undefined;
-      current = null;
-      broadcast('action-derivation-complete', {
-        sessionId,
-        exitCode: -1,
-        actions: null,
-      });
-      if (registry && errorAgentId) {
-        registry.fail(errorAgentId, -1, 'spawn error');
       }
     });
 
@@ -184,14 +148,14 @@ function createActionDerivationRunner(sseClients, cwd, registry) {
   }
 
   /**
-   * Stop the currently running action derivation process.
+   * Stop the currently running action derivation.
    * @returns {{ ok?: boolean, error?: string, status?: number }}
    */
   function stop() {
     if (!current) {
       return { error: 'not_running', status: 404 };
     }
-    current.proc.kill('SIGTERM');
+    current.abortController.abort();
     return { ok: true };
   }
 

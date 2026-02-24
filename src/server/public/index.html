@@ -269,6 +269,11 @@
       color: var(--accent);
     }
     #execute-main-btn.btn-plan:hover { background: rgba(208, 236, 26, 0.18); border-color: rgba(208, 236, 26, 0.4); }
+    #execute-main-btn.btn-done {
+      background: rgba(134, 239, 172, 0.08);
+      border-color: rgba(134, 239, 172, 0.2);
+      color: #86efac;
+    }
 
     /* ── Main layout ── */
     #main {
@@ -855,7 +860,9 @@
       border-bottom: 1px solid rgba(255,255,255,0.03);
       transition: background 0.15s;
     }
-    .activity-event:hover { background: var(--surface2); }
+    .activity-event:hover { background: var(--surface2); cursor: default; }
+    .activity-event.clickable { cursor: pointer; }
+    .activity-event.clickable:hover { background: var(--surface3); }
     .activity-event:last-child { border-bottom: none; }
     .activity-event.is-new {
       animation: activity-flash 1.5s ease-out;
@@ -1090,6 +1097,273 @@
     #drill-list::-webkit-scrollbar-track { background: transparent; }
     #drill-list::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
 
+    /* ── Lifecycle stage sections ── */
+    .lifecycle-stages {
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+    .lifecycle-section {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .lifecycle-section.collapsed .lifecycle-cards { display: none; }
+    .lifecycle-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 0;
+      user-select: none;
+    }
+    .lifecycle-icon {
+      font-size: 14px;
+      width: 20px;
+      text-align: center;
+    }
+    .lifecycle-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .lifecycle-count {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 1px 7px;
+      border-radius: 10px;
+    }
+    .lifecycle-toggle {
+      font-size: 10px;
+      color: var(--text-muted);
+      margin-left: 4px;
+    }
+    .lifecycle-header-spacer { flex: 1; }
+    .lifecycle-stage-btn {
+      font-size: 12px;
+      font-weight: 600;
+      padding: 4px 14px;
+      border-radius: 14px;
+      border: 1px solid var(--border-strong);
+      background: var(--surface2);
+      color: var(--text);
+      cursor: pointer;
+      font-family: inherit;
+      transition: all 0.15s ease;
+    }
+    .lifecycle-stage-btn:hover {
+      background: var(--surface3);
+      border-color: var(--accent-border);
+      color: var(--text-bright);
+    }
+
+    /* ── Filter chips ── */
+    .lifecycle-filter-chips {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .lifecycle-chip {
+      font-size: 12px;
+      padding: 4px 12px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text-dim);
+      cursor: pointer;
+      transition: all 0.15s ease;
+      font-family: inherit;
+    }
+    .lifecycle-chip:hover {
+      border-color: var(--border-strong);
+      color: var(--text);
+    }
+    .lifecycle-chip.active {
+      background: var(--chip-color, var(--accent));
+      border-color: var(--chip-color, var(--accent));
+      color: var(--bg);
+      font-weight: 600;
+    }
+    .chip-count {
+      font-weight: 700;
+      margin-left: 2px;
+    }
+
+    /* ── Type badge ── */
+    .lifecycle-type-badge {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 1px 6px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .lifecycle-type-badge.type-declaration {
+      background: rgba(134, 239, 172, 0.12);
+      color: #86efac;
+    }
+    .lifecycle-type-badge.type-milestone {
+      background: rgba(165, 149, 255, 0.12);
+      color: #a595ff;
+    }
+    .lifecycle-type-badge.type-action {
+      background: rgba(147, 197, 253, 0.12);
+      color: #93c5fd;
+    }
+
+    .lifecycle-cards {
+      max-width: none;
+      margin: 0;
+    }
+
+    /* ── Empty state / Onboarding ── */
+    .onboarding-empty {
+      max-width: 480px;
+      margin: 80px auto 0;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+    }
+    .onboarding-project {
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--text-bright);
+      letter-spacing: -0.02em;
+    }
+    .onboarding-heading {
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--accent);
+    }
+    .onboarding-desc {
+      font-size: 14px;
+      color: var(--text-dim);
+      line-height: 1.6;
+      max-width: 380px;
+    }
+    .onboarding-form {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-top: 8px;
+    }
+    .onboarding-input, .onboarding-textarea {
+      width: 100%;
+      padding: 10px 14px;
+      font-size: 14px;
+      font-family: inherit;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      outline: none;
+      transition: border-color 0.15s ease;
+    }
+    .onboarding-input:focus, .onboarding-textarea:focus {
+      border-color: var(--accent-border);
+    }
+    .onboarding-textarea { resize: vertical; min-height: 60px; }
+    .onboarding-btn {
+      padding: 10px 24px;
+      font-size: 14px;
+      font-weight: 600;
+      font-family: inherit;
+      background: var(--accent);
+      color: var(--bg);
+      border: none;
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: opacity 0.15s ease;
+    }
+    .onboarding-btn:hover { opacity: 0.9; }
+    .onboarding-btn:disabled { opacity: 0.5; cursor: default; }
+    .onboarding-error {
+      font-size: 13px;
+      color: var(--broken-color);
+      min-height: 18px;
+    }
+
+    /* ── Reconnecting banner ── */
+    #reconnect-banner {
+      position: fixed;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%) translateY(-100%);
+      background: var(--executing-color);
+      color: var(--bg);
+      padding: 6px 20px;
+      font-size: 13px;
+      font-weight: 600;
+      border-radius: 0 0 var(--radius) var(--radius);
+      z-index: 9999;
+      transition: transform 0.3s ease;
+    }
+    #reconnect-banner.visible {
+      transform: translateX(-50%) translateY(0);
+    }
+
+    /* ── Lifecycle card transitions ── */
+    .lifecycle-cards .drill-card {
+      animation: lifecycleCardIn 0.2s ease-out both;
+    }
+    @keyframes lifecycleCardIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .lifecycle-cards .drill-card:nth-child(1) { animation-delay: 0ms; }
+    .lifecycle-cards .drill-card:nth-child(2) { animation-delay: 30ms; }
+    .lifecycle-cards .drill-card:nth-child(3) { animation-delay: 60ms; }
+    .lifecycle-cards .drill-card:nth-child(4) { animation-delay: 90ms; }
+    .lifecycle-cards .drill-card:nth-child(5) { animation-delay: 120ms; }
+    .lifecycle-cards .drill-card:nth-child(n+6) { animation-delay: 150ms; }
+
+    .lifecycle-section {
+      animation: sectionIn 0.25s ease-out both;
+    }
+    @keyframes sectionIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    /* ── Loading skeleton ── */
+    .skeleton-card {
+      background: var(--surface);
+      border-radius: var(--radius-lg);
+      padding: 18px 20px;
+      animation: skeletonPulse 1.5s ease-in-out infinite;
+    }
+    .skeleton-line {
+      height: 12px;
+      background: var(--surface3);
+      border-radius: 4px;
+      margin-bottom: 8px;
+    }
+    .skeleton-line.short { width: 40%; }
+    .skeleton-line.medium { width: 70%; }
+    .skeleton-line.long { width: 90%; }
+    @keyframes skeletonPulse {
+      0%, 100% { opacity: 0.6; }
+      50% { opacity: 1; }
+    }
+
+    /* ── Lifecycle progress bar ── */
+    .lifecycle-progress {
+      display: flex;
+      gap: 2px;
+      height: 4px;
+      border-radius: 2px;
+      overflow: hidden;
+      margin-top: 4px;
+    }
+    .lifecycle-progress-segment {
+      height: 100%;
+      transition: width 0.3s ease;
+    }
+
     .drill-cards {
       max-width: 640px;
       margin: 0 auto;
@@ -1233,6 +1507,38 @@
       color: var(--accent);
       font-weight: 600;
     }
+    /* Inline action list on milestone cards */
+    .drill-card-action-list {
+      list-style: none;
+      padding: 0;
+      margin: 6px 0 0 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .drill-card-action-list li {
+      font-size: 11px;
+      color: var(--text-dim);
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+    }
+    .drill-card-action-list li .al-icon {
+      width: 10px;
+      text-align: center;
+      flex-shrink: 0;
+      font-size: 10px;
+    }
+    .drill-card-action-list li.done { color: var(--text-muted); text-decoration: line-through; }
+    .drill-card-action-list li.done .al-icon { color: var(--done-color, #86efac); }
+    .drill-card-action-list li.planned .al-icon { color: var(--accent); }
+    .drill-card-action-list li.unplanned .al-icon { color: var(--text-muted); }
+    .drill-card-no-actions {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-style: italic;
+      margin-top: 6px;
+    }
 
     /* Card-level status pill */
     .drill-status-pill {
@@ -1312,6 +1618,15 @@
       background: var(--surface2);
       border-color: var(--border-strong);
       color: var(--text);
+    }
+    .drill-action-btn.drill-action-primary {
+      background: var(--accent-dim);
+      border-color: var(--accent-border);
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .drill-action-btn.drill-action-primary:hover {
+      background: var(--accent-border);
     }
     .drill-action-btn.drill-action-danger {
       color: var(--text-dim);
@@ -1431,6 +1746,61 @@
       color: var(--accent);
       font-weight: 600;
     }
+    /* Command card in agents panel */
+    #command-card {
+      background: var(--surface2);
+      border: 1px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 10px 12px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      margin-bottom: 4px;
+    }
+    #command-card:hover { border-color: var(--accent-border); }
+    #command-card .cmd-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--text-dim);
+    }
+    #command-card .cmd-key {
+      background: var(--surface3);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 1px 5px;
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--text-muted);
+      font-family: 'SF Mono', 'Fira Code', monospace;
+    }
+    #command-card.editing {
+      border-color: var(--accent);
+      border-style: solid;
+      cursor: default;
+    }
+    #command-card-input {
+      display: none;
+      width: 100%;
+      background: transparent;
+      border: none;
+      color: var(--text);
+      font-size: 13px;
+      padding: 4px 0;
+      outline: none;
+      font-family: inherit;
+      resize: none;
+      line-height: 1.4;
+    }
+    #command-card.editing .cmd-label { display: none; }
+    #command-card.editing #command-card-input { display: block; }
+    #command-card-hint {
+      display: none;
+      font-size: 10px;
+      color: var(--text-dim);
+      margin-top: 4px;
+    }
+    #command-card.editing #command-card-hint { display: block; }
     .drill-next-btn {
       background: var(--accent-dim);
       border: 1px solid var(--accent-border);
@@ -2352,6 +2722,7 @@
     }
     .agent-card:hover { background: var(--surface3); }
     .agent-card.status-running  { border-left: 3px solid var(--executing-color); }
+    .agent-card.status-complete,
     .agent-card.status-done     { border-left: 3px solid var(--act-color); opacity: 0.8; }
     .agent-card.status-failed   { border-left: 3px solid var(--broken-color); opacity: 0.8; }
     .agent-card-header {
@@ -2383,9 +2754,10 @@
       border-radius: 3px;
       flex-shrink: 0;
     }
-    .agent-card-badge.badge-running { color: var(--executing-color); background: var(--executing-bg); }
-    .agent-card-badge.badge-done    { color: var(--act-color); background: var(--act-bg); }
-    .agent-card-badge.badge-failed  { color: var(--broken-color); background: var(--broken-bg); }
+    .agent-card-badge.badge-running  { color: var(--executing-color); background: var(--executing-bg); }
+    .agent-card-badge.badge-complete,
+    .agent-card-badge.badge-done     { color: var(--act-color); background: var(--act-bg); }
+    .agent-card-badge.badge-failed   { color: var(--broken-color); background: var(--broken-bg); }
     .agent-card-meta {
       display: flex;
       align-items: center;
@@ -3457,6 +3829,11 @@
     </div>
   </div>
   <div id="activity-cards" class="activity-tab-content active">
+    <div id="command-card" tabindex="0">
+      <div class="cmd-label"><span class="cmd-key">C</span> Command</div>
+      <textarea id="command-card-input" rows="2" placeholder="What should I do?"></textarea>
+      <div id="command-card-hint">Enter to send &middot; Esc to cancel</div>
+    </div>
     <div id="activity-cards-active"></div>
     <div id="activity-cards-recent"></div>
   </div>
@@ -3486,6 +3863,6 @@
   </div>
 </div>
 
-<script src="/public/app.js?v=2"></script>
+<script src="/public/app.js?v=5"></script>
 </body>
 </html>

@@ -19,8 +19,8 @@ esbuild.buildSync({
   minify: false,
   // Inject package version so DECLARE_VERSION is available in source
   define: { DECLARE_VERSION: JSON.stringify(version) },
-  // Zero runtime dependencies -- bundle everything
-  external: [],
+  // Claude Agent SDK must be external — it's ESM with native bindings that can't be bundled into CJS
+  external: ['@anthropic-ai/claude-agent-sdk'],
 });
 
 // Copy dashboard static files into dist/public/ so they ship in the npm package

@@ -49,6 +49,7 @@ const { parseMilestonesFile, writeMilestonesFile } = require('../artifacts/miles
 const { computeWorkflowState } = require('../commands/workflow-state');
 const { createPlayRunner } = require('../commands/play');
 const { computeReadiness } = require('../commands/readiness');
+const { computeLifecycleStages } = require('../commands/lifecycle-stages');
 const { createPipelineRunner } = require('./pipeline-runner');
 const { createAgentRegistry } = require('./agent-registry');
 
@@ -334,6 +335,31 @@ function handleWorkflowState(res, cwd) {
     const runningIds = new Set(pm.running());
 
     const result = computeWorkflowState(graph, runningIds);
+    sendJson(res, 200, result);
+  } catch (err) {
+    sendJson(res, 500, { error: String(err) });
+  }
+}
+
+/**
+ * Handle GET /api/lifecycle
+ * Returns lifecycle stage classification for all nodes.
+ *
+ * @param {http.ServerResponse} res
+ * @param {string} cwd
+ */
+function handleLifecycle(res, cwd) {
+  try {
+    const graph = runLoadGraph(cwd);
+    if ('error' in graph) {
+      sendJson(res, 500, { error: graph.error });
+      return;
+    }
+
+    const pm = getProcessManager(cwd);
+    const runningIds = new Set(pm.running());
+
+    const result = computeLifecycleStages(graph, runningIds);
     sendJson(res, 200, result);
   } catch (err) {
     sendJson(res, 500, { error: String(err) });
@@ -1466,7 +1492,7 @@ function buildRefinePrompt(nodeId, graph, mode, userMessage) {
   }
 
   const modeInstructions = {
-    write: `The user wants to refine this ${nodeType} with specific direction:\n\n"${userMessage || ''}"\n\nApply their feedback to improve the title and statement/produces. Keep the same format and scope level.`,
+    write: `The user wants to modify this ${nodeType} with specific direction:\n\n"${userMessage || ''}"\n\nYou have tool access — directly edit the project files to apply the requested changes. The planning files are at:\n- ${nodeType === 'declaration' ? 'FUTURE.md' : nodeType === 'milestone' ? 'MILESTONES.md' : 'the milestone PLAN.md'}\n- MILESTONES.md (for milestone references)\n- FUTURE-ARCHIVE.md (if archiving)\n\nApply the changes directly. After making edits, summarize what you changed.`,
     outdated: `Check if this ${nodeType} is still relevant given the current state of its parent and siblings. Some siblings may already be DONE. Consider:\n- Has progress on siblings made this redundant?\n- Does the title/statement still accurately describe what's needed?\n- Should this be reworded to reflect current reality?`,
     sharpen: `Make this ${nodeType} more specific and actionable. Consider:\n- Is the title vague or generic? Make it concrete.\n- Does the statement/produces describe a clear, verifiable outcome?\n- Could someone read this and know exactly what "done" looks like?`,
     consolidate: `Check if this ${nodeType} overlaps with its siblings. Consider:\n- Are any siblings covering the same ground?\n- Could this be merged with a sibling for clarity?\n- Is this a subset of another sibling?\n\nIf overlap exists, suggest how to differentiate or merge. If no overlap, say so.`,
@@ -1534,52 +1560,59 @@ async function handleRefine(req, res, cwd, nodeId) {
     }
 
     const sessionId = `refine-${Date.now()}`;
-    const { spawn } = require('node:child_process');
-    const spawnEnv = { ...process.env, FORCE_COLOR: '0' };
-    delete spawnEnv.CLAUDECODE;
-    const proc = spawn('claude', ['-p', prompt, '--output-format', 'text'], {
-      cwd,
-      env: spawnEnv,
-    });
-
+    const { runAI } = require('./ai-runner');
     const activityFile = path.join(cwd, '.planning', 'activity.jsonl');
-    refineSession = { sessionId, proc, nodeId: nodeId.toUpperCase(), suggestion: '', stderr: '' };
+    const nId = nodeId.toUpperCase();
 
-    // Stream output via SSE
-    if (proc.stdout) {
-      proc.stdout.on('data', (chunk) => {
-        const text = chunk.toString();
+    let refineAgentId;
+    try {
+      const reg = getAgentRegistry(cwd);
+      const agent = reg.spawn('refine', nId, nId);
+      refineAgentId = agent.id;
+    } catch (_) {}
+
+    const abortController = new AbortController();
+    refineSession = { sessionId, nodeId: nId, suggestion: '', abortController, agentId: refineAgentId };
+
+    // Write mode gets tool access so it can directly modify files
+    const isWriteMode = mode === 'write';
+
+    // Run AI asynchronously — streams text chunks via SSE
+    runAI(prompt, {
+      cwd,
+      model: isWriteMode ? 'sonnet' : 'haiku',
+      maxTurns: isWriteMode ? 10 : 1,
+      withTools: isWriteMode,
+      abortController,
+      onText: (text) => {
         if (refineSession) refineSession.suggestion += text;
-        const payload = `event: refine-output\ndata: ${JSON.stringify({ sessionId, nodeId: nodeId.toUpperCase(), text })}\n\n`;
+        const payload = `event: refine-output\ndata: ${JSON.stringify({ sessionId, nodeId: nId, text })}\n\n`;
         for (const client of sseClients) {
           try { client.write(payload); } catch (_) { sseClients.delete(client); }
         }
-      });
-    }
-
-    if (proc.stderr) {
-      proc.stderr.on('data', (chunk) => {
-        if (refineSession) refineSession.stderr += chunk.toString();
-      });
-    }
-
-    proc.on('close', (exitCode) => {
-      const suggestion = refineSession ? refineSession.suggestion : '';
-      const stderrText = refineSession ? refineSession.stderr : '';
-      const nId = refineSession ? refineSession.nodeId : nodeId.toUpperCase();
+      },
+    }).then(({ text, error }) => {
+      const suggestion = text || (refineSession ? refineSession.suggestion : '');
       refineSession = null;
-      if (stderrText) console.error(`[refine ${nId}] stderr:`, stderrText.slice(0, 500));
-      const payload = `event: refine-complete\ndata: ${JSON.stringify({ sessionId, nodeId: nId, exitCode, suggestion, error: exitCode !== 0 ? stderrText.slice(0, 500) : undefined })}\n\n`;
+      const exitCode = error ? 1 : 0;
+      const payload = `event: refine-complete\ndata: ${JSON.stringify({ sessionId, nodeId: nId, exitCode, suggestion, error })}\n\n`;
       for (const client of sseClients) {
         try { client.write(payload); } catch (_) { sseClients.delete(client); }
       }
-      // Log completion in activity
-      const phase = exitCode === 0 ? 'done' : 'error';
-      const desc = exitCode === 0
-        ? `Review of ${nId} complete` + (suggestion.includes('LGTM') ? ' — no changes needed' : ' — suggestion ready')
-        : `Review of ${nId} failed (exit ${exitCode})`;
-      const doneEntry = { ts: new Date().toISOString(), tool: 'Task', phase, agent: 'Refine', desc };
-      try { fs.appendFileSync(activityFile, JSON.stringify(doneEntry) + '\n'); } catch (_) {}
+      // Update agent registry
+      if (refineAgentId) {
+        try {
+          const reg = getAgentRegistry(cwd);
+          if (!error) reg.complete(refineAgentId, { nodeId: nId });
+          else reg.fail(refineAgentId, 1, error);
+        } catch (_) {}
+      }
+      // Log completion
+      const phase = error ? 'error' : 'done';
+      const desc = error
+        ? `Review of ${nId} failed: ${error}`
+        : `Review of ${nId} complete` + (suggestion.includes('LGTM') ? ' — no changes needed' : ' — suggestion ready');
+      try { fs.appendFileSync(activityFile, JSON.stringify({ ts: new Date().toISOString(), tool: 'Task', phase, agent: 'Refine', desc }) + '\n'); } catch (_) {}
     });
 
     // Log activity
@@ -1597,7 +1630,7 @@ function handleRefineStop(res) {
     sendJson(res, 404, { error: 'No refine session running' });
     return;
   }
-  try { refineSession.proc.kill(); } catch (_) {}
+  try { if (refineSession.abortController) refineSession.abortController.abort(); else if (refineSession.proc) refineSession.proc.kill(); } catch (_) {}
   refineSession = null;
   sendJson(res, 200, { ok: true });
 }
@@ -1649,6 +1682,122 @@ async function handleRefineAccept(req, res, cwd) {
     fs.appendFileSync(activityFile, JSON.stringify(entry) + '\n');
 
     sendJson(res, 200, { ok: true });
+  } catch (err) {
+    sendJson(res, 500, { error: String(err) });
+  }
+}
+
+/** @type {{ sessionId: string, abortController: AbortController, agentId?: string } | null} */
+let commandSession = null;
+
+/**
+ * Handle POST /api/command — natural language commands scoped to current view context.
+ * The agent gets full tool access and can modify project files.
+ */
+async function handleCommand(req, res, cwd) {
+  try {
+    if (commandSession) {
+      sendJson(res, 409, { error: 'A command is already running' });
+      return;
+    }
+
+    const body = await readJsonBody(req).catch(() => ({}));
+    const message = (body.message || '').trim();
+    const context = body.context || {}; // { level, nodeId, nodeIds, viewDescription }
+
+    if (!message) {
+      sendJson(res, 400, { error: 'No message provided' });
+      return;
+    }
+
+    const sessionId = `cmd-${Date.now()}`;
+    const { runAI } = require('./ai-runner');
+    const activityFile = path.join(cwd, '.planning', 'activity.jsonl');
+
+    // Build context-aware prompt
+    const graph = runLoadGraph(cwd);
+    let contextBlock = '';
+    if (!('error' in graph)) {
+      if (context.nodeId) {
+        // Single node context
+        const allNodes = [...(graph.declarations || []), ...(graph.milestones || []), ...(graph.actions || [])];
+        const node = allNodes.find(n => n.id === context.nodeId);
+        if (node) {
+          contextBlock = `\nCurrent view is focused on: ${node.id} — ${node.title || node.statement || ''} (${node.status || 'PENDING'})`;
+        }
+      }
+      if (context.nodeIds && context.nodeIds.length > 0) {
+        // Multiple nodes visible
+        const allNodes = [...(graph.declarations || []), ...(graph.milestones || []), ...(graph.actions || [])];
+        const visible = context.nodeIds.map(id => allNodes.find(n => n.id === id)).filter(Boolean);
+        contextBlock += `\nVisible nodes:\n${visible.map(n => `- ${n.id}: ${n.title || n.statement || ''} (${n.status || 'PENDING'})`).join('\n')}`;
+      }
+      if (context.viewDescription) {
+        contextBlock += `\nView: ${context.viewDescription}`;
+      }
+    }
+
+    const prompt = `You are working on a Declare project. The project planning files are in ${path.join(cwd, '.planning')}/
+
+The user is looking at the dashboard and says: "${message}"
+${contextBlock}
+
+The planning files:
+- FUTURE.md — declarations (the "what" the project declares will be true)
+- MILESTONES.md — milestones (checkpoints that realize declarations)
+- milestones/M-XX-slug/PLAN.md — action plans per milestone
+
+Apply the user's request by editing the relevant files. Be concise in your response — just state what you did.`;
+
+    // Register agent
+    let agentId;
+    try {
+      const reg = getAgentRegistry(cwd);
+      const agent = reg.spawn('command', context.nodeId || 'project', context.nodeId || 'project');
+      agentId = agent.id;
+    } catch (_) {}
+
+    const abortController = new AbortController();
+    commandSession = { sessionId, abortController, agentId };
+
+    // Run AI with full tool access
+    runAI(prompt, {
+      cwd,
+      model: 'sonnet',
+      maxTurns: 15,
+      withTools: true,
+      abortController,
+      onText: (text) => {
+        const payload = `event: command-output\ndata: ${JSON.stringify({ sessionId, text })}\n\n`;
+        for (const client of sseClients) {
+          try { client.write(payload); } catch (_) { sseClients.delete(client); }
+        }
+      },
+    }).then(({ text, error }) => {
+      commandSession = null;
+      const exitCode = error ? 1 : 0;
+      const payload = `event: command-complete\ndata: ${JSON.stringify({ sessionId, exitCode, result: text, error })}\n\n`;
+      for (const client of sseClients) {
+        try { client.write(payload); } catch (_) { sseClients.delete(client); }
+      }
+      // Update agent registry
+      if (agentId) {
+        try {
+          const reg = getAgentRegistry(cwd);
+          if (!error) reg.complete(agentId, { message: message.slice(0, 50) });
+          else reg.fail(agentId, 1, error);
+        } catch (_) {}
+      }
+      // Log activity
+      const phase = error ? 'error' : 'done';
+      const desc = error ? `Command failed: ${error}` : `Command complete: ${text.slice(0, 80)}`;
+      try { fs.appendFileSync(activityFile, JSON.stringify({ ts: new Date().toISOString(), tool: 'Task', phase, agent: 'Command', desc }) + '\n'); } catch (_) {}
+    });
+
+    // Log start
+    try { fs.appendFileSync(activityFile, JSON.stringify({ ts: new Date().toISOString(), tool: 'Task', phase: 'start', agent: 'Command', desc: message.slice(0, 100) }) + '\n'); } catch (_) {}
+
+    sendJson(res, 202, { ok: true, sessionId });
   } catch (err) {
     sendJson(res, 500, { error: String(err) });
   }
@@ -2202,6 +2351,12 @@ function route(req, res, cwd) {
       return;
     }
 
+    // Command bar: POST /api/command — natural language commands with context
+    if (urlPath === '/api/command') {
+      handleCommand(req, res, cwd);
+      return;
+    }
+
     if (urlPath === '/api/execution-manifest') {
       handleSaveManifest(req, res, cwd);
       return;
@@ -2340,6 +2495,11 @@ function route(req, res, cwd) {
   if (actionDeriveRunningMatch) {
     const adr = getActionDerivationRunner(cwd);
     sendJson(res, 200, { running: adr.running() });
+    return;
+  }
+
+  if (urlPath === '/api/lifecycle') {
+    handleLifecycle(res, cwd);
     return;
   }
 

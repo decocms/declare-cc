@@ -1,9 +1,30 @@
 #!/usr/bin/env node
 "use strict";
+var __create = Object.create;
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __commonJS = (cb, mod) => function __require() {
   return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 };
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
 
 // src/git/commit.js
 var require_commit = __commonJS({
@@ -1136,13 +1157,15 @@ var require_build_dag = __commonJS({
           milestoneProduces[milestone] = produces;
         }
         for (const action of actions) {
+          const execPlanPath = join(milestonesDir, entry.name, `${action.id}-EXEC-PLAN.md`);
           allActions.push({
             id: action.id,
             title: action.title,
             status: action.status,
             produces: action.produces,
             reviewState: action.reviewState || "draft",
-            causes: milestone ? [milestone] : []
+            causes: milestone ? [milestone] : [],
+            hasExecPlan: existsSync(execPlanPath)
           });
         }
       }
@@ -1531,7 +1554,7 @@ var require_help = __commonJS({
             usage: "/declare:help"
           }
         ],
-        version: "0.5.9"
+        version: "0.6.0"
       };
     }
     module2.exports = { runHelp: runHelp2 };
@@ -4270,7 +4293,7 @@ var require_process_manager = __commonJS({
       } catch (_) {
       }
     }
-    function createProcessManager(sseClients, cwd) {
+    function createProcessManager(sseClients, cwd, registry) {
       const processes = /* @__PURE__ */ new Map();
       function broadcast(event, data) {
         const payload = `event: ${event}
@@ -4320,7 +4343,12 @@ data: ${JSON.stringify(data)}
           process.stderr.write(`[declare] Warning: milestone folder not found for ${milestoneId}, skipping execution log
 `);
         }
-        processes.set(actionId, { proc, milestoneId, logPath });
+        let agentId;
+        if (registry) {
+          const agent = registry.spawn("execution", actionId, milestoneId);
+          agentId = agent.id;
+        }
+        processes.set(actionId, { proc, milestoneId, logPath, agentId });
         appendLog(logPath, `
 === START ${actionId} @ ${(/* @__PURE__ */ new Date()).toISOString()} ===`);
         if (proc.stdout) {
@@ -4331,17 +4359,35 @@ data: ${JSON.stringify(data)}
         }
         proc.on("close", (exitCode) => {
           const entry = processes.get(actionId);
+          const entryAgentId = entry?.agentId;
           appendLog(entry?.logPath, `=== END ${actionId} @ ${(/* @__PURE__ */ new Date()).toISOString()} exit=${exitCode ?? -1} ===
 `);
           processes.delete(actionId);
           broadcast("action-complete", { actionId, exitCode: exitCode ?? -1 });
+          if (registry && entryAgentId) {
+            if ((exitCode ?? -1) === 0) {
+              const milestoneFolder2 = entry?.logPath ? path.dirname(entry.logPath) : null;
+              registry.complete(entryAgentId, {
+                actionId,
+                milestoneId: entry?.milestoneId || milestoneId,
+                summaryPath: milestoneFolder2 ? path.join(milestoneFolder2, actionId + "-SUMMARY.md") : null,
+                logPath: entry?.logPath || null
+              });
+            } else {
+              registry.fail(entryAgentId, exitCode ?? -1, "process exited");
+            }
+          }
         });
         proc.on("error", (_err) => {
           const entry = processes.get(actionId);
+          const entryAgentId = entry?.agentId;
           appendLog(entry?.logPath, `=== ERROR ${actionId} @ ${(/* @__PURE__ */ new Date()).toISOString()} ===
 `);
           processes.delete(actionId);
           broadcast("action-complete", { actionId, exitCode: -1 });
+          if (registry && entryAgentId) {
+            registry.fail(entryAgentId, -1, "spawn error");
+          }
         });
         return { ok: true };
       }
@@ -4379,7 +4425,7 @@ var require_derivation_runner = __commonJS({
       const formatted = targets.map((d) => `- ${d.id}: ${d.statement}`).join("\n");
       return 'You are deriving milestones for a Declare project. Given these declarations, propose 2-4 milestones per declaration by asking "For this to be true, what must be true?" Output ONLY a JSON array with no markdown fencing: [{"title": "milestone title", "realizes": "D-XX", "reason": "why this must be true"}]. Declarations:\n\n' + formatted;
     }
-    function createDerivationRunner(sseClients, cwd) {
+    function createDerivationRunner(sseClients, cwd, registry) {
       let current = null;
       function broadcast(event, data) {
         const payload = `event: ${event}
@@ -4425,7 +4471,12 @@ data: ${JSON.stringify(data)}
           cwd,
           env
         });
-        current = { sessionId, proc };
+        let agentId;
+        if (registry) {
+          const agent = registry.spawn("derivation", declarationId || "all", "");
+          agentId = agent.id;
+        }
+        current = { sessionId, proc, agentId };
         const stdout = { text: "" };
         if (proc.stdout) {
           proc.stdout.on("data", createLineHandler(sessionId, "stdout", stdout));
@@ -4435,6 +4486,7 @@ data: ${JSON.stringify(data)}
         }
         proc.on("close", (exitCode) => {
           let milestones = null;
+          const closingAgentId = current ? current.agentId : void 0;
           if (exitCode === 0) {
             try {
               milestones = JSON.parse(stdout.text.trim());
@@ -4447,14 +4499,26 @@ data: ${JSON.stringify(data)}
             exitCode: exitCode ?? -1,
             milestones
           });
+          if (registry && closingAgentId) {
+            if ((exitCode ?? -1) === 0) {
+              const milestoneIds = Array.isArray(milestones) ? milestones.map((m) => m.id || m.title || "unknown").filter(Boolean) : [];
+              registry.complete(closingAgentId, { milestones: milestoneIds });
+            } else {
+              registry.fail(closingAgentId, exitCode ?? -1, "derivation failed");
+            }
+          }
         });
         proc.on("error", (_err) => {
+          const errorAgentId = current ? current.agentId : void 0;
           current = null;
           broadcast("derivation-complete", {
             sessionId,
             exitCode: -1,
             milestones: null
           });
+          if (registry && errorAgentId) {
+            registry.fail(errorAgentId, -1, "spawn error");
+          }
         });
         return { ok: true, sessionId };
       }
@@ -4481,11 +4545,84 @@ data: ${JSON.stringify(data)}
   }
 });
 
+// src/server/ai-runner.js
+var require_ai_runner = __commonJS({
+  "src/server/ai-runner.js"(exports2, module2) {
+    "use strict";
+    var _query;
+    async function getQuery() {
+      if (!_query) {
+        const sdk = await import("@anthropic-ai/claude-agent-sdk");
+        _query = sdk.query;
+      }
+      return _query;
+    }
+    async function runAI(prompt, opts = {}) {
+      const queryFn = await getQuery();
+      const abortController = opts.abortController || new AbortController();
+      const savedClaudeCode = process.env.CLAUDECODE;
+      delete process.env.CLAUDECODE;
+      try {
+        const env = { ...process.env };
+        delete env.CLAUDECODE;
+        const queryOpts = {
+          model: opts.model || "haiku",
+          maxTurns: opts.maxTurns || 1,
+          cwd: opts.cwd || process.cwd(),
+          abortController,
+          env,
+          systemPrompt: "You are a helpful assistant. Respond concisely and directly."
+        };
+        if (opts.withTools || opts.allowedTools) {
+          queryOpts.allowedTools = opts.allowedTools || ["Read", "Write", "Edit", "Bash", "Glob", "Grep"];
+          queryOpts.permissionMode = "bypassPermissions";
+          if (!opts.maxTurns) queryOpts.maxTurns = 10;
+        } else {
+          queryOpts.tools = [];
+        }
+        const conversation = queryFn({
+          prompt,
+          options: queryOpts
+        });
+        let resultText = "";
+        for await (const message of conversation) {
+          if (message.type === "assistant") {
+            const content = message.message?.content;
+            if (Array.isArray(content)) {
+              for (const block of content) {
+                if (block.type === "text" && block.text) {
+                  resultText += block.text;
+                  if (opts.onText) opts.onText(block.text);
+                }
+              }
+            }
+          } else if (message.type === "result") {
+            if (message.subtype === "success" && message.result) {
+              resultText = message.result;
+            } else if (message.is_error) {
+              return { text: "", error: message.errors?.join(", ") || "AI query failed" };
+            }
+          }
+        }
+        return { text: resultText };
+      } catch (err) {
+        if (abortController.signal.aborted) {
+          return { text: "", error: "Cancelled" };
+        }
+        return { text: "", error: String(err.message || err) };
+      } finally {
+        if (savedClaudeCode) process.env.CLAUDECODE = savedClaudeCode;
+      }
+    }
+    module2.exports = { runAI };
+  }
+});
+
 // src/server/action-derivation-runner.js
 var require_action_derivation_runner = __commonJS({
   "src/server/action-derivation-runner.js"(exports2, module2) {
     "use strict";
-    var { spawn } = require("node:child_process");
+    var { runAI } = require_ai_runner();
     function buildActionPrompt(milestone, existingActions) {
       let prompt = `You are deriving actions for a Declare project milestone. An action is a concrete piece of work that causes (moves toward) a milestone. Given this milestone, propose 2-5 actions by asking "What work must be done to achieve this?" Output ONLY a JSON array with no markdown fencing: [{"title": "action title", "produces": "what this action delivers", "reason": "why this is needed"}]. 
 
@@ -4501,7 +4638,7 @@ Milestone:
       }
       return prompt;
     }
-    function createActionDerivationRunner(sseClients, cwd) {
+    function createActionDerivationRunner(sseClients, cwd, registry) {
       let current = null;
       function broadcast(event, data) {
         const payload = `event: ${event}
@@ -4516,67 +4653,64 @@ data: ${JSON.stringify(data)}
           }
         }
       }
-      function createLineHandler(sessionId, streamName, accumulator) {
-        let buffer = "";
-        return (chunk) => {
-          const text = chunk.toString();
-          if (streamName === "stdout") {
-            accumulator.text += text;
-          }
-          buffer += text;
-          const lines = buffer.split("\n");
-          buffer = lines.pop() || "";
-          for (const line of lines) {
-            broadcast("action-derivation-output", {
-              sessionId,
-              text: line,
-              stream: streamName
-            });
-          }
-        };
-      }
       function derive(milestone, existingActions) {
         if (current) {
           return { error: "busy", status: 409 };
         }
         const sessionId = `action-deriv-${Date.now()}`;
         const prompt = buildActionPrompt(milestone, existingActions);
-        const env = { ...process.env, FORCE_COLOR: "0" };
-        delete env.CLAUDECODE;
-        const proc = spawn("claude", ["-p", prompt, "--output-format", "text"], {
+        const abortController = new AbortController();
+        let agentId;
+        if (registry) {
+          const agent = registry.spawn("action-derivation", milestone.id, milestone.id);
+          agentId = agent.id;
+        }
+        current = { sessionId, milestoneId: milestone.id, agentId, abortController };
+        runAI(prompt, {
           cwd,
-          env
-        });
-        current = { sessionId, milestoneId: milestone.id, proc };
-        const stdout = { text: "" };
-        if (proc.stdout) {
-          proc.stdout.on("data", createLineHandler(sessionId, "stdout", stdout));
-        }
-        if (proc.stderr) {
-          proc.stderr.on("data", createLineHandler(sessionId, "stderr", stdout));
-        }
-        proc.on("close", (exitCode) => {
+          model: "haiku",
+          maxTurns: 1,
+          abortController,
+          onText: (text) => {
+            broadcast("action-derivation-output", {
+              sessionId,
+              text,
+              stream: "stdout"
+            });
+          }
+        }).then(({ text, error }) => {
+          const closingAgentId = current ? current.agentId : void 0;
+          current = null;
           let actions = null;
-          if (exitCode === 0) {
+          const exitCode = error ? 1 : 0;
+          if (!error && text) {
             try {
-              actions = JSON.parse(stdout.text.trim());
+              actions = JSON.parse(text.trim());
             } catch (_) {
+              const jsonMatch = text.match(/\[[\s\S]*\]/);
+              if (jsonMatch) {
+                try {
+                  actions = JSON.parse(jsonMatch[0]);
+                } catch (_2) {
+                }
+              }
             }
           }
-          current = null;
           broadcast("action-derivation-complete", {
             sessionId,
-            exitCode: exitCode ?? -1,
+            exitCode,
             actions
           });
-        });
-        proc.on("error", (_err) => {
-          current = null;
-          broadcast("action-derivation-complete", {
-            sessionId,
-            exitCode: -1,
-            actions: null
-          });
+          if (registry && closingAgentId) {
+            if (exitCode === 0) {
+              registry.complete(closingAgentId, {
+                milestoneId: milestone.id,
+                actionCount: Array.isArray(actions) ? actions.length : null
+              });
+            } else {
+              registry.fail(closingAgentId, 1, error || "action derivation failed");
+            }
+          }
         });
         return { ok: true, sessionId };
       }
@@ -4584,7 +4718,7 @@ data: ${JSON.stringify(data)}
         if (!current) {
           return { error: "not_running", status: 404 };
         }
-        current.proc.kill("SIGTERM");
+        current.abortController.abort();
         return { ok: true };
       }
       function running() {
@@ -4614,7 +4748,7 @@ var require_revision_runner = __commonJS({
       const annotationList = annotations.map((a) => `- Line ${a.line}: ${a.text}`).join("\n");
       return "You are revising a plan artifact based on reviewer annotations. Do NOT implement anything \u2014 only update the plan document.\n\n## Current plan content\n\n" + artifactContent + "\n\n## Reviewer annotations to address\n\n" + annotationList + "\n\n## Instructions\n\nRevise the plan above to address ALL the reviewer's annotations. Output ONLY the revised plan content \u2014 no explanations, no markdown fencing, no preamble. The output will directly replace the current file.";
     }
-    function createRevisionRunner(sseClients, cwd, onComplete) {
+    function createRevisionRunner(sseClients, cwd, onComplete, registry) {
       let current = null;
       function broadcast(event, data) {
         const payload = `event: ${event}
@@ -4683,7 +4817,12 @@ data: ${JSON.stringify(data)}
           cwd,
           env: spawnEnv
         });
-        current = { sessionId, proc, nodeId };
+        let agentId;
+        if (registry) {
+          const agent = registry.spawn("revision", nodeId, "");
+          agentId = agent.id;
+        }
+        current = { sessionId, proc, nodeId, agentId };
         const stdout = { text: "" };
         if (proc.stdout) {
           proc.stdout.on("data", createLineHandler(sessionId, nodeId, "stdout", stdout));
@@ -4693,6 +4832,7 @@ data: ${JSON.stringify(data)}
         }
         proc.on("close", (exitCode) => {
           const completedNodeId = current ? current.nodeId : nodeId;
+          const closingAgentId = current ? current.agentId : void 0;
           current = null;
           if (exitCode === 0) {
             try {
@@ -4723,6 +4863,13 @@ data: ${JSON.stringify(data)}
                 } catch (_) {
                 }
               }
+              if (registry && closingAgentId) {
+                registry.complete(closingAgentId, {
+                  nodeId: completedNodeId,
+                  planPath: artifactPath,
+                  revisionRound: newRound
+                });
+              }
             } catch (err) {
               broadcast("revision-complete", {
                 sessionId,
@@ -4730,6 +4877,9 @@ data: ${JSON.stringify(data)}
                 exitCode: -1,
                 error: true
               });
+              if (registry && closingAgentId) {
+                registry.fail(closingAgentId, -1, "revision post-processing error");
+              }
             }
           } else {
             broadcast("revision-complete", {
@@ -4738,9 +4888,13 @@ data: ${JSON.stringify(data)}
               exitCode: exitCode ?? -1,
               error: true
             });
+            if (registry && closingAgentId) {
+              registry.fail(closingAgentId, exitCode ?? -1, "revision failed");
+            }
           }
         });
         proc.on("error", (_err) => {
+          const errorAgentId = current ? current.agentId : void 0;
           current = null;
           broadcast("revision-complete", {
             sessionId,
@@ -4748,6 +4902,9 @@ data: ${JSON.stringify(data)}
             exitCode: -1,
             error: true
           });
+          if (registry && errorAgentId) {
+            registry.fail(errorAgentId, -1, "spawn error");
+          }
         });
         return { ok: true, sessionId };
       }
@@ -5204,6 +5361,200 @@ data: ${JSON.stringify(data)}
   }
 });
 
+// src/commands/lifecycle-stages.js
+var require_lifecycle_stages = __commonJS({
+  "src/commands/lifecycle-stages.js"(exports2, module2) {
+    "use strict";
+    var COMPLETED_STATUSES = /* @__PURE__ */ new Set(["DONE", "KEPT", "HONORED"]);
+    var EXECUTING_STATUSES = /* @__PURE__ */ new Set(["EXECUTING", "IN_PROGRESS", "RUNNING"]);
+    function computeLifecycleStages(graph, runningActionIds) {
+      const { declarations = [], milestones = [], actions = [] } = graph;
+      const running = runningActionIds || /* @__PURE__ */ new Set();
+      const stages = {
+        "needs-planning": [],
+        "needs-approval": [],
+        "ready-to-execute": [],
+        "in-execution": [],
+        "done": []
+      };
+      const milestoneById = new Map(milestones.map((m) => [m.id, m]));
+      const actionsByMilestone = /* @__PURE__ */ new Map();
+      for (const a of actions) {
+        for (const mId of a.causes || []) {
+          if (!actionsByMilestone.has(mId)) actionsByMilestone.set(mId, []);
+          actionsByMilestone.get(mId).push(a);
+        }
+      }
+      const milestonesByDecl = /* @__PURE__ */ new Map();
+      for (const d of declarations) {
+        milestonesByDecl.set(d.id, (d.milestones || []).filter((mId) => milestoneById.has(mId)));
+      }
+      for (const d of declarations) {
+        const status = (d.status || "").toUpperCase();
+        if (COMPLETED_STATUSES.has(status)) {
+          stages["done"].push(makeItem(d, "declaration", "done"));
+          continue;
+        }
+        const myMilestones = milestonesByDecl.get(d.id) || [];
+        if (myMilestones.length === 0) {
+          stages["needs-planning"].push(makeItem(d, "declaration", "needs-planning"));
+          continue;
+        }
+        if (d.reviewState !== "approved") {
+          stages["needs-approval"].push(makeItem(d, "declaration", "needs-approval"));
+          continue;
+        }
+        const allMilestonesDone = myMilestones.every((mId) => {
+          const m = milestoneById.get(mId);
+          return m && COMPLETED_STATUSES.has((m.status || "").toUpperCase());
+        });
+        if (allMilestonesDone) {
+          stages["done"].push(makeItem(d, "declaration", "done"));
+        } else {
+        }
+      }
+      for (const m of milestones) {
+        const status = (m.status || "").toUpperCase();
+        if (COMPLETED_STATUSES.has(status)) {
+          stages["done"].push(makeItem(m, "milestone", "done"));
+          continue;
+        }
+        const myActions = actionsByMilestone.get(m.id) || [];
+        const hasPlan = m.hasPlan || myActions.length > 0;
+        if (!hasPlan) {
+          stages["needs-planning"].push(makeItem(m, "milestone", "needs-planning"));
+          continue;
+        }
+        if (m.reviewState !== "approved") {
+          stages["needs-approval"].push(makeItem(m, "milestone", "needs-approval"));
+          continue;
+        }
+        const hasExecuting = myActions.some(
+          (a) => EXECUTING_STATUSES.has((a.status || "").toUpperCase()) || running.has(a.id)
+        );
+        if (hasExecuting) {
+          stages["in-execution"].push(makeItem(m, "milestone", "in-execution"));
+          continue;
+        }
+        const allActionsDone = myActions.length > 0 && myActions.every(
+          (a) => COMPLETED_STATUSES.has((a.status || "").toUpperCase())
+        );
+        if (allActionsDone) {
+          stages["done"].push(makeItem(m, "milestone", "done"));
+          continue;
+        }
+        const deps = m.dependsOn || [];
+        const depsBlocked = deps.some((depId) => {
+          const dep = milestoneById.get(depId);
+          return !dep || !COMPLETED_STATUSES.has((dep.status || "").toUpperCase());
+        });
+        if (depsBlocked) {
+          stages["needs-approval"].push(makeItem(m, "milestone", "needs-approval"));
+        } else {
+          stages["ready-to-execute"].push(makeItem(m, "milestone", "ready-to-execute"));
+        }
+      }
+      for (const a of actions) {
+        const status = (a.status || "").toUpperCase();
+        if (COMPLETED_STATUSES.has(status)) {
+          stages["done"].push(makeItem(a, "action", "done"));
+          continue;
+        }
+        if (EXECUTING_STATUSES.has(status) || running.has(a.id)) {
+          stages["in-execution"].push(makeItem(a, "action", "in-execution"));
+          continue;
+        }
+        if (a.reviewState !== "approved") {
+          stages["needs-approval"].push(makeItem(a, "action", "needs-approval"));
+          continue;
+        }
+        const parentMilestones = (a.causes || []).map((mId) => milestoneById.get(mId)).filter(Boolean);
+        const parentBlocked = parentMilestones.some((m) => {
+          const deps = m.dependsOn || [];
+          return deps.some((depId) => {
+            const dep = milestoneById.get(depId);
+            return !dep || !COMPLETED_STATUSES.has((dep.status || "").toUpperCase());
+          });
+        });
+        if (parentBlocked) {
+          stages["needs-approval"].push(makeItem(a, "action", "needs-approval"));
+        } else {
+          stages["ready-to-execute"].push(makeItem(a, "action", "ready-to-execute"));
+        }
+      }
+      const nextAction = computeNextAction(stages, declarations, milestones, actions);
+      const total = declarations.length + milestones.length + actions.length;
+      const done = stages["done"].length;
+      const percentage = total > 0 ? Math.round(done / total * 100) : 0;
+      return {
+        stages,
+        nextAction,
+        progress: { total, done, percentage }
+      };
+    }
+    function computeNextAction(stages, declarations, milestones, actions) {
+      const planningDecl = stages["needs-planning"].find((item) => item.type === "declaration");
+      if (planningDecl) {
+        return {
+          action: "derive-milestones",
+          label: `Plan milestones for ${planningDecl.id}`,
+          targetId: planningDecl.id,
+          targetType: "declaration"
+        };
+      }
+      const planningMile = stages["needs-planning"].find((item) => item.type === "milestone");
+      if (planningMile) {
+        return {
+          action: "derive-actions",
+          label: `Plan actions for ${planningMile.id}`,
+          targetId: planningMile.id,
+          targetType: "milestone"
+        };
+      }
+      if (stages["needs-approval"].length > 0) {
+        const first = stages["needs-approval"][0];
+        return {
+          action: "approve",
+          label: `Review ${first.id}`,
+          targetId: first.id,
+          targetType: first.type
+        };
+      }
+      if (stages["ready-to-execute"].length > 0) {
+        return {
+          action: "execute",
+          label: "Execute approved actions"
+        };
+      }
+      if (stages["in-execution"].length > 0) {
+        return {
+          action: "view-execution",
+          label: "Execution in progress"
+        };
+      }
+      const total = declarations.length + milestones.length + actions.length;
+      if (total > 0) {
+        return {
+          action: "complete",
+          label: "All items complete"
+        };
+      }
+      return null;
+    }
+    function makeItem(node, type, stage) {
+      return {
+        id: node.id,
+        title: node.title || node.statement || node.id,
+        type,
+        status: node.status || "PENDING",
+        reviewState: node.reviewState,
+        stage
+      };
+    }
+    module2.exports = { computeLifecycleStages, COMPLETED_STATUSES, EXECUTING_STATUSES };
+  }
+});
+
 // src/server/pipeline-runner.js
 var require_pipeline_runner = __commonJS({
   "src/server/pipeline-runner.js"(exports2, module2) {
@@ -5278,7 +5629,7 @@ ${rows}
         return null;
       }
     }
-    function createPipelineRunner(sseClients, cwd) {
+    function createPipelineRunner(sseClients, cwd, registry) {
       let isRunning = false;
       let stopRequested = false;
       const activeProcesses = /* @__PURE__ */ new Map();
@@ -5288,6 +5639,8 @@ ${rows}
       let skipResolve = null;
       const outputBuffers = {};
       let totalActionCount = 0;
+      let pipelineAgentId;
+      const actionAgentIds = /* @__PURE__ */ new Map();
       function persistState() {
         if (!pipelineState) {
           try {
@@ -5362,6 +5715,10 @@ data: ${JSON.stringify(data)}
         return new Promise((resolve) => {
           const startedAt = (/* @__PURE__ */ new Date()).toISOString();
           const startTime = Date.now();
+          if (registry) {
+            const agent = registry.spawn("execution", actionId, milestoneId);
+            actionAgentIds.set(actionId, agent.id);
+          }
           const prompt = `Run /declare:execute ${milestoneId} for action ${actionId} only. Do not ask questions, execute autonomously.`;
           const spawnEnv = { ...process.env, FORCE_COLOR: "0" };
           delete spawnEnv.CLAUDECODE;
@@ -5420,6 +5777,22 @@ data: ${JSON.stringify(data)}
 `);
             activeProcesses.delete(actionId);
             broadcast("action-complete", { actionId, exitCode: code, durationMs });
+            if (registry) {
+              const aId = actionAgentIds.get(actionId);
+              if (aId) {
+                if (code === 0) {
+                  registry.complete(aId, {
+                    actionId,
+                    milestoneId,
+                    logPath: logPath || null,
+                    durationMs
+                  });
+                } else {
+                  registry.fail(aId, code, "process exited");
+                }
+                actionAgentIds.delete(actionId);
+              }
+            }
             resolve({ actionId, milestoneId, exitCode: code, stderrOutput: stderrFull, durationMs, startedAt, completedAt, retried: false, attempts: 1 });
           });
           proc.on("error", (_err) => {
@@ -5429,6 +5802,13 @@ data: ${JSON.stringify(data)}
 `);
             activeProcesses.delete(actionId);
             broadcast("action-complete", { actionId, exitCode: -1, durationMs });
+            if (registry) {
+              const aId = actionAgentIds.get(actionId);
+              if (aId) {
+                registry.fail(aId, -1, "spawn error");
+                actionAgentIds.delete(actionId);
+              }
+            }
             resolve({ actionId, milestoneId, exitCode: -1, stderrOutput: stderrFull, durationMs, startedAt, completedAt, retried: false, attempts: 1 });
           });
         });
@@ -5445,6 +5825,10 @@ data: ${JSON.stringify(data)}
         isRunning = true;
         stopRequested = false;
         results = [];
+        if (registry) {
+          const agent = registry.spawn("pipeline", "manifest", "");
+          pipelineAgentId = agent.id;
+        }
         pipelineState = {
           currentWave: 0,
           totalWaves: waves.length,
@@ -5572,6 +5956,19 @@ data: ${JSON.stringify(data)}
             results: finalResults,
             reportPath: reportPath ? ".planning/execution-report.md" : null
           });
+          if (registry && pipelineAgentId) {
+            const failed = finalState.failedActions.length;
+            if (failed === 0 && !stopRequested) {
+              registry.complete(pipelineAgentId, {
+                completed: finalState.completedActions.length,
+                failed: 0,
+                reportPath: reportPath ? ".planning/execution-report.md" : null
+              });
+            } else {
+              registry.fail(pipelineAgentId, 1, stopRequested ? "stopped by user" : `${failed} action(s) failed`);
+            }
+            pipelineAgentId = void 0;
+          }
           stopRequested = false;
           pausedOnFailure = null;
           pipelineState = null;
@@ -5581,6 +5978,10 @@ data: ${JSON.stringify(data)}
           pausedOnFailure = null;
           pipelineState = null;
           persistState();
+          if (registry && pipelineAgentId) {
+            registry.fail(pipelineAgentId, -1, String(_err));
+            pipelineAgentId = void 0;
+          }
           broadcast("pipeline-complete", {
             completed: [],
             failed: [],
@@ -5600,10 +6001,17 @@ data: ${JSON.stringify(data)}
           skipResolve("stop");
           skipResolve = null;
         }
-        for (const [, proc] of activeProcesses) {
+        for (const [actionId, proc] of activeProcesses) {
           try {
             proc.kill("SIGTERM");
           } catch (_) {
+          }
+          if (registry) {
+            const aId = actionAgentIds.get(actionId);
+            if (aId) {
+              registry.fail(aId, -1, "stopped by user");
+              actionAgentIds.delete(actionId);
+            }
           }
         }
         persistState();
@@ -5657,6 +6065,201 @@ data: ${JSON.stringify(data)}
   }
 });
 
+// src/server/agent-registry.js
+var require_agent_registry = __commonJS({
+  "src/server/agent-registry.js"(exports2, module2) {
+    "use strict";
+    var fs = require("node:fs");
+    var path = require("node:path");
+    var RECENT_MAX = 50;
+    var RECENT_MAX_AGE_MS = 30 * 60 * 1e3;
+    function createAgentRegistry(cwd, broadcastFn) {
+      const agents = /* @__PURE__ */ new Map();
+      let recentAgents = [];
+      const statePath = path.join(cwd, ".planning", "agent-state.json");
+      function pruneRecent() {
+        const cutoff = Date.now() - RECENT_MAX_AGE_MS;
+        recentAgents = recentAgents.filter((a) => {
+          const ts = a.completedAt || a.updatedAt;
+          return new Date(ts).getTime() > cutoff;
+        });
+      }
+      function moveToRecent(agentId) {
+        const record = agents.get(agentId);
+        if (!record) return;
+        agents.delete(agentId);
+        recentAgents.push(record);
+        if (recentAgents.length > RECENT_MAX) {
+          recentAgents = recentAgents.slice(recentAgents.length - RECENT_MAX);
+        }
+      }
+      function persistState() {
+        try {
+          const state = {
+            agents: Object.fromEntries(agents),
+            recentAgents,
+            persistedAt: (/* @__PURE__ */ new Date()).toISOString()
+          };
+          fs.writeFileSync(statePath, JSON.stringify(state, null, 2), "utf-8");
+        } catch (_) {
+        }
+      }
+      function spawn(type, target, milestoneId) {
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const id = `${type.slice(0, 4)}-${target}-${Date.now()}`;
+        const record = {
+          id,
+          type,
+          target,
+          milestoneId: milestoneId || "",
+          status: "running",
+          startedAt: now,
+          updatedAt: now,
+          completedAt: null,
+          exitCode: null,
+          error: null,
+          result: null
+        };
+        agents.set(id, record);
+        broadcastFn("agent-start", record);
+        persistState();
+        return record;
+      }
+      function update(agentId, patch) {
+        const record = agents.get(agentId);
+        if (!record) return null;
+        Object.assign(record, patch, { updatedAt: (/* @__PURE__ */ new Date()).toISOString() });
+        broadcastFn("agent-update", record);
+        persistState();
+        return record;
+      }
+      function complete(agentId, result) {
+        const record = agents.get(agentId);
+        if (!record) return null;
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        record.status = "complete";
+        record.completedAt = now;
+        record.updatedAt = now;
+        record.exitCode = 0;
+        record.result = result;
+        moveToRecent(agentId);
+        broadcastFn("agent-complete", record);
+        persistState();
+        return record;
+      }
+      function fail(agentId, exitCode, errorMessage) {
+        const record = agents.get(agentId);
+        if (!record) return null;
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        record.status = "failed";
+        record.completedAt = now;
+        record.updatedAt = now;
+        record.exitCode = exitCode;
+        record.error = errorMessage;
+        moveToRecent(agentId);
+        broadcastFn("agent-complete", record);
+        persistState();
+        return record;
+      }
+      function get(agentId) {
+        const active = agents.get(agentId);
+        if (active) return active;
+        return recentAgents.find((a) => a.id === agentId) || null;
+      }
+      function getActive() {
+        return [...agents.values()];
+      }
+      function getRecent(limit = 20) {
+        pruneRecent();
+        return recentAgents.slice(-limit);
+      }
+      function getAll() {
+        return { active: getActive(), recent: getRecent() };
+      }
+      function markInterrupted(agentIds) {
+        for (const id of agentIds) {
+          const record = agents.get(id);
+          if (!record) continue;
+          const now = (/* @__PURE__ */ new Date()).toISOString();
+          record.status = "interrupted";
+          record.completedAt = now;
+          record.updatedAt = now;
+          moveToRecent(id);
+        }
+        persistState();
+      }
+      function loadFromDisk() {
+        try {
+          const raw = fs.readFileSync(statePath, "utf-8");
+          return JSON.parse(raw);
+        } catch (_) {
+          return null;
+        }
+      }
+      function restoreFromDisk() {
+        const persisted = loadFromDisk();
+        if (!persisted) return { restored: 0, interrupted: 0 };
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        let interruptedCount = 0;
+        const seenIds = new Set(recentAgents.map((a) => a.id));
+        const persistedAgents = persisted.agents || {};
+        for (const [id, record] of Object.entries(persistedAgents)) {
+          if (seenIds.has(id)) continue;
+          record.status = "interrupted";
+          record.completedAt = now;
+          record.updatedAt = now;
+          record.exitCode = -1;
+          record.error = "server restarted";
+          recentAgents.push(record);
+          seenIds.add(id);
+          interruptedCount++;
+        }
+        const cutoff = Date.now() - RECENT_MAX_AGE_MS;
+        const persistedRecent = persisted.recentAgents || [];
+        for (const record of persistedRecent) {
+          if (seenIds.has(record.id)) continue;
+          const ts = record.completedAt || record.updatedAt;
+          if (new Date(ts).getTime() <= cutoff) continue;
+          recentAgents.push(record);
+          seenIds.add(record.id);
+        }
+        if (recentAgents.length > RECENT_MAX) {
+          recentAgents = recentAgents.slice(recentAgents.length - RECENT_MAX);
+        }
+        persistState();
+        return { restored: recentAgents.length, interrupted: interruptedCount };
+      }
+      return {
+        spawn,
+        update,
+        complete,
+        fail,
+        get,
+        getActive,
+        getRecent,
+        getAll,
+        markInterrupted,
+        loadFromDisk,
+        restoreFromDisk
+      };
+    }
+    if (require.main === module2) {
+      const reg = createAgentRegistry(".", () => {
+      });
+      const a = reg.spawn("execution", "A-01", "M-01");
+      console.log("spawned:", a.id, a.status);
+      reg.complete(a.id, { path: "test.md" });
+      console.log("completed:", reg.get(a.id).status);
+      console.log("active:", reg.getActive().length);
+      console.log("recent:", reg.getRecent().length);
+      const restored = reg.restoreFromDisk();
+      console.log("restored:", restored.restored, "interrupted:", restored.interrupted);
+      console.log("OK");
+    }
+    module2.exports = { createAgentRegistry };
+  }
+});
+
 // src/server/index.js
 var require_server = __commonJS({
   "src/server/index.js"(exports2, module2) {
@@ -5685,7 +6288,9 @@ var require_server = __commonJS({
     var { computeWorkflowState } = require_workflow_state();
     var { createPlayRunner } = require_play();
     var { computeReadiness } = require_readiness();
+    var { computeLifecycleStages } = require_lifecycle_stages();
     var { createPipelineRunner } = require_pipeline_runner();
+    var { createAgentRegistry } = require_agent_registry();
     var MIME_TYPES = {
       ".html": "text/html; charset=utf-8",
       ".js": "application/javascript; charset=utf-8",
@@ -5862,6 +6467,21 @@ var require_server = __commonJS({
         const pm = getProcessManager(cwd);
         const runningIds = new Set(pm.running());
         const result = computeWorkflowState(graph, runningIds);
+        sendJson(res, 200, result);
+      } catch (err) {
+        sendJson(res, 500, { error: String(err) });
+      }
+    }
+    function handleLifecycle(res, cwd) {
+      try {
+        const graph = runLoadGraph2(cwd);
+        if ("error" in graph) {
+          sendJson(res, 500, { error: graph.error });
+          return;
+        }
+        const pm = getProcessManager(cwd);
+        const runningIds = new Set(pm.running());
+        const result = computeLifecycleStages(graph, runningIds);
         sendJson(res, 200, result);
       } catch (err) {
         sendJson(res, 500, { error: String(err) });
@@ -6360,19 +6980,38 @@ var require_server = __commonJS({
       }
     }
     var sseClients = /* @__PURE__ */ new Set();
+    var agentRegistry = null;
+    function getAgentRegistry(cwd) {
+      if (!agentRegistry) {
+        agentRegistry = createAgentRegistry(cwd, (event, data) => {
+          const payload = `event: ${event}
+data: ${JSON.stringify(data)}
+
+`;
+          for (const client of sseClients) {
+            try {
+              client.write(payload);
+            } catch (_) {
+              sseClients.delete(client);
+            }
+          }
+        });
+      }
+      return agentRegistry;
+    }
     var processManager = null;
     function getProcessManager(cwd) {
-      if (!processManager) processManager = createProcessManager(sseClients, cwd);
+      if (!processManager) processManager = createProcessManager(sseClients, cwd, getAgentRegistry(cwd));
       return processManager;
     }
     var derivationRunner = null;
     function getDerivationRunner(cwd) {
-      if (!derivationRunner) derivationRunner = createDerivationRunner(sseClients, cwd);
+      if (!derivationRunner) derivationRunner = createDerivationRunner(sseClients, cwd, getAgentRegistry(cwd));
       return derivationRunner;
     }
     var actionDerivationRunner = null;
     function getActionDerivationRunner(cwd) {
-      if (!actionDerivationRunner) actionDerivationRunner = createActionDerivationRunner(sseClients, cwd);
+      if (!actionDerivationRunner) actionDerivationRunner = createActionDerivationRunner(sseClients, cwd, getAgentRegistry(cwd));
       return actionDerivationRunner;
     }
     var playRunner = null;
@@ -6382,7 +7021,7 @@ var require_server = __commonJS({
     }
     var pipelineRunnerInstance = null;
     function getPipelineRunner(cwd) {
-      if (!pipelineRunnerInstance) pipelineRunnerInstance = createPipelineRunner(sseClients, cwd);
+      if (!pipelineRunnerInstance) pipelineRunnerInstance = createPipelineRunner(sseClients, cwd, getAgentRegistry(cwd));
       return pipelineRunnerInstance;
     }
     var revisionRunner = null;
@@ -6391,7 +7030,7 @@ var require_server = __commonJS({
         revisionRunner = createRevisionRunner(sseClients, cwd, (nodeId) => {
           setReviewState(cwd, nodeId, "in_review");
           broadcastChange();
-        });
+        }, getAgentRegistry(cwd));
       }
       return revisionRunner;
     }
@@ -6587,11 +7226,16 @@ Produces: ${m.produces || "(none)"}`).join("\n\n");
         siblingsContent = siblingActions.map((a) => `${a.id}: ${a.title} [${a.status}]`).join("\n");
       }
       const modeInstructions = {
-        write: `The user wants to refine this ${nodeType} with specific direction:
+        write: `The user wants to modify this ${nodeType} with specific direction:
 
 "${userMessage || ""}"
 
-Apply their feedback to improve the title and statement/produces. Keep the same format and scope level.`,
+You have tool access \u2014 directly edit the project files to apply the requested changes. The planning files are at:
+- ${nodeType === "declaration" ? "FUTURE.md" : nodeType === "milestone" ? "MILESTONES.md" : "the milestone PLAN.md"}
+- MILESTONES.md (for milestone references)
+- FUTURE-ARCHIVE.md (if archiving)
+
+Apply the changes directly. After making edits, summarize what you changed.`,
         outdated: `Check if this ${nodeType} is still relevant given the current state of its parent and siblings. Some siblings may already be DONE. Consider:
 - Has progress on siblings made this redundant?
 - Does the title/statement still accurately describe what's needed?
@@ -6664,21 +7308,29 @@ If the current version is already good, output exactly: LGTM \u2014 no changes n
           return;
         }
         const sessionId = `refine-${Date.now()}`;
-        const { spawn } = require("node:child_process");
-        const spawnEnv = { ...process.env, FORCE_COLOR: "0" };
-        delete spawnEnv.CLAUDECODE;
-        const proc = spawn("claude", ["-p", prompt, "--output-format", "text"], {
-          cwd,
-          env: spawnEnv
-        });
+        const { runAI } = require_ai_runner();
         const activityFile = path.join(cwd, ".planning", "activity.jsonl");
-        refineSession = { sessionId, proc, nodeId: nodeId.toUpperCase(), suggestion: "", stderr: "" };
-        if (proc.stdout) {
-          proc.stdout.on("data", (chunk) => {
-            const text = chunk.toString();
+        const nId = nodeId.toUpperCase();
+        let refineAgentId;
+        try {
+          const reg = getAgentRegistry(cwd);
+          const agent = reg.spawn("refine", nId, nId);
+          refineAgentId = agent.id;
+        } catch (_) {
+        }
+        const abortController = new AbortController();
+        refineSession = { sessionId, nodeId: nId, suggestion: "", abortController, agentId: refineAgentId };
+        const isWriteMode = mode === "write";
+        runAI(prompt, {
+          cwd,
+          model: isWriteMode ? "sonnet" : "haiku",
+          maxTurns: isWriteMode ? 10 : 1,
+          withTools: isWriteMode,
+          abortController,
+          onText: (text) => {
             if (refineSession) refineSession.suggestion += text;
             const payload = `event: refine-output
-data: ${JSON.stringify({ sessionId, nodeId: nodeId.toUpperCase(), text })}
+data: ${JSON.stringify({ sessionId, nodeId: nId, text })}
 
 `;
             for (const client of sseClients) {
@@ -6688,21 +7340,13 @@ data: ${JSON.stringify({ sessionId, nodeId: nodeId.toUpperCase(), text })}
                 sseClients.delete(client);
               }
             }
-          });
-        }
-        if (proc.stderr) {
-          proc.stderr.on("data", (chunk) => {
-            if (refineSession) refineSession.stderr += chunk.toString();
-          });
-        }
-        proc.on("close", (exitCode) => {
-          const suggestion = refineSession ? refineSession.suggestion : "";
-          const stderrText = refineSession ? refineSession.stderr : "";
-          const nId = refineSession ? refineSession.nodeId : nodeId.toUpperCase();
+          }
+        }).then(({ text, error }) => {
+          const suggestion = text || (refineSession ? refineSession.suggestion : "");
           refineSession = null;
-          if (stderrText) console.error(`[refine ${nId}] stderr:`, stderrText.slice(0, 500));
+          const exitCode = error ? 1 : 0;
           const payload = `event: refine-complete
-data: ${JSON.stringify({ sessionId, nodeId: nId, exitCode, suggestion, error: exitCode !== 0 ? stderrText.slice(0, 500) : void 0 })}
+data: ${JSON.stringify({ sessionId, nodeId: nId, exitCode, suggestion, error })}
 
 `;
           for (const client of sseClients) {
@@ -6712,11 +7356,18 @@ data: ${JSON.stringify({ sessionId, nodeId: nId, exitCode, suggestion, error: ex
               sseClients.delete(client);
             }
           }
-          const phase = exitCode === 0 ? "done" : "error";
-          const desc = exitCode === 0 ? `Review of ${nId} complete` + (suggestion.includes("LGTM") ? " \u2014 no changes needed" : " \u2014 suggestion ready") : `Review of ${nId} failed (exit ${exitCode})`;
-          const doneEntry = { ts: (/* @__PURE__ */ new Date()).toISOString(), tool: "Task", phase, agent: "Refine", desc };
+          if (refineAgentId) {
+            try {
+              const reg = getAgentRegistry(cwd);
+              if (!error) reg.complete(refineAgentId, { nodeId: nId });
+              else reg.fail(refineAgentId, 1, error);
+            } catch (_) {
+            }
+          }
+          const phase = error ? "error" : "done";
+          const desc = error ? `Review of ${nId} failed: ${error}` : `Review of ${nId} complete` + (suggestion.includes("LGTM") ? " \u2014 no changes needed" : " \u2014 suggestion ready");
           try {
-            fs.appendFileSync(activityFile, JSON.stringify(doneEntry) + "\n");
+            fs.appendFileSync(activityFile, JSON.stringify({ ts: (/* @__PURE__ */ new Date()).toISOString(), tool: "Task", phase, agent: "Refine", desc }) + "\n");
           } catch (_) {
           }
         });
@@ -6733,7 +7384,8 @@ data: ${JSON.stringify({ sessionId, nodeId: nId, exitCode, suggestion, error: ex
         return;
       }
       try {
-        refineSession.proc.kill();
+        if (refineSession.abortController) refineSession.abortController.abort();
+        else if (refineSession.proc) refineSession.proc.kill();
       } catch (_) {
       }
       refineSession = null;
@@ -6778,6 +7430,123 @@ data: ${JSON.stringify({ sessionId, nodeId: nId, exitCode, suggestion, error: ex
         const entry = { ts: (/* @__PURE__ */ new Date()).toISOString(), tool: "Review", phase: "end", desc: `Refined ${id}`, nodeId: id, reviewState: "approved" };
         fs.appendFileSync(activityFile, JSON.stringify(entry) + "\n");
         sendJson(res, 200, { ok: true });
+      } catch (err) {
+        sendJson(res, 500, { error: String(err) });
+      }
+    }
+    var commandSession = null;
+    async function handleCommand(req, res, cwd) {
+      try {
+        if (commandSession) {
+          sendJson(res, 409, { error: "A command is already running" });
+          return;
+        }
+        const body = await readJsonBody(req).catch(() => ({}));
+        const message = (body.message || "").trim();
+        const context = body.context || {};
+        if (!message) {
+          sendJson(res, 400, { error: "No message provided" });
+          return;
+        }
+        const sessionId = `cmd-${Date.now()}`;
+        const { runAI } = require_ai_runner();
+        const activityFile = path.join(cwd, ".planning", "activity.jsonl");
+        const graph = runLoadGraph2(cwd);
+        let contextBlock = "";
+        if (!("error" in graph)) {
+          if (context.nodeId) {
+            const allNodes = [...graph.declarations || [], ...graph.milestones || [], ...graph.actions || []];
+            const node = allNodes.find((n) => n.id === context.nodeId);
+            if (node) {
+              contextBlock = `
+Current view is focused on: ${node.id} \u2014 ${node.title || node.statement || ""} (${node.status || "PENDING"})`;
+            }
+          }
+          if (context.nodeIds && context.nodeIds.length > 0) {
+            const allNodes = [...graph.declarations || [], ...graph.milestones || [], ...graph.actions || []];
+            const visible = context.nodeIds.map((id) => allNodes.find((n) => n.id === id)).filter(Boolean);
+            contextBlock += `
+Visible nodes:
+${visible.map((n) => `- ${n.id}: ${n.title || n.statement || ""} (${n.status || "PENDING"})`).join("\n")}`;
+          }
+          if (context.viewDescription) {
+            contextBlock += `
+View: ${context.viewDescription}`;
+          }
+        }
+        const prompt = `You are working on a Declare project. The project planning files are in ${path.join(cwd, ".planning")}/
+
+The user is looking at the dashboard and says: "${message}"
+${contextBlock}
+
+The planning files:
+- FUTURE.md \u2014 declarations (the "what" the project declares will be true)
+- MILESTONES.md \u2014 milestones (checkpoints that realize declarations)
+- milestones/M-XX-slug/PLAN.md \u2014 action plans per milestone
+
+Apply the user's request by editing the relevant files. Be concise in your response \u2014 just state what you did.`;
+        let agentId;
+        try {
+          const reg = getAgentRegistry(cwd);
+          const agent = reg.spawn("command", context.nodeId || "project", context.nodeId || "project");
+          agentId = agent.id;
+        } catch (_) {
+        }
+        const abortController = new AbortController();
+        commandSession = { sessionId, abortController, agentId };
+        runAI(prompt, {
+          cwd,
+          model: "sonnet",
+          maxTurns: 15,
+          withTools: true,
+          abortController,
+          onText: (text) => {
+            const payload = `event: command-output
+data: ${JSON.stringify({ sessionId, text })}
+
+`;
+            for (const client of sseClients) {
+              try {
+                client.write(payload);
+              } catch (_) {
+                sseClients.delete(client);
+              }
+            }
+          }
+        }).then(({ text, error }) => {
+          commandSession = null;
+          const exitCode = error ? 1 : 0;
+          const payload = `event: command-complete
+data: ${JSON.stringify({ sessionId, exitCode, result: text, error })}
+
+`;
+          for (const client of sseClients) {
+            try {
+              client.write(payload);
+            } catch (_) {
+              sseClients.delete(client);
+            }
+          }
+          if (agentId) {
+            try {
+              const reg = getAgentRegistry(cwd);
+              if (!error) reg.complete(agentId, { message: message.slice(0, 50) });
+              else reg.fail(agentId, 1, error);
+            } catch (_) {
+            }
+          }
+          const phase = error ? "error" : "done";
+          const desc = error ? `Command failed: ${error}` : `Command complete: ${text.slice(0, 80)}`;
+          try {
+            fs.appendFileSync(activityFile, JSON.stringify({ ts: (/* @__PURE__ */ new Date()).toISOString(), tool: "Task", phase, agent: "Command", desc }) + "\n");
+          } catch (_) {
+          }
+        });
+        try {
+          fs.appendFileSync(activityFile, JSON.stringify({ ts: (/* @__PURE__ */ new Date()).toISOString(), tool: "Task", phase: "start", agent: "Command", desc: message.slice(0, 100) }) + "\n");
+        } catch (_) {
+        }
+        sendJson(res, 202, { ok: true, sessionId });
       } catch (err) {
         sendJson(res, 500, { error: String(err) });
       }
@@ -7263,6 +8032,10 @@ data: ${JSON.stringify({ reason: "delete", nodeId: id })}
           handleRefineAccept(req, res, cwd);
           return;
         }
+        if (urlPath === "/api/command") {
+          handleCommand(req, res, cwd);
+          return;
+        }
         if (urlPath === "/api/execution-manifest") {
           handleSaveManifest(req, res, cwd);
           return;
@@ -7332,6 +8105,22 @@ data: ${JSON.stringify({ reason: "delete", nodeId: id })}
         sendJson(res, 200, { running: pm.running() });
         return;
       }
+      if (urlPath === "/api/agents") {
+        const reg = getAgentRegistry(cwd);
+        sendJson(res, 200, reg.getAll());
+        return;
+      }
+      const agentMatch = urlPath.match(/^\/api\/agents\/([^/]+)$/);
+      if (agentMatch) {
+        const reg = getAgentRegistry(cwd);
+        const agent = reg.get(decodeURIComponent(agentMatch[1]));
+        if (agent) {
+          sendJson(res, 200, agent);
+        } else {
+          sendJson(res, 404, { error: "Agent not found" });
+        }
+        return;
+      }
       if (urlPath === "/api/play/status") {
         const pr = getPlayRunner(cwd);
         const plr = getPipelineRunner(cwd);
@@ -7357,6 +8146,10 @@ data: ${JSON.stringify({ reason: "delete", nodeId: id })}
       if (actionDeriveRunningMatch) {
         const adr = getActionDerivationRunner(cwd);
         sendJson(res, 200, { running: adr.running() });
+        return;
+      }
+      if (urlPath === "/api/lifecycle") {
+        handleLifecycle(res, cwd);
         return;
       }
       if (urlPath === "/api/workflow/state") {
@@ -7432,6 +8225,12 @@ data: ${JSON.stringify({ reason: "delete", nodeId: id })}
           resolve(void 0);
         });
       });
+      const reg = getAgentRegistry(cwd);
+      const restored = reg.restoreFromDisk();
+      if (restored.interrupted > 0) {
+        process.stderr.write(`[declare] Restored agent state: ${restored.interrupted} agent(s) marked as interrupted from previous run
+`);
+      }
       const url = `http://localhost:${resolvedPort}`;
       return { server, port: resolvedPort, url };
     }

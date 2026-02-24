@@ -67,6 +67,12 @@
 **Status:** DONE
 **Milestones:** M-34, M-35
 
+## D-12: Mesh Integration
+**Statement:** The Declare dashboard runs as a local daemon that registers with the mesh daemon. The mesh UI discovers active declare projects and renders the dashboard inline as a declare plugin — giving cross-project visibility and control from a single surface without leaving mesh.
+**Status:** DEFERRED
+**Milestones:** M-36, M-37
+**Note:** Deferred — depends on external mesh daemon project, out of scope for 1.0.
+
 ## D-13: Plan Verification Before Execution
 **Statement:** Every plan artifact — declaration, milestone, action EXEC-PLAN — passes through explicit human review with inline annotation before becoming executable. The UI supports iterative review cycles: generate plan → annotate with corrections → send back for revision → repeat until approved. Nothing runs until the human says the plan is tight. The review state (draft/in-review/revision-needed/approved) is tracked per node and gates execution.
 **Status:** DONE
@@ -81,3 +87,9 @@
 **Statement:** Once the plan is verified and the execution order confirmed, a single "Go" runs the entire pipeline to completion without human intervention — because the plan was tight and reviewed. The execution view shows wave progress, live output, and a CI-pipeline-style display. If a critical failure occurs, execution pauses and offers skip-and-continue or stop — but the default path is uninterrupted completion.
 **Status:** DONE
 **Milestones:** M-50, M-51, M-52
+
+## D-19: Full-Lifecycle E2E Proof (Merged into D-17)
+**Statement:** A Playwright-based headed browser test creates a complete to-do list application from scratch using the Declare dashboard — from declaring the first future through project completion — proving the full lifecycle works and serving as a living demo of the product.
+**Status:** MERGED
+**Milestones:** M-57, M-58
+**Note:** Merged into D-17 (Quality Gate Infrastructure) — both declarations address E2E testing.
