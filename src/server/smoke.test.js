@@ -59,7 +59,11 @@ describe('Dashboard smoke tests', () => {
   });
 
   after(() => {
-    if (server) server.close();
+    if (server) {
+      server.close();
+      server.closeAllConnections?.();
+    }
+    setTimeout(() => process.exit(0), 500);
   });
 
   it('serves the dashboard HTML at /', async () => {

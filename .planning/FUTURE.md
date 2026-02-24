@@ -14,7 +14,7 @@
 
 ## D-18: Lifecycle Stage Dashboard
 **Statement:** The Declare dashboard organizes every project item by lifecycle stage — Needs Planning, Needs Approval, Ready to Execute, In Execution, and Done — so users always see what needs attention now and items flow visually downward through stages as they progress. Empty projects show guided onboarding, and the Next action always knows the single most important thing to do.
-**Status:** PENDING
+**Status:** DONE
 **Review:** approved
 **Milestones:** M-54, M-55, M-56
 

@@ -104,10 +104,15 @@ describe('Full-cycle E2E: to-do list app', () => {
   });
 
   after(() => {
-    if (server) server.close();
+    if (server) {
+      server.close();
+      server.closeAllConnections?.();
+    }
     if (tmpDir) {
       try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ok */ }
     }
+    // Force exit after cleanup since fs.watch keeps the process alive
+    setTimeout(() => process.exit(0), 500);
   });
 
   // ── Step 1: Empty project state ───────────────────────────────────
@@ -451,7 +456,79 @@ describe('Full-cycle E2E: to-do list app', () => {
     assert.equal(data.declarations.length, 2, 'Original 2 declarations remain');
   });
 
-  // ── Step 12: SSE endpoint ─────────────────────────────────────────
+  // ── Step 12: Review and approval ─────────────────────────────────
+
+  it('sets review state to approved for declaration 1', async () => {
+    const res = await request(
+      `${baseUrl}/api/node/${declId1}/review-state`,
+      { reviewState: 'approved' },
+      'PUT'
+    );
+    assert.equal(res.status, 200);
+  });
+
+  it('sets review state to approved for all milestones', async () => {
+    for (const id of [msId1, msId2, msId3]) {
+      const res = await request(
+        `${baseUrl}/api/node/${id}/review-state`,
+        { reviewState: 'approved' },
+        'PUT'
+      );
+      assert.equal(res.status, 200);
+    }
+  });
+
+  it('sets review state to approved for all actions', async () => {
+    const graphRes = await get(`${baseUrl}/api/graph`);
+    const graphData = json(graphRes);
+    for (const action of graphData.actions) {
+      const res = await request(
+        `${baseUrl}/api/node/${action.id}/review-state`,
+        { reviewState: 'approved' },
+        'PUT'
+      );
+      assert.equal(res.status, 200);
+    }
+  });
+
+  it('graph reflects approved review states', async () => {
+    const res = await get(`${baseUrl}/api/graph`);
+    const data = json(res);
+    for (const m of data.milestones) {
+      assert.equal(m.reviewState, 'approved', `${m.id} should be approved`);
+    }
+    for (const a of data.actions) {
+      assert.equal(a.reviewState, 'approved', `${a.id} should be approved`);
+    }
+  });
+
+  // ── Step 13: Lifecycle API ───────────────────────────────────────
+
+  it('lifecycle API returns valid stage structure', async () => {
+    const res = await get(`${baseUrl}/api/lifecycle`);
+    assert.equal(res.status, 200);
+    const data = json(res);
+    assert.ok(data.stages, 'Should have stages');
+    assert.ok(data.stages['needs-planning'] !== undefined, 'Should have needs-planning');
+    assert.ok(data.stages['needs-approval'] !== undefined, 'Should have needs-approval');
+    assert.ok(data.stages['ready-to-execute'] !== undefined, 'Should have ready-to-execute');
+    assert.ok(data.stages['in-execution'] !== undefined, 'Should have in-execution');
+    assert.ok(data.stages['done'] !== undefined, 'Should have done');
+    assert.ok(data.progress, 'Should have progress');
+    assert.equal(typeof data.progress.total, 'number');
+  });
+
+  // ── Step 14: Agent registry ──────────────────────────────────────
+
+  it('agent registry returns empty active list', async () => {
+    const res = await get(`${baseUrl}/api/agents`);
+    assert.equal(res.status, 200);
+    const data = json(res);
+    assert.ok(Array.isArray(data.active), 'Should have active array');
+    assert.ok(Array.isArray(data.recent), 'Should have recent array');
+  });
+
+  // ── Step 15: SSE endpoint ─────────────────────────────────────────
 
   it('SSE /events connects and returns event-stream', async () => {
     const res = await new Promise((resolve, reject) => {
@@ -469,7 +546,7 @@ describe('Full-cycle E2E: to-do list app', () => {
     assert.equal(res.headers['content-type'], 'text/event-stream');
   });
 
-  // ── Step 13: Edge cases ───────────────────────────────────────────
+  // ── Step 16: Edge cases ───────────────────────────────────────────
 
   it('rejects declaration without title', async () => {
     const res = await request(`${baseUrl}/api/declarations`, {
