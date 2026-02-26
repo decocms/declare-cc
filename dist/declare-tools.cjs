@@ -1552,7 +1552,7 @@ var require_help = __commonJS({
             usage: "/declare:help"
           }
         ],
-        version: "1.0.5"
+        version: "1.0.6"
       };
     }
     module2.exports = { runHelp: runHelp2 };
