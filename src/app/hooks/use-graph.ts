@@ -1,12 +1,18 @@
+import { useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 const GRAPH_KEY = ["graph"] as const;
+const AGENTS_KEY = ["agents"] as const;
 
 export function useGraph() {
   return useQuery({
     queryKey: GRAPH_KEY,
-    queryFn: () => fetch("/api/graph").then((r) => r.json()),
-    refetchInterval: false,
+    queryFn: async () => {
+      const res = await fetch("/api/graph");
+      if (!res.ok) throw new Error(`Graph API error: ${res.status}`);
+      return res.json();
+    },
+    retry: 1,
   });
 }
 
@@ -49,21 +55,27 @@ export function useUpdateNode() {
   });
 }
 
-/** Subscribe to SSE events and auto-refetch graph */
+/** Subscribe to SSE events and auto-refetch graph + agents */
 export function useSSE() {
   const qc = useQueryClient();
 
-  // Only set up once via a query that never refetches
-  useQuery({
-    queryKey: ["sse"],
-    queryFn: () => {
-      const es = new EventSource("/events");
-      es.addEventListener("change", () => {
-        qc.invalidateQueries({ queryKey: GRAPH_KEY });
-      });
-      return { connected: true };
-    },
-    staleTime: Infinity,
-    refetchOnWindowFocus: false,
-  });
+  useEffect(() => {
+    const es = new EventSource("/events");
+    es.addEventListener("change", () => {
+      qc.invalidateQueries({ queryKey: GRAPH_KEY });
+    });
+    es.addEventListener("agent-start", () => {
+      qc.invalidateQueries({ queryKey: AGENTS_KEY });
+    });
+    es.addEventListener("agent-complete", () => {
+      qc.invalidateQueries({ queryKey: AGENTS_KEY });
+    });
+    es.addEventListener("agent-output", () => {
+      qc.invalidateQueries({ queryKey: AGENTS_KEY });
+    });
+    es.onerror = () => {
+      // EventSource auto-reconnects — no action needed
+    };
+    return () => es.close();
+  }, [qc]);
 }

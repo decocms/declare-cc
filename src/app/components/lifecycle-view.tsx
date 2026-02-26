@@ -31,11 +31,6 @@ export function LifecycleView() {
 
   const items = getItems(graph, drill);
 
-  // Show onboarding when no declarations exist
-  if (!isLoading && items.length === 0 && drill.level === "declarations") {
-    return <OnboardingFlow />;
-  }
-
   // Keep refs in sync so the keydown handler always sees latest state
   const drillRef = useRef(drill);
   const focusRef = useRef(focusIdx);
@@ -106,6 +101,11 @@ export function LifecycleView() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []); // stable — never re-registers
+
+  // Show onboarding when no declarations exist (after all hooks)
+  if (!isLoading && items.length === 0 && drill.level === "declarations") {
+    return <OnboardingFlow />;
+  }
 
   function handleDrillIn(currentItems: ItemShape[], idx: number, d: DrillState) {
     const item = currentItems[idx];

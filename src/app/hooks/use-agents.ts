@@ -17,8 +17,14 @@ export interface Agent {
 export function useAgents() {
   return useQuery({
     queryKey: AGENTS_KEY,
-    queryFn: (): Promise<Agent[]> => fetch("/api/agents").then((r) => r.json()),
-    refetchInterval: 3000,
+    queryFn: async (): Promise<Agent[]> => {
+      const res = await fetch("/api/agents");
+      if (!res.ok) return [];
+      return res.json();
+    },
+    // No polling — SSE triggers refetch via invalidation
+    refetchInterval: false,
+    retry: false,
   });
 }
 

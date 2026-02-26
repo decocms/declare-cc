@@ -16,6 +16,15 @@ export default defineConfig({
       "/events": "http://localhost:3847",
     },
   },
+  optimizeDeps: {
+    include: [
+      "react",
+      "react-dom",
+      "react/jsx-runtime",
+      "@tanstack/react-query",
+      "@tanstack/react-router",
+    ],
+  },
   build: {
     outDir: "dist/client",
   },

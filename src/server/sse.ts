@@ -1,17 +1,16 @@
 import { Hono } from "hono";
-import { streamSSE } from "hono/streaming";
 
-/** Active SSE clients */
-const clients = new Set<ReadableStreamDefaultController>();
+type SSEWriter = (data: string) => void;
+const clients = new Set<SSEWriter>();
 
-/** Broadcast an event to all SSE clients */
-export function broadcast(event: string, data: unknown) {
+/** Broadcast an SSE event to all connected clients */
+export function broadcastEvent(event: string, data: unknown) {
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-  for (const controller of clients) {
+  for (const write of clients) {
     try {
-      controller.enqueue(new TextEncoder().encode(payload));
+      write(payload);
     } catch {
-      clients.delete(controller);
+      clients.delete(write);
     }
   }
 }
@@ -19,46 +18,36 @@ export function broadcast(event: string, data: unknown) {
 export const sseRoute = new Hono();
 
 sseRoute.get("/events", (c) => {
-  return streamSSE(c, async (stream) => {
-    const controller = stream as unknown as ReadableStreamDefaultController;
+  const stream = new ReadableStream({
+    start(controller) {
+      const encoder = new TextEncoder();
+      const write: SSEWriter = (data: string) => {
+        try { controller.enqueue(encoder.encode(data)); } catch {}
+      };
 
-    // For Hono streamSSE we use a different approach
-    // Send retry directive
-    await stream.writeSSE({ event: "connected", data: "ok", retry: 3000 });
+      // Send initial retry directive
+      write("retry: 3000\n\n");
+      clients.add(write);
 
-    // Keep alive with periodic pings
-    const interval = setInterval(async () => {
-      try {
-        await stream.writeSSE({ event: "ping", data: "" });
-      } catch {
+      // Keepalive ping every 30s
+      const interval = setInterval(() => {
+        try { write(": ping\n\n"); } catch { clearInterval(interval); }
+      }, 30_000);
+
+      // Cleanup when client disconnects — handled by AbortSignal
+      c.req.raw.signal.addEventListener("abort", () => {
         clearInterval(interval);
-      }
-    }, 30_000);
+        clients.delete(write);
+      });
+    },
+  });
 
-    // Register for broadcasts
-    const id = Symbol();
-    const handler = (event: string, data: unknown) => {
-      stream.writeSSE({ event, data: JSON.stringify(data) }).catch(() => {});
-    };
-    broadcastHandlers.set(id, handler);
-
-    // Cleanup on close
-    stream.onAbort(() => {
-      clearInterval(interval);
-      broadcastHandlers.delete(id);
-    });
-
-    // Block until aborted
-    await new Promise(() => {});
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+      "Access-Control-Allow-Origin": "*",
+    },
   });
 });
-
-type BroadcastHandler = (event: string, data: unknown) => void;
-const broadcastHandlers = new Map<symbol, BroadcastHandler>();
-
-/** Enhanced broadcast that uses stream handlers */
-export function broadcastEvent(event: string, data: unknown) {
-  for (const handler of broadcastHandlers.values()) {
-    handler(event, data);
-  }
-}
