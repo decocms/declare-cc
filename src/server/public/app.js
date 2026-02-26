@@ -9076,5 +9076,11 @@ loadData().then(() => {
 loadActivity();
 loadAgentCards();
 
+// Version label
+fetch('/api/version').then(r => r.json()).then(d => {
+  const el = document.getElementById('version-label');
+  if (el && d.version) el.textContent = 'v' + d.version;
+}).catch(() => {});
+
 // Poll agent cards every 3s as fallback if SSE agent events are missed
 setInterval(loadAgentCards, 3000);

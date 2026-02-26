@@ -3024,6 +3024,11 @@ function route(req, res, cwd) {
   }
 
   // API routes
+  if (urlPath === '/api/version') {
+    sendJson(res, 200, { version: typeof DECLARE_VERSION !== 'undefined' ? DECLARE_VERSION : 'dev' });
+    return;
+  }
+
   if (urlPath === '/api/graph') {
     handleGraph(res, cwd);
     return;

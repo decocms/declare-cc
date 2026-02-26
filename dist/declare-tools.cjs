@@ -8723,6 +8723,10 @@ data: ${JSON.stringify({ reason: "delete", nodeId: id })}
         req.on("close", () => sseClients.delete(res));
         return;
       }
+      if (urlPath === "/api/version") {
+        sendJson(res, 200, { version: true ? "1.0.6" : "dev" });
+        return;
+      }
       if (urlPath === "/api/graph") {
         handleGraph(res, cwd);
         return;

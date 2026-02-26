@@ -1187,6 +1187,15 @@
     @keyframes derive-spin {
       to { transform: rotate(360deg); }
     }
+    #version-label {
+      position: fixed;
+      bottom: 6px;
+      left: 8px;
+      font-size: 10px;
+      color: #555;
+      pointer-events: none;
+      z-index: 1;
+    }
     .derive-card-status {
       display: inline-flex;
       align-items: center;
@@ -4277,6 +4286,7 @@
   </div>
 </div>
 
-<script src="/public/app.js?v=26"></script>
+<div id="version-label"></div>
+<script src="/public/app.js?v=27"></script>
 </body>
 </html>
