@@ -1,6 +1,6 @@
 {
   "name": "declare-cc",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "A future-driven meta-prompting engine for agentic development, rooted in declared futures and causal graph structure.",
   "bin": {
     "declare-cc": "bin/install.js",

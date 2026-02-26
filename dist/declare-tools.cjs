@@ -1552,7 +1552,7 @@ var require_help = __commonJS({
             usage: "/declare:help"
           }
         ],
-        version: "1.0.6"
+        version: "1.0.7"
       };
     }
     module2.exports = { runHelp: runHelp2 };
@@ -8724,7 +8724,7 @@ data: ${JSON.stringify({ reason: "delete", nodeId: id })}
         return;
       }
       if (urlPath === "/api/version") {
-        sendJson(res, 200, { version: true ? "1.0.6" : "dev" });
+        sendJson(res, 200, { version: true ? "1.0.7" : "dev" });
         return;
       }
       if (urlPath === "/api/graph") {
