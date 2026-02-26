@@ -8722,13 +8722,67 @@ function cancelOnboard() {
 }
 
 function startOnboardApproving(mode) {
-  onboardPhase = 'approving';
-  onboardApproveIndex = 0;
   if (mode === 'all') {
     approveAllOnboard();
   } else {
     renderOnboardUI();
   }
+}
+
+async function approveOnboardByIndex(idx) {
+  if (!onboardProposals || idx >= onboardProposals.length) return;
+  const proposal = onboardProposals[idx];
+  if (proposal.approvedId) return; // already approved
+  try {
+    const resp = await fetch('/api/onboard/approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: proposal.title, statement: proposal.statement }),
+    });
+    const data = await resp.json();
+    if (data.id) proposal.approvedId = data.id;
+  } catch (_) {}
+
+  // Check if all done
+  const remaining = onboardProposals.filter(p => !p.approvedId).length;
+  if (remaining === 0) {
+    onboardPhase = 'idle';
+    onboardPrompt = null;
+    onboardQuestions = null;
+    onboardProposals = null;
+    fetch('/api/onboard/complete', { method: 'POST' }).catch(() => {});
+    loadData().then(() => renderDrillView());
+    loadActivity();
+  } else {
+    renderOnboardUI();
+  }
+}
+
+function editOnboardByIndex(idx) {
+  if (!onboardProposals || idx >= onboardProposals.length) return;
+  const proposal = onboardProposals[idx];
+  const card = document.querySelector(`[data-onboard-idx="${idx}"]`);
+  if (!card) return;
+  const body = card.querySelector('.drill-card-body');
+  if (!body) return;
+  body.innerHTML = `
+    <input class="onboard-title" value="${escHtml(proposal.title)}" style="width:100%;margin-bottom:4px" />
+    <textarea class="onboard-statement" rows="2" style="width:100%">${escHtml(proposal.statement)}</textarea>
+    <div style="margin-top:6px">
+      <button class="drill-review-btn approve-btn onboard-save-btn" data-onboard-idx="${idx}">Save</button>
+      <button class="drill-action-btn onboard-cancel-edit-btn" data-onboard-idx="${idx}">Cancel</button>
+    </div>
+  `;
+  const titleInput = body.querySelector('.onboard-title');
+  if (titleInput) titleInput.focus();
+  body.querySelector('.onboard-save-btn').addEventListener('click', () => {
+    proposal.title = body.querySelector('.onboard-title').value.trim() || proposal.title;
+    proposal.statement = body.querySelector('.onboard-statement').value.trim() || proposal.statement;
+    renderOnboardUI();
+  });
+  body.querySelector('.onboard-cancel-edit-btn').addEventListener('click', () => {
+    renderOnboardUI();
+  });
 }
 
 async function approveCurrentOnboard() {
@@ -8853,53 +8907,62 @@ function renderOnboardUI() {
       `;
     } else {
       let html = '<div class="onboard-phase-label">Proposed Declarations</div>';
+      html += '<div class="drill-cards onboard-cards">';
       onboardProposals.forEach((p, i) => {
-        html += `<div class="onboard-proposal">
-          <div class="op-header">
-            <span class="op-index">${i + 1}.</span>
+        const isApproved = !!p.approvedId;
+        html += `<div class="drill-card${isApproved ? '' : ' needs-review'}${!isApproved && i === 0 ? ' current-review' : ''}" data-onboard-idx="${i}">
+          <div class="drill-card-top">
+            <span class="drill-card-id">${isApproved ? escHtml(p.approvedId) : (i + 1) + '.'}</span>
+            <div class="drill-card-body">
+              <div class="drill-card-title">${escHtml(p.title)}</div>
+              <div class="drill-card-desc">${escHtml(p.statement)}</div>
+              ${p.reasoning ? `<div class="drill-card-desc" style="opacity:0.5;font-style:italic;margin-top:4px">${escHtml(p.reasoning)}</div>` : ''}
+            </div>
           </div>
-          <input class="onboard-title" value="${escHtml(p.title)}" />
-          <textarea class="onboard-statement" rows="2">${escHtml(p.statement)}</textarea>
-          <div class="onboard-reason">${escHtml(p.reasoning || '')}</div>
+          <div class="drill-card-actions">
+            ${isApproved
+              ? '<span style="color:var(--approved-color);font-weight:600;font-size:12px">Approved</span>'
+              : `<button class="drill-review-btn approve-btn" data-onboard-action="approve" data-onboard-idx="${i}"><kbd>A</kbd> Approve</button>
+                 <button class="drill-action-btn" data-onboard-action="edit" data-onboard-idx="${i}"><kbd>E</kbd> Edit</button>
+                 <button class="drill-action-btn drill-action-danger" data-onboard-action="delete" data-onboard-idx="${i}"><kbd>D</kbd> Delete</button>`
+            }
+          </div>
         </div>`;
       });
-      html += `<div class="onboard-actions">
-        <button class="onboard-btn-primary" onclick="startOnboardApproving('all')">Approve All</button>
-        <button class="onboard-btn-secondary" onclick="startOnboardApproving('one')">One by One</button>
-        <button class="onboard-btn-secondary" onclick="cancelOnboard()">Cancel</button>
-      </div>`;
+      html += '</div>';
+      const unapprovedCount = onboardProposals.filter(p => !p.approvedId).length;
+      if (unapprovedCount > 0) {
+        html += `<div class="onboard-actions">
+          <button class="onboard-btn-primary" onclick="startOnboardApproving('all')"><kbd>⌃⇧A</kbd> Approve All (${unapprovedCount})</button>
+          <button class="onboard-btn-secondary" onclick="cancelOnboard()">Cancel</button>
+        </div>`;
+      }
       container.innerHTML = html;
+
+      // Wire card buttons
+      setTimeout(() => {
+        container.querySelectorAll('[data-onboard-action]').forEach(btn => {
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const idx = parseInt(btn.dataset.onboardIdx);
+            const action = btn.dataset.onboardAction;
+            if (action === 'approve') {
+              approveOnboardByIndex(idx);
+            } else if (action === 'edit') {
+              editOnboardByIndex(idx);
+            } else if (action === 'delete') {
+              onboardProposals.splice(idx, 1);
+              renderOnboardUI();
+            }
+          });
+        });
+      }, 0);
     }
   } else if (onboardPhase === 'approving') {
-    if (!onboardProposals) return;
-    let html = `<div class="onboard-phase-label">Approving Declarations</div>`;
-    html += `<div class="onboard-progress">${onboardApproveIndex} of ${onboardProposals.length} approved</div>`;
-    onboardProposals.forEach((p, i) => {
-      const isApproved = i < onboardApproveIndex || p.approvedId;
-      const isCurrent = i === onboardApproveIndex && !p.approvedId;
-      const cls = isApproved ? 'approved' : isCurrent ? 'current' : '';
-      html += `<div class="onboard-proposal ${cls}">
-        <div class="op-header">
-          ${isApproved ? '<span class="op-check">\u2713</span>' : `<span class="op-index">${i + 1}.</span>`}
-          ${p.approvedId ? `<span class="op-id">${escHtml(p.approvedId)}</span>` : ''}
-        </div>
-        ${isCurrent ? `
-          <input class="onboard-title" value="${escHtml(p.title)}" />
-          <textarea class="onboard-statement" rows="2">${escHtml(p.statement)}</textarea>
-        ` : `
-          <div style="font-weight:600;font-size:13px">${escHtml(p.title)}</div>
-          <div style="font-size:12px;color:var(--text-dim);margin-top:4px">${escHtml(p.statement)}</div>
-        `}
-        <div class="onboard-reason">${escHtml(p.reasoning || '')}</div>
-      </div>`;
-    });
-    if (onboardApproveIndex < onboardProposals.length) {
-      html += `<div class="onboard-actions">
-        <button class="onboard-btn-primary" onclick="approveCurrentOnboard()">Approve &amp; Next</button>
-        <button class="onboard-btn-secondary" onclick="cancelOnboard()">Cancel</button>
-      </div>`;
-    }
-    container.innerHTML = html;
+    // Redirect to proposals view — approving is now inline
+    onboardPhase = 'proposals';
+    renderOnboardUI();
+    return;
   }
 
   $drillList.appendChild(container);
