@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { NodeCard, BatchBar } from "./node-card";
+import { DetailPanel } from "./detail-panel";
+import { AgentPanel } from "./agent-panel";
 import { useGraph, useApprove, useDeleteNode, useSSE } from "../hooks/use-graph";
 import { OnboardingFlow } from "./onboarding/onboarding-flow";
 
@@ -164,8 +166,14 @@ export function LifecycleView() {
 
   const drafts = items.filter((i) => i.review !== "approved");
 
+  // Build detail item from focused item + graph enrichment
+  const focusedItem = items[focusIdx] ?? null;
+  const detailItem = focusedItem ? buildDetailItem(focusedItem, graph) : null;
+
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
+    <div className="flex flex-1 overflow-hidden">
+      {/* Main list area */}
+      <div className="flex flex-1 flex-col overflow-hidden">
       {/* Breadcrumb */}
       <div className="flex items-center gap-2 border-b px-4 py-2 text-xs">
         {breadcrumbs.map((bc, i) => (
@@ -216,6 +224,13 @@ export function LifecycleView() {
 
       {/* Batch bar */}
       <BatchBar count={drafts.length} onApproveAll={approveAll} />
+      </div>
+
+      {/* Right panels */}
+      <div className="flex shrink-0">
+        <DetailPanel item={detailItem} />
+        <AgentPanel />
+      </div>
     </div>
   );
 }
@@ -305,4 +320,35 @@ function buildBreadcrumbs(
   }
 
   return crumbs;
+}
+
+function buildDetailItem(item: ItemShape, graph: any) {
+  if (!item || !graph) return null;
+
+  const base = {
+    id: item.id,
+    nodeType: item.nodeType,
+    title: item.title,
+    description: item.description,
+    status: item.status,
+    review: item.review,
+  };
+
+  if (item.nodeType === "declaration") {
+    const d = graph.declarations?.find((d: any) => d.id === item.id);
+    const milestoneCount = (graph.milestones ?? []).filter(
+      (m: any) => m.realizes?.includes(item.id)
+    ).length;
+    return { ...base, statement: d?.statement, why: d?.why, milestoneCount };
+  }
+
+  if (item.nodeType === "milestone") {
+    const m = graph.milestones?.find((m: any) => m.id === item.id);
+    const actionCount = (graph.actions ?? []).filter(
+      (a: any) => a.milestoneId === item.id
+    ).length;
+    return { ...base, realizes: m?.realizes, actionCount };
+  }
+
+  return base;
 }
