@@ -24,7 +24,7 @@ export function DetailPanel({ item, isRunning }: DetailPanelProps) {
 
   if (!item) {
     return (
-      <aside className="w-72 shrink-0 border-l p-4">
+      <aside className="flex-1 border-l p-4">
         <p className="text-xs font-medium uppercase text-muted-foreground">Details</p>
         <p className="mt-2 text-sm text-muted-foreground">
           Click a node to see details.
@@ -42,7 +42,7 @@ export function DetailPanel({ item, isRunning }: DetailPanelProps) {
     item.nodeType === "milestone" ? "--color-node-mile" : "--color-node-act";
 
   return (
-    <aside className="w-72 shrink-0 border-l flex flex-col overflow-y-auto">
+    <aside className="flex-1 flex flex-col overflow-y-auto">
       <div className="p-4 space-y-4">
         {/* Header */}
         <div>
@@ -57,7 +57,7 @@ export function DetailPanel({ item, isRunning }: DetailPanelProps) {
         {item.statement && (
           <div>
             <p className="text-[10px] font-medium uppercase text-muted-foreground mb-1">Statement</p>
-            <p className="text-sm text-muted-foreground">{item.statement}</p>
+            <p className="text-[15px] leading-relaxed text-foreground/80">{item.statement}</p>
           </div>
         )}
 
@@ -65,7 +65,7 @@ export function DetailPanel({ item, isRunning }: DetailPanelProps) {
         {item.description && !item.statement && (
           <div>
             <p className="text-[10px] font-medium uppercase text-muted-foreground mb-1">Description</p>
-            <p className="text-sm text-muted-foreground">{item.description}</p>
+            <p className="text-[15px] leading-relaxed text-foreground/80">{item.description}</p>
           </div>
         )}
 

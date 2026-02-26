@@ -165,7 +165,7 @@ export function LifecycleView() {
 
   function handleDrillIn(currentItems: ItemShape[], idx: number, d: DrillState) {
     const item = currentItems[idx];
-    if (!item) return;
+    if (!item || item.childCount === 0) return; // No children → just select, don't drill
 
     if (d.level === "declarations") {
       setDrill({
@@ -227,7 +227,7 @@ export function LifecycleView() {
   return (
     <div className="flex flex-1 overflow-hidden">
       {/* Main list area */}
-      <div className="flex flex-1 flex-col overflow-hidden">
+      <div className="flex w-[480px] shrink-0 flex-col overflow-hidden border-r">
       {/* Breadcrumb — always visible to avoid layout shift */}
       <div className="flex items-center gap-2 border-b px-4 text-xs h-7">
         {breadcrumbs.map((bc, i) => (
@@ -277,12 +277,12 @@ export function LifecycleView() {
               id={item.id}
               type={item.nodeType}
               title={item.title}
-              description={item.description}
               status={item.status}
               review={item.review as "draft" | "approved" | undefined}
               isRunning={runningNodeIds.has(item.id)}
               focused={i === focusIdx}
-              onClick={() => { setFocusIdx(i); handleDrillIn(items, i, drill); }}
+              onClick={() => setFocusIdx(i)}
+              onDoubleClick={() => handleDrillIn(items, i, drill)}
               onApprove={() => approve.mutate([item.id])}
               onDelete={() => deleteNode.mutate({ id: item.id, type: item.nodeType })}
             />
@@ -295,7 +295,7 @@ export function LifecycleView() {
       </div>
 
       {/* Right panels */}
-      <div className="flex shrink-0">
+      <div className="flex flex-1 min-w-0">
         <DetailPanel item={detailItem} isRunning={focusedItem ? runningNodeIds.has(focusedItem.id) : false} />
         <AgentPanel />
       </div>
@@ -312,33 +312,46 @@ interface ItemShape {
   description?: string;
   status?: string;
   review?: string;
+  childCount: number;
 }
 
 function getItems(graph: any, drill: DrillState): ItemShape[] {
   if (!graph) return [];
 
   if (drill.level === "declarations") {
-    return (graph.declarations ?? []).map((d: any) => ({
-      id: d.id,
-      nodeType: "declaration" as const,
-      title: d.title,
-      description: d.statement,
-      status: d.status ?? "PENDING",
-      review: d.review ?? "draft",
-    }));
+    return (graph.declarations ?? []).map((d: any) => {
+      const milestoneCount = (graph.milestones ?? []).filter(
+        (m: any) => m.realizes?.includes(d.id)
+      ).length;
+      return {
+        id: d.id,
+        nodeType: "declaration" as const,
+        title: d.title,
+        description: d.statement,
+        status: d.status ?? "PENDING",
+        review: d.review ?? "draft",
+        childCount: milestoneCount,
+      };
+    });
   }
 
   if (drill.level === "milestones" && drill.declarationId) {
     return (graph.milestones ?? [])
       .filter((m: any) => m.realizes?.includes(drill.declarationId))
-      .map((m: any) => ({
-        id: m.id,
-        nodeType: "milestone" as const,
-        title: m.title,
-        description: m.description,
-        status: m.status ?? "PENDING",
-        review: m.reviewState ?? "draft",
-      }));
+      .map((m: any) => {
+        const actionCount = (graph.actions ?? []).filter(
+          (a: any) => a.milestoneId === m.id
+        ).length;
+        return {
+          id: m.id,
+          nodeType: "milestone" as const,
+          title: m.title,
+          description: m.description,
+          status: m.status ?? "PENDING",
+          review: m.reviewState ?? "draft",
+          childCount: actionCount,
+        };
+      });
   }
 
   if (drill.level === "actions" && drill.milestoneId) {
@@ -351,6 +364,7 @@ function getItems(graph: any, drill: DrillState): ItemShape[] {
         description: a.description,
         status: a.status ?? "PENDING",
         review: "draft",
+        childCount: 0,
       }));
   }
 

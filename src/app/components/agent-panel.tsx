@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { useAgents, type Agent } from "../hooks/use-agents";
+import { useGraph } from "../hooks/use-graph";
 
 export function AgentPanel() {
   const { data: agents = [] } = useAgents();
+  const { data: graph } = useGraph();
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const running = agents.filter((a) => a.status === "running");
@@ -30,6 +32,7 @@ export function AgentPanel() {
               <AgentItem
                 key={agent.id}
                 agent={agent}
+                graph={graph}
                 expanded={expandedId === agent.id}
                 onToggle={() =>
                   setExpandedId(expandedId === agent.id ? null : agent.id)
@@ -45,10 +48,12 @@ export function AgentPanel() {
 
 function AgentItem({
   agent,
+  graph,
   expanded,
   onToggle,
 }: {
   agent: Agent;
+  graph: any;
   expanded: boolean;
   onToggle: () => void;
 }) {
@@ -88,12 +93,23 @@ function AgentItem({
           </div>
         </button>
         {nodeId && (
-          <a
-            href={`#${nodeId}`}
+          <button
+            onClick={() => {
+              const prefix = nodeId.split("-")[0];
+              if (prefix === "D") {
+                window.location.hash = nodeId;
+              } else if (prefix === "M") {
+                // Find parent declaration
+                const m = graph?.milestones?.find((m: any) => m.id === nodeId);
+                const parentD = m?.realizes?.[0];
+                if (parentD) window.location.hash = parentD;
+              }
+              window.location.reload();
+            }}
             className="shrink-0 opacity-0 group-hover:opacity-100 text-[10px] px-1.5 py-0.5 rounded border bg-card hover:bg-accent transition-all text-muted-foreground"
           >
-            Go to {nodeId}
-          </a>
+            {nodeId}
+          </button>
         )}
       </div>
 

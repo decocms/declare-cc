@@ -65,7 +65,7 @@ export function NodeCard({
         >
           {id}
         </span>
-        <h3 className="text-sm font-semibold text-foreground truncate">{title}</h3>
+        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
       </div>
 
       {/* Description */}
