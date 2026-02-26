@@ -54,6 +54,7 @@ export function LifecycleView() {
 
   const [drill, setDrillRaw] = useState<DrillState>(drillFromHash);
   const [focusIdx, setFocusIdx] = useState(0);
+  const { dark, toggle } = useTheme();
 
   // Sync drill state to URL hash
   const setDrill = (d: DrillState) => {
@@ -244,7 +245,6 @@ export function LifecycleView() {
   const focusedItem = items[focusIdx] ?? null;
   const detailItem = focusedItem ? buildDetailItem(focusedItem, graph) : null;
 
-  const { dark, toggle } = useTheme();
   const projectName = graph?.projectName ?? "Declare";
 
   return (
