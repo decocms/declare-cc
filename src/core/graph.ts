@@ -54,7 +54,8 @@ export function buildGraphFromDisk(cwd: string): GraphData {
   }
 
   // Parse actions from milestone folders
-  const allActions: (Action & { milestoneId: string })[] = [];
+  let globalActionCounter = 0;
+  const allActions: (Action & { milestoneId: string; localId?: string })[] = [];
   const milestonesDir = resolve(planningDir, "milestones");
   if (existsSync(milestonesDir)) {
     for (const entry of readdirSync(milestonesDir, { withFileTypes: true })) {
@@ -64,7 +65,17 @@ export function buildGraphFromDisk(cwd: string): GraphData {
       const planPath = join(milestonesDir, entry.name, "PLAN.md");
       if (existsSync(planPath)) {
         const actions = parsePlanFile(readFileSync(planPath, "utf-8"));
-        allActions.push(...actions.map((a) => ({ ...a, milestoneId: mId })));
+        // Assign globally unique action IDs (A-01, A-02, ... continuing from previous)
+        for (const a of actions) {
+          globalActionCounter++;
+          const globalId = `A-${String(globalActionCounter).padStart(2, "0")}`;
+          allActions.push({
+            ...a,
+            id: globalId,
+            localId: a.id, // preserve original for display
+            milestoneId: mId,
+          });
+        }
       }
     }
   }
