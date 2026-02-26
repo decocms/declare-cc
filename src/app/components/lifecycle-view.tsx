@@ -1,10 +1,23 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { NodeCard, BatchBar } from "./node-card";
 import { DetailPanel } from "./detail-panel";
 import { AgentPanel } from "./agent-panel";
 import { useGraph, useApprove, useDeleteNode, useSSE } from "../hooks/use-graph";
 import { useAgents, useSpawnAgent } from "../hooks/use-agents";
 import { OnboardingFlow } from "./onboarding/onboarding-flow";
+
+function useTheme() {
+  const [dark, setDark] = useState(() =>
+    typeof window !== "undefined" && document.documentElement.classList.contains("dark"),
+  );
+  const toggle = useCallback(() => {
+    const next = !dark;
+    setDark(next);
+    document.documentElement.classList.toggle("dark", next);
+    localStorage.theme = next ? "dark" : "light";
+  }, [dark]);
+  return { dark, toggle };
+}
 
 type DrillLevel = "declarations" | "milestones" | "actions";
 
@@ -231,35 +244,50 @@ export function LifecycleView() {
   const focusedItem = items[focusIdx] ?? null;
   const detailItem = focusedItem ? buildDetailItem(focusedItem, graph) : null;
 
+  const { dark, toggle } = useTheme();
+  const projectName = graph?.projectName ?? "Declare";
+
   return (
-    <div className="flex flex-1 overflow-hidden">
-      {/* Main list area */}
-      <div className="flex w-[480px] shrink-0 flex-col overflow-hidden border-r">
-      {/* Breadcrumb — always visible to avoid layout shift */}
-      <div className="flex items-center gap-2 border-b px-4 text-xs h-7">
-        {breadcrumbs.map((bc, i) => (
-          <span key={i} className="flex items-center gap-2">
-            {i > 0 && <span className="text-muted-foreground">&rsaquo;</span>}
-            {bc.isHome ? (
-              bc.onClick ? (
-                <button onClick={bc.onClick} className="text-muted-foreground hover:text-foreground transition-colors" title="Back to declarations">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-                </button>
-              ) : (
-                <span className="text-muted-foreground/50">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-                </span>
-              )
-            ) : bc.onClick ? (
-              <button onClick={bc.onClick} className="text-muted-foreground hover:text-foreground transition-colors truncate max-w-xs">
-                {bc.label}
+    <div className="flex flex-1 flex-col overflow-hidden">
+      {/* Topbar — full width, breadcrumb + shortcuts + theme */}
+      <header className="flex h-10 shrink-0 items-center justify-between border-b bg-card px-4">
+        <div className="flex items-center gap-2 text-sm min-w-0">
+          {drill.level === "declarations" ? (
+            <span className="font-semibold text-foreground">{projectName}</span>
+          ) : (
+            <>
+              <button onClick={() => navigateTo("declarations")} className="text-muted-foreground hover:text-foreground transition-colors" title="Home">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
               </button>
-            ) : (
-              <span className="font-semibold text-foreground truncate max-w-md">{bc.label}</span>
-            )}
+              {breadcrumbs.filter(bc => !bc.isHome).map((bc, i) => (
+                <span key={i} className="flex items-center gap-2 min-w-0">
+                  <span className="text-muted-foreground text-xs">&rsaquo;</span>
+                  {bc.onClick ? (
+                    <button onClick={bc.onClick} className="text-muted-foreground hover:text-foreground transition-colors truncate text-xs">
+                      {bc.label}
+                    </button>
+                  ) : (
+                    <span className="font-semibold text-foreground truncate text-xs">{bc.label}</span>
+                  )}
+                </span>
+              ))}
+            </>
+          )}
+        </div>
+        <div className="flex items-center gap-3 shrink-0">
+          <span className="text-[10px] text-muted-foreground hidden sm:block">
+            <kbd className="font-mono">↑↓</kbd> nav &middot; <kbd className="font-mono">→</kbd> in &middot; <kbd className="font-mono">←</kbd> back &middot; <kbd className="font-mono">a</kbd> approve
           </span>
-        ))}
-      </div>
+          <button onClick={toggle} className="h-6 w-6 flex items-center justify-center text-xs rounded-md border bg-card hover:bg-accent transition-colors text-muted-foreground" title={dark ? "Light mode" : "Dark mode"}>
+            {dark ? "☀" : "☾"}
+          </button>
+        </div>
+      </header>
+
+      {/* Content: list + detail + agents */}
+      <div className="flex flex-1 overflow-hidden">
+      {/* List panel */}
+      <div className="flex w-[480px] shrink-0 flex-col overflow-hidden border-r">
 
       {/* Level header */}
       <div className="flex items-center justify-between px-4 py-3">
@@ -306,6 +334,7 @@ export function LifecycleView() {
       <div className="flex flex-1 min-w-0">
         <DetailPanel item={detailItem} isRunning={focusedItem ? runningNodeIds.has(focusedItem.id) : false} />
         <AgentPanel />
+      </div>
       </div>
     </div>
   );
