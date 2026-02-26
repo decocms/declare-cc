@@ -11,11 +11,11 @@ import { parseMilestonesFile } from "./artifacts/milestones";
 import { parsePlanFile } from "./artifacts/plan";
 import type { Declaration } from "./artifacts/future";
 import type { Milestone } from "./artifacts/milestones";
-import type { Action } from "./artifacts/plan";
+import type { Action, PlanMeta } from "./artifacts/plan";
 
 export interface GraphData {
   declarations: (Declaration & { wholeness?: string })[];
-  milestones: (Milestone & { wholeness?: string; actions?: Action[] })[];
+  milestones: (Milestone & { wholeness?: string; actions?: Action[]; planMeta?: PlanMeta })[];
   actions: (Action & { milestoneId?: string; wholeness?: string })[];
   stats: { declarations: number; milestones: number; actions: number };
   projectName: string;
@@ -56,6 +56,7 @@ export function buildGraphFromDisk(cwd: string): GraphData {
   // Parse actions from milestone folders
   let globalActionCounter = 0;
   const allActions: (Action & { milestoneId: string; localId?: string })[] = [];
+  const planMetaMap = new Map<string, PlanMeta>();
   const milestonesDir = resolve(planningDir, "milestones");
   if (existsSync(milestonesDir)) {
     for (const entry of readdirSync(milestonesDir, { withFileTypes: true })) {
@@ -64,7 +65,10 @@ export function buildGraphFromDisk(cwd: string): GraphData {
       if (!mId) continue;
       const planPath = join(milestonesDir, entry.name, "PLAN.md");
       if (existsSync(planPath)) {
-        const actions = parsePlanFile(readFileSync(planPath, "utf-8"));
+        const { actions, meta } = parsePlanFile(readFileSync(planPath, "utf-8"));
+        if (meta.successCriteria?.length || meta.mustHaves?.length) {
+          planMetaMap.set(mId, meta);
+        }
         // Assign globally unique action IDs (A-01, A-02, ... continuing from previous)
         for (const a of actions) {
           globalActionCounter++;
@@ -112,6 +116,7 @@ export function buildGraphFromDisk(cwd: string): GraphData {
       ...m,
       wholeness: wholeness.get(m.id) ?? "pending",
       actions: allActions.filter((a) => a.milestoneId === m.id),
+      ...(planMetaMap.has(m.id) ? { planMeta: planMetaMap.get(m.id) } : {}),
     })),
     actions: allActions.map((a) => ({
       ...a,

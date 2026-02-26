@@ -1,4 +1,4 @@
-import { type ReactNode } from "react";
+import { memo, type ReactNode } from "react";
 
 export type NodeType = "declaration" | "milestone" | "action";
 export type ReviewState = "draft" | "approved" | "rejected";
@@ -28,7 +28,7 @@ const TYPE_STYLES: Record<NodeType, { idVar: string; borderVar: string; bgVar: s
   action:      { idVar: "--color-node-act",  borderVar: "--color-node-act",  bgVar: "--color-node-act-bg" },
 };
 
-export function NodeCard({
+export const NodeCard = memo(function NodeCard({
   id,
   type,
   title,
@@ -111,6 +111,14 @@ export function NodeCard({
             <kbd className="mr-1 opacity-60">A</kbd>Approve
           </button>
         )}
+        {onApprove && review === "approved" && childCount === 0 && !isRunning && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onApprove(); }}
+            className="h-7 px-3 text-xs font-medium rounded-md border border-warning/40 bg-warning/5 text-warning hover:bg-warning/10 transition-colors"
+          >
+            Retry
+          </button>
+        )}
         {onEdit && (
           <button
             onClick={(e) => { e.stopPropagation(); onEdit(); }}
@@ -130,7 +138,7 @@ export function NodeCard({
       </div>
     </div>
   );
-}
+});
 
 /** Batch action bar — shown at bottom when there are items to batch-approve */
 export function BatchBar({

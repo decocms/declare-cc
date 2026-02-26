@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 const GRAPH_KEY = ["graph"] as const;
@@ -13,12 +13,11 @@ export function useGraph() {
       return res.json();
     },
     retry: 1,
-    placeholderData: (prev: any) => prev, // keep old data while refetching
+    placeholderData: (prev: any) => prev,
   });
 }
 
 export function useApprove() {
-  const qc = useQueryClient();
   return useMutation({
     mutationFn: (ids: string[]) =>
       fetch("/api/approve-batch", {
@@ -26,23 +25,19 @@ export function useApprove() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ids }),
       }).then((r) => r.json()),
-    onSuccess: () => qc.invalidateQueries({ queryKey: GRAPH_KEY }),
   });
 }
 
 export function useDeleteNode() {
-  const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, type }: { id: string; type: string }) => {
       const prefix = type === "declaration" ? "declarations" : type === "milestone" ? "milestones" : "actions";
       return fetch(`/api/${prefix}/${id}`, { method: "DELETE" }).then((r) => r.json());
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: GRAPH_KEY }),
   });
 }
 
 export function useUpdateNode() {
-  const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, type, data }: { id: string; type: string; data: Record<string, unknown> }) => {
       const prefix = type === "declaration" ? "declarations" : type === "milestone" ? "milestones" : "actions";
@@ -52,31 +47,44 @@ export function useUpdateNode() {
         body: JSON.stringify(data),
       }).then((r) => r.json());
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: GRAPH_KEY }),
   });
 }
 
-/** Subscribe to SSE events and auto-refetch graph + agents */
+/** Subscribe to SSE events and auto-refetch graph + agents (debounced) */
 export function useSSE() {
   const qc = useQueryClient();
+  const graphTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const agentsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const es = new EventSource("/events");
-    es.addEventListener("change", () => {
-      qc.invalidateQueries({ queryKey: GRAPH_KEY });
-    });
-    es.addEventListener("agent-start", () => {
-      qc.invalidateQueries({ queryKey: AGENTS_KEY });
-    });
-    es.addEventListener("agent-complete", () => {
-      qc.invalidateQueries({ queryKey: AGENTS_KEY });
-    });
-    es.addEventListener("agent-output", () => {
-      qc.invalidateQueries({ queryKey: AGENTS_KEY });
-    });
-    es.onerror = () => {
-      // EventSource auto-reconnects — no action needed
+
+    function debouncedGraphRefetch() {
+      if (graphTimer.current) clearTimeout(graphTimer.current);
+      graphTimer.current = setTimeout(() => {
+        graphTimer.current = null;
+        qc.invalidateQueries({ queryKey: GRAPH_KEY });
+      }, 150);
+    }
+
+    function debouncedAgentsRefetch() {
+      if (agentsTimer.current) clearTimeout(agentsTimer.current);
+      agentsTimer.current = setTimeout(() => {
+        agentsTimer.current = null;
+        qc.invalidateQueries({ queryKey: AGENTS_KEY });
+      }, 300);
+    }
+
+    es.addEventListener("change", debouncedGraphRefetch);
+    es.addEventListener("agent-start", debouncedAgentsRefetch);
+    es.addEventListener("agent-complete", debouncedAgentsRefetch);
+    es.addEventListener("agent-output", debouncedAgentsRefetch);
+
+    es.onerror = () => {};
+    return () => {
+      es.close();
+      if (graphTimer.current) clearTimeout(graphTimer.current);
+      if (agentsTimer.current) clearTimeout(agentsTimer.current);
     };
-    return () => es.close();
   }, [qc]);
 }

@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, memo } from "react";
 import { NodeCard, BatchBar } from "./node-card";
 import { DetailPanel } from "./detail-panel";
 import { AgentPanel } from "./agent-panel";
-import { useGraph, useApprove, useDeleteNode, useSSE } from "../hooks/use-graph";
+import { useGraph, useApprove, useDeleteNode, useUpdateNode, useSSE } from "../hooks/use-graph";
 import { useAgents, useSpawnAgent } from "../hooks/use-agents";
 import { OnboardingFlow } from "./onboarding/onboarding-flow";
 
@@ -19,19 +19,20 @@ function useTheme() {
   return { dark, toggle };
 }
 
-type DrillLevel = "declarations" | "milestones" | "actions";
+type DrillLevel = "declarations" | "milestones";
 
 interface DrillState {
   level: DrillLevel;
   declarationId?: string;
+  /** Selected milestone ID — shown in detail panel, not a drill level */
   milestoneId?: string;
   /** Saved focus index per level so we restore position on drill-out */
-  savedFocus: { declarations: number; milestones: number; actions: number };
+  savedFocus: { declarations: number; milestones: number };
 }
 
 const INITIAL_DRILL: DrillState = {
   level: "declarations",
-  savedFocus: { declarations: 0, milestones: 0, actions: 0 },
+  savedFocus: { declarations: 0, milestones: 0 },
 };
 
 /** Read drill state from URL hash (e.g. #D-01 or #D-01/M-03) */
@@ -40,10 +41,10 @@ function drillFromHash(): DrillState {
   if (!hash) return INITIAL_DRILL;
   const parts = hash.split("/");
   if (parts.length === 2 && parts[0].startsWith("D-") && parts[1].startsWith("M-")) {
-    return { level: "actions", declarationId: parts[0], milestoneId: parts[1], savedFocus: { declarations: 0, milestones: 0, actions: 0 } };
+    return { level: "milestones", declarationId: parts[0], milestoneId: parts[1], savedFocus: { declarations: 0, milestones: 0 } };
   }
   if (parts.length === 1 && parts[0].startsWith("D-")) {
-    return { level: "milestones", declarationId: parts[0], savedFocus: { declarations: 0, milestones: 0, actions: 0 } };
+    return { level: "milestones", declarationId: parts[0], savedFocus: { declarations: 0, milestones: 0 } };
   }
   return INITIAL_DRILL;
 }
@@ -54,15 +55,16 @@ export function LifecycleView() {
 
   const [drill, setDrillRaw] = useState<DrillState>(drillFromHash);
   const [focusIdx, setFocusIdx] = useState(0);
+  const [focusId, setFocusId] = useState<string | null>(null);
   const { dark, toggle } = useTheme();
 
   // Sync drill state to URL hash
   const setDrill = (d: DrillState) => {
     setDrillRaw(d);
-    if (d.level === "actions" && d.declarationId && d.milestoneId) {
-      window.location.hash = `${d.declarationId}/${d.milestoneId}`;
-    } else if (d.level === "milestones" && d.declarationId) {
-      window.location.hash = d.declarationId;
+    if (d.level === "milestones" && d.declarationId) {
+      window.location.hash = d.milestoneId
+        ? `${d.declarationId}/${d.milestoneId}`
+        : d.declarationId;
     } else {
       window.location.hash = "";
     }
@@ -71,28 +73,78 @@ export function LifecycleView() {
 
   const approveRaw = useApprove();
   const deleteNode = useDeleteNode();
+  const updateNode = useUpdateNode();
   const { data: agents = [] } = useAgents();
   const spawnAgent = useSpawnAgent();
 
-  /** Approve → then auto-plan next level */
+  // Inline edit state: which node is being edited, and the feedback text
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editFeedback, setEditFeedback] = useState("");
+
+  /** Approve → then auto-plan next level. If already approved, just retry the agent. */
   function approveAndPlan(ids: string[]) {
-    approveRaw.mutate(ids, {
-      onSuccess: () => {
-        for (const id of ids) {
-          const prefix = id.split("-")[0];
-          if (prefix === "D") {
-            // Declaration approved → derive milestones
-            spawnAgent.mutate({ endpoint: "derive", body: { declarationId: id } });
-          } else if (prefix === "M") {
-            // Milestone approved → plan actions
-            spawnAgent.mutate({ endpoint: "plan-actions", body: { milestoneId: id } });
-          }
-        }
-      },
+    // Split into already-approved (retry) vs new approvals
+    const alreadyApproved = ids.filter((id) => {
+      const item = items.find((i) => i.id === id);
+      return item?.review === "approved";
     });
+    const toApprove = ids.filter((id) => !alreadyApproved.includes(id));
+
+    function spawnAgents(spawnIds: string[]) {
+      for (const id of spawnIds) {
+        const prefix = id.split("-")[0];
+        if (prefix === "D") {
+          spawnAgent.mutate({ endpoint: "derive", body: { declarationId: id } });
+        } else if (prefix === "M") {
+          spawnAgent.mutate({ endpoint: "plan-actions", body: { milestoneId: id } });
+        }
+      }
+    }
+
+    // Retry already-approved items immediately
+    if (alreadyApproved.length > 0) {
+      spawnAgents(alreadyApproved);
+    }
+
+    // Approve new items, then spawn agents
+    if (toApprove.length > 0) {
+      approveRaw.mutate(toApprove, {
+        onSuccess: () => spawnAgents(toApprove),
+      });
+    }
   }
 
-  const items = getItems(graph, drill);
+  const items = useMemo(() => getItems(graph, drill), [graph, drill.level, drill.declarationId]);
+
+  // Set focus by index, also remembering the ID so it survives graph refetches
+  const setFocus = useCallback((idx: number) => {
+    setFocusIdx(idx);
+    // itemsRef has latest items
+    const id = itemsRef.current[idx]?.id ?? null;
+    setFocusId(id);
+  }, []);
+
+  // Restore focus position by ID after items change (e.g. graph refetch)
+  useEffect(() => {
+    if (focusId && items.length > 0) {
+      const idx = items.findIndex((i) => i.id === focusId);
+      if (idx >= 0 && idx !== focusIdx) {
+        setFocusIdx(idx);
+      }
+    }
+  }, [items, focusId]);
+
+  // Compute display focus index — resolve by ID to survive graph refetches
+  const displayFocusIdx = useMemo(() => {
+    if (drill.level === "milestones" && drill.milestoneId) {
+      return Math.max(0, items.findIndex(i => i.id === drill.milestoneId));
+    }
+    if (focusId) {
+      const idx = items.findIndex(i => i.id === focusId);
+      if (idx >= 0) return idx;
+    }
+    return Math.min(focusIdx, Math.max(0, items.length - 1));
+  }, [drill.level, drill.milestoneId, focusId, focusIdx, items]);
 
   // Build a set of node IDs that have a running agent
   const runningNodeIds = new Set(
@@ -112,7 +164,7 @@ export function LifecycleView() {
   const itemsRef = useRef(items);
   const spawnAgentRef = useRef(spawnAgent);
   drillRef.current = drill;
-  focusRef.current = focusIdx;
+  focusRef.current = displayFocusIdx;
   itemsRef.current = items;
   spawnAgentRef.current = spawnAgent;
 
@@ -136,15 +188,25 @@ export function LifecycleView() {
 
       switch (e.key) {
         case "ArrowDown":
-        case "j":
+        case "j": {
           e.preventDefault();
-          setFocusIdx(Math.min(currentFocus + 1, len - 1));
+          const next = Math.min(currentFocus + 1, len - 1);
+          setFocus(next);
+          if (currentDrill.level === "milestones" && currentItems[next]) {
+            setDrill({ ...currentDrill, milestoneId: currentItems[next].id });
+          }
           break;
+        }
         case "ArrowUp":
-        case "k":
+        case "k": {
           e.preventDefault();
-          setFocusIdx(Math.max(currentFocus - 1, 0));
+          const prev = Math.max(currentFocus - 1, 0);
+          setFocus(prev);
+          if (currentDrill.level === "milestones" && currentItems[prev]) {
+            setDrill({ ...currentDrill, milestoneId: currentItems[prev].id });
+          }
           break;
+        }
         case "Enter":
         case "ArrowRight":
         case "l":
@@ -165,6 +227,13 @@ export function LifecycleView() {
           e.preventDefault();
           if (currentItems[currentFocus]) deleteNode.mutate({ id: currentItems[currentFocus].id, type: currentItems[currentFocus].nodeType });
           break;
+        case "e":
+          e.preventDefault();
+          if (currentItems[currentFocus]) {
+            setEditingId((prev) => prev === currentItems[currentFocus].id ? null : currentItems[currentFocus].id);
+            setEditFeedback("");
+          }
+          break;
         case "A":
           e.preventDefault();
           {
@@ -179,41 +248,70 @@ export function LifecycleView() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []); // stable — never re-registers
 
+  // Build detail item (must be before early returns — hooks must be unconditional)
+  const { detailItem, detailSourceId } = useMemo(() => {
+    const focusedItem = items[displayFocusIdx] ?? null;
+    const selectedMilestone = drill.milestoneId && graph
+      ? (() => {
+          const m = (graph.milestones ?? []).find((m: any) => m.id === drill.milestoneId);
+          if (!m) return null;
+          const actions = (graph.actions ?? []).filter((a: any) => a.milestoneId === m.id);
+          return {
+            id: m.id,
+            nodeType: "milestone" as const,
+            title: m.title,
+            description: m.description,
+            status: m.status ?? "PENDING",
+            review: m.reviewState ?? "draft",
+            childCount: actions.length,
+          };
+        })()
+      : null;
+    const detailSource = selectedMilestone ?? focusedItem;
+    return {
+      detailItem: detailSource ? buildDetailItem(detailSource, graph) : null,
+      detailSourceId: detailSource?.id ?? null,
+    };
+  }, [items, displayFocusIdx, drill.milestoneId, graph]);
+
+  const projectName = graph?.projectName ?? "Declare";
+  const drafts = items.filter((i) => i.review !== "approved");
+
   // Show onboarding when no declarations exist (after all hooks)
   if (!isLoading && items.length === 0 && drill.level === "declarations") {
     return <OnboardingFlow />;
   }
 
+  if (isLoading && !graph) {
+    return <div className="flex flex-1 items-center justify-center text-muted-foreground">Loading...</div>;
+  }
+
   function handleDrillIn(currentItems: ItemShape[], idx: number, d: DrillState) {
     const item = currentItems[idx];
-    if (!item || item.childCount === 0) return; // No children → just select, don't drill
+    if (!item) return;
 
     if (d.level === "declarations") {
+      if (item.childCount === 0) return; // No milestones → don't drill
       setDrill({
         ...d,
         level: "milestones",
         declarationId: item.id,
         savedFocus: { ...d.savedFocus, declarations: idx },
       });
-      setFocusIdx(0);
+      setFocus(0);
     } else if (d.level === "milestones") {
+      // Select/toggle milestone — actions shown inline in detail panel
       setDrill({
         ...d,
-        level: "actions",
-        milestoneId: item.id,
-        savedFocus: { ...d.savedFocus, milestones: idx },
+        milestoneId: d.milestoneId === item.id ? undefined : item.id,
       });
-      setFocusIdx(0);
     }
   }
 
   function handleDrillOut(d: DrillState) {
-    if (d.level === "actions") {
-      setDrill({ ...d, level: "milestones", milestoneId: undefined });
-      setFocusIdx(d.savedFocus.milestones);
-    } else if (d.level === "milestones") {
-      setDrill({ ...d, level: "declarations", declarationId: undefined });
-      setFocusIdx(d.savedFocus.declarations);
+    if (d.level === "milestones") {
+      setDrill({ ...d, level: "declarations", declarationId: undefined, milestoneId: undefined });
+      setFocus(d.savedFocus.declarations);
     }
   }
 
@@ -221,10 +319,10 @@ export function LifecycleView() {
     const d = drillRef.current;
     if (level === "declarations") {
       setDrill({ ...d, level: "declarations", declarationId: undefined, milestoneId: undefined });
-      setFocusIdx(d.savedFocus.declarations);
+      setFocus(d.savedFocus.declarations);
     } else if (level === "milestones") {
       setDrill({ ...d, level: "milestones", milestoneId: undefined });
-      setFocusIdx(d.savedFocus.milestones);
+      setFocus(d.savedFocus.milestones);
     }
   }
 
@@ -234,18 +332,6 @@ export function LifecycleView() {
   }
 
   const breadcrumbs = buildBreadcrumbs(graph, drill, navigateTo);
-
-  if (isLoading) {
-    return <div className="flex flex-1 items-center justify-center text-muted-foreground">Loading...</div>;
-  }
-
-  const drafts = items.filter((i) => i.review !== "approved");
-
-  // Build detail item from focused item + graph enrichment
-  const focusedItem = items[focusIdx] ?? null;
-  const detailItem = focusedItem ? buildDetailItem(focusedItem, graph) : null;
-
-  const projectName = graph?.projectName ?? "Declare";
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
@@ -289,7 +375,7 @@ export function LifecycleView() {
       {/* Level header */}
       <div className="flex items-center justify-between px-4 py-3">
         <h2
-          style={{ color: `var(--color-node-${drill.level === "declarations" ? "decl" : drill.level === "milestones" ? "mile" : "act"})` }}
+          style={{ color: `var(--color-node-${drill.level === "declarations" ? "decl" : "mile"})` }}
           className="text-xs font-medium uppercase tracking-wide"
         >
           {drill.level} <span className="text-muted-foreground ml-1">{items.length}</span>
@@ -304,21 +390,67 @@ export function LifecycleView() {
           </div>
         ) : (
           items.map((item, i) => (
-            <NodeCard
-              key={item.id}
-              id={item.id}
-              type={item.nodeType}
-              title={item.title}
-              status={item.status}
-              review={item.review as "draft" | "approved" | undefined}
-              isRunning={runningNodeIds.has(item.id)}
-              childCount={item.childCount}
-              focused={i === focusIdx}
-              onClick={() => setFocusIdx(i)}
-              onDoubleClick={() => handleDrillIn(items, i, drill)}
-              onApprove={() => approveAndPlan([item.id])}
-              onDelete={() => deleteNode.mutate({ id: item.id, type: item.nodeType })}
-            />
+            <div key={item.id}>
+              <NodeCard
+                id={item.id}
+                type={item.nodeType}
+                title={item.title}
+                status={item.status}
+                review={item.review as "draft" | "approved" | undefined}
+                isRunning={runningNodeIds.has(item.id)}
+                childCount={item.childCount}
+                focused={i === displayFocusIdx}
+                selected={drill.milestoneId === item.id}
+                onClick={() => {
+                  setFocus(i);
+                  if (drill.level === "milestones") {
+                    handleDrillIn(items, i, drill);
+                  }
+                }}
+                onApprove={() => approveAndPlan([item.id])}
+                onEdit={() => {
+                  setEditingId(editingId === item.id ? null : item.id);
+                  setEditFeedback("");
+                }}
+                onDelete={() => deleteNode.mutate({ id: item.id, type: item.nodeType })}
+              />
+              {editingId === item.id && (
+                <div className="mt-1 ml-4 mr-2 space-y-2">
+                  <textarea
+                    autoFocus
+                    value={editFeedback}
+                    onChange={(e) => setEditFeedback(e.target.value)}
+                    placeholder="Describe what to change..."
+                    rows={3}
+                    className="w-full rounded-lg border bg-card p-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-brand/40"
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => {
+                        if (!editFeedback.trim()) return;
+                        updateNode.mutate({
+                          id: item.id,
+                          type: item.nodeType,
+                          data: { feedback: editFeedback.trim() },
+                        });
+                        setEditingId(null);
+                        setEditFeedback("");
+                      }}
+                      disabled={!editFeedback.trim()}
+                      className="h-7 px-3 text-xs font-medium rounded-md bg-brand text-brand-foreground hover:opacity-90 transition-opacity disabled:opacity-40"
+                    >
+                      Save Feedback
+                    </button>
+                    <button
+                      onClick={() => { setEditingId(null); setEditFeedback(""); }}
+                      className="h-7 px-3 text-xs font-medium rounded-md border bg-card hover:bg-accent transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           ))
         )}
       </div>
@@ -329,7 +461,20 @@ export function LifecycleView() {
 
       {/* Right panels */}
       <div className="flex flex-1 min-w-0">
-        <DetailPanel item={detailItem} isRunning={focusedItem ? runningNodeIds.has(focusedItem.id) : false} />
+        <DetailPanel
+          item={detailItem}
+          isRunning={detailSourceId ? runningNodeIds.has(detailSourceId) : false}
+          onDrillToMilestone={drill.level === "declarations" ? (declId: string, mileId: string) => {
+            setDrill({
+              ...drill,
+              level: "milestones",
+              declarationId: declId,
+              milestoneId: mileId,
+              savedFocus: { ...drill.savedFocus, declarations: displayFocusIdx },
+            });
+            setFocus(0);
+          } : undefined}
+        />
         <AgentPanel />
       </div>
       </div>
@@ -388,20 +533,6 @@ function getItems(graph: any, drill: DrillState): ItemShape[] {
       });
   }
 
-  if (drill.level === "actions" && drill.milestoneId) {
-    return (graph.actions ?? [])
-      .filter((a: any) => a.milestoneId === drill.milestoneId)
-      .map((a: any) => ({
-        id: a.id,
-        nodeType: "action" as const,
-        title: a.title,
-        description: a.description,
-        status: a.status ?? "PENDING",
-        review: "draft",
-        childCount: 0,
-      }));
-  }
-
   return [];
 }
 
@@ -419,19 +550,10 @@ function buildBreadcrumbs(
     onClick: drill.level !== "declarations" ? () => navigateTo("declarations") : undefined,
   });
 
-  if (drill.level === "milestones" || drill.level === "actions") {
+  if (drill.level === "milestones") {
     const d = graph?.declarations?.find((d: any) => d.id === drill.declarationId);
     const label = d ? `${d.id} ${d.title}` : drill.declarationId ?? "";
-    if (drill.level === "milestones") {
-      crumbs.push({ label });
-    } else {
-      crumbs.push({ label, onClick: () => navigateTo("milestones") });
-    }
-  }
-
-  if (drill.level === "actions") {
-    const m = graph?.milestones?.find((m: any) => m.id === drill.milestoneId);
-    crumbs.push({ label: m ? `${m.id} ${m.title}` : drill.milestoneId ?? "" });
+    crumbs.push({ label });
   }
 
   return crumbs;
@@ -451,18 +573,43 @@ function buildDetailItem(item: ItemShape, graph: any) {
 
   if (item.nodeType === "declaration") {
     const d = graph.declarations?.find((d: any) => d.id === item.id);
-    const milestoneCount = (graph.milestones ?? []).filter(
-      (m: any) => m.realizes?.includes(item.id)
-    ).length;
-    return { ...base, statement: d?.statement, why: d?.why, milestoneCount };
+    const milestones = (graph.milestones ?? [])
+      .filter((m: any) => m.realizes?.includes(item.id))
+      .map((m: any) => ({
+        id: m.id,
+        title: m.title,
+        status: m.status ?? "PENDING",
+        review: m.reviewState ?? "draft",
+        actionCount: (graph.actions ?? []).filter((a: any) => a.milestoneId === m.id).length,
+      }));
+    return { ...base, statement: d?.statement, why: d?.why, milestoneCount: milestones.length, milestones };
   }
 
   if (item.nodeType === "milestone") {
     const m = graph.milestones?.find((m: any) => m.id === item.id);
-    const actionCount = (graph.actions ?? []).filter(
-      (a: any) => a.milestoneId === item.id
-    ).length;
-    return { ...base, realizes: m?.realizes, actionCount };
+    const actions = (graph.actions ?? [])
+      .filter((a: any) => a.milestoneId === item.id)
+      .map((a: any) => ({
+        id: a.id,
+        title: a.title,
+        description: a.description,
+        status: a.status ?? "PENDING",
+        review: a.reviewState ?? "draft",
+        files: a.files,
+        verify: a.verify,
+        done: a.done,
+        wave: a.wave,
+        produces: a.produces,
+        dependsOn: a.dependsOn,
+      }));
+    return {
+      ...base,
+      realizes: m?.realizes,
+      actionCount: actions.length,
+      actions,
+      successCriteria: m?.planMeta?.successCriteria,
+      mustHaves: m?.planMeta?.mustHaves,
+    };
   }
 
   return base;

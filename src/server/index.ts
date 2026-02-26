@@ -37,4 +37,5 @@ console.log(`Declare server listening on http://localhost:${port}`);
 export default {
   port,
   fetch: app.fetch,
+  idleTimeout: 255, // seconds — agent SDK calls can take minutes
 };

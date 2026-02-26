@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 
 const AGENTS_KEY = ["agents"] as const;
 
@@ -29,7 +29,6 @@ export function useAgents() {
 }
 
 export function useSpawnAgent() {
-  const qc = useQueryClient();
   return useMutation({
     mutationFn: (opts: { endpoint: string; body: Record<string, unknown> }) =>
       fetch(`/api/agents/${opts.endpoint}`, {
@@ -37,6 +36,6 @@ export function useSpawnAgent() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(opts.body),
       }).then((r) => r.json()),
-    onSuccess: () => qc.invalidateQueries({ queryKey: AGENTS_KEY }),
+    // Don't invalidate here — SSE "agent-start" event will trigger refetch
   });
 }

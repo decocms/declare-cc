@@ -46,6 +46,20 @@ graphRoutes.get("/status", (c) => {
   return c.json({ status: "ok", version: "2.0.0-alpha.0" });
 });
 
+/** Set or update the project name in FUTURE.md */
+graphRoutes.put("/project-name", async (c) => {
+  const { name } = await c.req.json<{ name: string }>();
+  if (!name?.trim()) return c.json({ error: "Name required" }, 400);
+  const dir = getPlanningDir();
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  const fp = resolve(dir, "FUTURE.md");
+  const content = existsSync(fp) ? readFileSync(fp, "utf-8") : "";
+  const declarations = parseFutureFile(content);
+  writeFileSync(fp, writeFutureFile(declarations, name.trim()), "utf-8");
+  broadcastEvent("change", { reason: "rename" });
+  return c.json({ name: name.trim() });
+});
+
 // ── Declaration mutations ──
 
 graphRoutes.post("/declarations", async (c) => {

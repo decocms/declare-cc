@@ -1,83 +1,118 @@
 import { useState } from "react";
-import { NodeCard } from "../node-card";
-import { useGraph } from "../../hooks/use-graph";
 import { useQueryClient } from "@tanstack/react-query";
 
-type Step = "vision" | "questions" | "candidates";
+type Step = "vision" | "questions";
+
+interface Question {
+  question: string;
+  context?: string;
+  options?: string[];
+}
 
 const STEP_LABELS: Record<Step, { num: number; title: string }> = {
   vision: { num: 1, title: "Vision" },
   questions: { num: 2, title: "Clarifying Questions" },
-  candidates: { num: 3, title: "Declaration Candidates" },
 };
-
-// TODO: call agent runner to generate questions from vision
-const PLACEHOLDER_QUESTIONS = [
-  "Who are the primary users or stakeholders affected by this project?",
-  "What does success look like in measurable terms?",
-  "What is explicitly NOT in scope for this project?",
-];
-
-function generateCandidates(vision: string): { title: string; statement: string; why: string }[] {
-  // TODO: call agent runner to generate declarations from vision + answers
-  // For now, split the vision into simple declaration candidates
-  const sentences = vision
-    .split(/[.\n]/)
-    .map((s) => s.trim())
-    .filter((s) => s.length > 10);
-
-  const base = sentences.length > 0 ? sentences : [vision.trim()];
-
-  return base.slice(0, 3).map((s, i) => ({
-    title: `Aspect ${i + 1}`,
-    statement: s.endsWith(".") ? s : `${s}.`,
-    why: "Derived from the project vision.",
-  }));
-}
 
 export function OnboardingFlow() {
   const [step, setStep] = useState<Step>("vision");
   const [vision, setVision] = useState("");
-  const [answers, setAnswers] = useState<string[]>(["", "", ""]);
-  const [candidates, setCandidates] = useState<{ title: string; statement: string; why: string }[]>([]);
-  const [submitting, setSubmitting] = useState(false);
+  const [questions, setQuestions] = useState<Question[]>([]);
+  const [answers, setAnswers] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const queryClient = useQueryClient();
 
-  function goToQuestions() {
-    setStep("questions");
-  }
-
-  function goToCandidates() {
-    const generated = generateCandidates(vision);
-    setCandidates(generated);
-    setStep("candidates");
-  }
-
-  async function approveAll() {
-    setSubmitting(true);
+  async function goToQuestions() {
+    setLoading(true);
+    setError(null);
     try {
-      for (const c of candidates) {
+      const res = await fetch("/api/onboard/questions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ vision }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Failed to generate questions");
+        return;
+      }
+      setQuestions(data.questions);
+      setAnswers(data.questions.map(() => ""));
+      setStep("questions");
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function selectOption(questionIndex: number, option: string) {
+    const next = [...answers];
+    const current = next[questionIndex];
+    if (current.includes(option)) {
+      next[questionIndex] = current
+        .split(", ")
+        .filter((s) => s !== option)
+        .join(", ");
+    } else {
+      next[questionIndex] = current ? current + ", " + option : option;
+    }
+    setAnswers(next);
+  }
+
+  async function generateDeclarations() {
+    setLoading(true);
+    setError(null);
+    try {
+      // Generate declaration candidates from vision + Q&A
+      const res = await fetch("/api/onboard/declarations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ vision, questions, answers }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Failed to generate declarations");
+        return;
+      }
+
+      // Set project name if returned
+      if (data.projectName) {
+        await fetch("/api/project-name", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: data.projectName }),
+        });
+      }
+
+      // Create each declaration directly
+      for (const c of data.candidates) {
         await fetch("/api/declarations", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(c),
         });
       }
+
+      // Refresh graph — the normal lifecycle view will show them
       queryClient.invalidateQueries({ queryKey: ["graph"] });
+    } catch (err) {
+      setError(String(err));
     } finally {
-      setSubmitting(false);
+      setLoading(false);
     }
   }
 
-  const { num, title } = STEP_LABELS[step];
+  const { num } = STEP_LABELS[step];
 
   return (
-    <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto p-8">
+    <div className="flex flex-1 flex-col items-center overflow-y-auto px-8 py-12">
       <div className="w-full max-w-xl space-y-6">
         {/* Step indicator */}
         <div className="flex items-center gap-3">
-          {(["vision", "questions", "candidates"] as Step[]).map((s, i) => (
+          {(["vision", "questions"] as Step[]).map((s, i) => (
             <div key={s} className="flex items-center gap-2">
               {i > 0 && <div className="h-px w-6 bg-border" />}
               <div
@@ -104,6 +139,13 @@ export function OnboardingFlow() {
           ))}
         </div>
 
+        {/* Error banner */}
+        {error && (
+          <div className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-300">
+            {error}
+          </div>
+        )}
+
         {/* Step content */}
         {step === "vision" && (
           <div className="space-y-4">
@@ -123,34 +165,62 @@ export function OnboardingFlow() {
             <div className="flex justify-end">
               <button
                 onClick={goToQuestions}
-                disabled={vision.trim().length < 10}
+                disabled={vision.trim().length < 10 || loading}
                 className="h-9 rounded-md bg-brand px-5 text-sm font-medium text-brand-foreground hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                Next
+                {loading ? "Generating questions..." : "Next"}
               </button>
             </div>
           </div>
         )}
 
         {step === "questions" && (
-          <div className="space-y-4">
+          <div className="space-y-5">
             <h2 className="text-lg font-semibold text-foreground">
               A few clarifying questions
             </h2>
             <p className="text-sm text-muted-foreground">
               These help sharpen your vision into concrete declarations.
             </p>
-            {PLACEHOLDER_QUESTIONS.map((q, i) => (
-              <div key={i} className="space-y-1">
-                <label className="text-sm font-medium text-foreground">{q}</label>
-                <input
-                  type="text"
+            {questions.map((q, i) => (
+              <div key={i} className="space-y-2">
+                <label className="text-sm font-medium text-foreground">
+                  {q.question}
+                </label>
+                {q.context && (
+                  <p className="text-xs text-muted-foreground">{q.context}</p>
+                )}
+                {q.options && q.options.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {q.options.map((opt) => {
+                      const isSelected = answers[i]?.includes(opt);
+                      return (
+                        <button
+                          key={opt}
+                          type="button"
+                          onClick={() => selectOption(i, opt)}
+                          className={[
+                            "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                            isSelected
+                              ? "border-brand bg-brand/10 text-brand"
+                              : "border-border bg-card text-muted-foreground hover:border-foreground/30 hover:text-foreground",
+                          ].join(" ")}
+                        >
+                          {opt}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                <textarea
                   value={answers[i]}
                   onChange={(e) => {
                     const next = [...answers];
                     next[i] = e.target.value;
                     setAnswers(next);
                   }}
+                  rows={2}
+                  placeholder="Type your answer or click a suggestion above..."
                   className="w-full rounded-lg border bg-card p-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-brand/40"
                 />
               </div>
@@ -163,48 +233,11 @@ export function OnboardingFlow() {
                 Back
               </button>
               <button
-                onClick={goToCandidates}
-                className="h-9 rounded-md bg-brand px-5 text-sm font-medium text-brand-foreground hover:opacity-90 transition-opacity"
+                onClick={generateDeclarations}
+                disabled={loading}
+                className="h-9 rounded-md bg-brand px-5 text-sm font-medium text-brand-foreground hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                Next
-              </button>
-            </div>
-          </div>
-        )}
-
-        {step === "candidates" && (
-          <div className="space-y-4">
-            <h2 className="text-lg font-semibold text-foreground">
-              Declaration candidates
-            </h2>
-            <p className="text-sm text-muted-foreground">
-              Review these declarations derived from your vision. Approve to add them to your project.
-            </p>
-            <div className="space-y-2">
-              {candidates.map((c, i) => (
-                <NodeCard
-                  key={i}
-                  id={`D-${String(i + 1).padStart(2, "0")}`}
-                  type="declaration"
-                  title={c.title}
-                  description={c.statement}
-                  review="draft"
-                />
-              ))}
-            </div>
-            <div className="flex justify-between">
-              <button
-                onClick={() => setStep("questions")}
-                className="h-9 rounded-md border bg-card px-5 text-sm font-medium text-foreground hover:bg-accent transition-colors"
-              >
-                Back
-              </button>
-              <button
-                onClick={approveAll}
-                disabled={submitting}
-                className="h-9 rounded-md bg-brand px-5 text-sm font-medium text-brand-foreground hover:opacity-90 transition-opacity disabled:opacity-40"
-              >
-                {submitting ? "Creating..." : `Approve All (${candidates.length})`}
+                {loading ? "Generating declarations..." : "Generate Declarations"}
               </button>
             </div>
           </div>
