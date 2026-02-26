@@ -23,19 +23,19 @@ interface NodeCardProps {
 
 const TYPE_COLORS: Record<NodeType, { id: string; border: string; bg: string }> = {
   declaration: {
-    id: "text-blue-400",
-    border: "border-blue-500/20",
-    bg: "hover:bg-blue-500/5",
+    id: "text-blue-700 dark:text-blue-400",
+    border: "border-blue-300 dark:border-blue-500/20",
+    bg: "hover:bg-blue-50 dark:hover:bg-blue-500/5",
   },
   milestone: {
-    id: "text-purple-400",
-    border: "border-purple-500/20",
-    bg: "hover:bg-purple-500/5",
+    id: "text-purple-700 dark:text-purple-400",
+    border: "border-purple-300 dark:border-purple-500/20",
+    bg: "hover:bg-purple-50 dark:hover:bg-purple-500/5",
   },
   action: {
-    id: "text-green-400",
-    border: "border-green-500/20",
-    bg: "hover:bg-green-500/5",
+    id: "text-green-700 dark:text-green-400",
+    border: "border-green-300 dark:border-green-500/20",
+    bg: "hover:bg-green-50 dark:hover:bg-green-500/5",
   },
 };
 
