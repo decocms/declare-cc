@@ -15,5 +15,11 @@
 ## D-03: Declarations are generated from vision and answers
 **Statement:** The tool produces a set of concrete, present-tense declarations derived from the user's vision and clarification responses.
 **Status:** PENDING
+**Review:** approved
+**Milestones:** 
+
+## D-04: Each declaration is distinct and non-overlapping
+**Statement:** No two generated declarations describe the same outcome, and each can be evaluated independently as true or false.
+**Status:** PENDING
 **Review:** draft
 **Milestones:** 
