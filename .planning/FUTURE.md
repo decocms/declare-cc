@@ -21,5 +21,11 @@
 ## D-04: Each declaration is distinct and non-overlapping
 **Statement:** No two generated declarations describe the same outcome, and each can be evaluated independently as true or false.
 **Status:** PENDING
+**Review:** approved
+**Milestones:** 
+
+## D-05: Declarations are reviewable and editable
+**Statement:** A user can review the generated declarations and modify or discard individual ones before finalizing.
+**Status:** PENDING
 **Review:** draft
 **Milestones:** 
