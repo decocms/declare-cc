@@ -9,5 +9,11 @@
 ## D-02: Clarification answers are captured
 **Statement:** A user's answers to clarifying questions are stored and available for use in generating declarations.
 **Status:** PENDING
+**Review:** approved
+**Milestones:** 
+
+## D-03: Declarations are generated from vision and answers
+**Statement:** The tool produces a set of concrete, present-tense declarations derived from the user's vision and clarification responses.
+**Status:** PENDING
 **Review:** draft
 **Milestones:** 
