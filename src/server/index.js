@@ -1653,7 +1653,7 @@ async function handleRefine(req, res, cwd, nodeId) {
     // Run AI asynchronously — streams text chunks via SSE
     runAI(prompt, {
       cwd,
-      model: 'haiku',
+      model: 'opus',
       maxTurns: isWriteMode ? 10 : 1,
       withTools: isWriteMode,
       abortController,
@@ -1852,7 +1852,7 @@ The options array is optional — include it only when there are clear alternati
 
     runAI(prompt, {
       cwd,
-      model: 'haiku',
+      model: 'opus',
       maxTurns: 1,
       abortController,
       onText: (text) => {
@@ -2181,7 +2181,7 @@ The options array is optional — include it only when there are clear alternati
 
     runAI(prompt, {
       cwd,
-      model: 'haiku',
+      model: 'opus',
       maxTurns: 1,
       abortController,
       onText: (text) => {

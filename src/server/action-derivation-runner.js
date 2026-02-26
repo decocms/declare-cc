@@ -95,7 +95,7 @@ function createActionDerivationRunner(sseClients, cwd, registry) {
     // Run AI asynchronously
     runAI(prompt, {
       cwd,
-      model: 'haiku',
+      model: 'opus',
       maxTurns: 1,
       abortController,
       onText: (text) => {

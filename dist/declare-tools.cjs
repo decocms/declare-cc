@@ -4302,7 +4302,7 @@ var require_ai_runner = __commonJS({
         const env = { ...process.env };
         delete env.CLAUDECODE;
         const queryOpts = {
-          model: opts.model || "haiku",
+          model: opts.model || "sonnet",
           maxTurns: opts.maxTurns || 1,
           cwd: opts.cwd || process.cwd(),
           abortController,
@@ -4712,7 +4712,7 @@ data: ${JSON.stringify(data)}
         sessions.set(sessionId, { milestoneId: milestone.id, agentId, abortController, startTime: Date.now() });
         runAI(prompt, {
           cwd,
-          model: "haiku",
+          model: "opus",
           maxTurns: 1,
           abortController,
           onText: (text) => {
@@ -7396,7 +7396,7 @@ If the current version is already good, output exactly: LGTM \u2014 no changes n
         const isWriteMode = mode === "write";
         runAI(prompt, {
           cwd,
-          model: "haiku",
+          model: "opus",
           maxTurns: isWriteMode ? 10 : 1,
           withTools: isWriteMode,
           abortController,
@@ -7608,7 +7608,7 @@ The options array is optional \u2014 include it only when there are clear altern
         discussSession = { sessionId, nodeId: id, abortController, agentId };
         runAI(prompt, {
           cwd,
-          model: "haiku",
+          model: "opus",
           maxTurns: 1,
           abortController,
           onText: (text) => {
@@ -7944,7 +7944,7 @@ The options array is optional \u2014 include it only when there are clear altern
         persistOnboardSession(cwd);
         runAI(prompt, {
           cwd,
-          model: "haiku",
+          model: "opus",
           maxTurns: 1,
           abortController,
           onText: (text) => {

@@ -62,7 +62,7 @@ async function runAI(prompt, opts = {}) {
 
     // Build options based on mode
     const queryOpts = {
-      model: opts.model || 'haiku',
+      model: opts.model || 'sonnet',
       maxTurns: opts.maxTurns || 1,
       cwd: opts.cwd || process.cwd(),
       abortController,
