@@ -13,6 +13,7 @@ export function useGraph() {
       return res.json();
     },
     retry: 1,
+    placeholderData: (prev: any) => prev, // keep old data while refetching
   });
 }
 

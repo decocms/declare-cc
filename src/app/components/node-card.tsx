@@ -68,11 +68,11 @@ export function NodeCard({
       ].join(" ")}
     >
       {/* Header: ID + Title */}
-      <div className="flex items-baseline gap-2">
-        <span className={`text-xs font-mono font-semibold ${colors.id}`}>
+      <div className="flex items-baseline gap-2 min-w-0">
+        <span className={`text-xs font-mono font-semibold shrink-0 ${colors.id}`}>
           {id}
         </span>
-        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+        <h3 className="text-sm font-semibold text-foreground truncate">{title}</h3>
       </div>
 
       {/* Description */}
@@ -83,7 +83,7 @@ export function NodeCard({
       )}
 
       {/* Badges */}
-      <div className="mt-2 flex items-center gap-2">
+      <div className="mt-2 flex items-center gap-2 flex-wrap">
         {status && (
           <span className="text-[10px] font-medium uppercase px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
             {status}
