@@ -8,7 +8,8 @@
 [![License](https://img.shields.io/badge/license-MIT-blue?style=for-the-badge)](LICENSE)
 
 ```bash
-npx declare-cc@latest
+npm install -g declare-cc
+dcl
 ```
 
 *Declare what's true when this succeeds. The system derives the rest backward.*
@@ -21,7 +22,7 @@ npx declare-cc@latest
 
 Most planning tools start from the present and work forward — "what should we do first?" Declare starts from the future and works backward — "what must be true for this to succeed?"
 
-You declare present-tense statements of fact about your project's future. The system derives milestones ("what must be true?") and actions ("what must be done?") through causal structure, then executes them — visible in real time through a browser dashboard.
+You declare present-tense statements of fact about your project's future. The system derives milestones ("what must be true?") and actions ("what must be done?") through causal structure, then spawns Claude Code agents to execute them — visible in real time through a browser dashboard.
 
 Built on the Erhard/Jensen/Zaffron ontological model:
 - **Integrity** as wholeness and completeness (not morality)
@@ -32,73 +33,61 @@ Originally forked from [GSD (Get Shit Done)](https://github.com/gsd-build/get-sh
 
 ---
 
+## Getting Started
+
+### Install
+
+```bash
+npm install -g declare-cc
+```
+
+### Run
+
+```bash
+dcl
+```
+
+That's it. If the current directory doesn't have a `.planning/` folder, Declare auto-initializes. It starts the server and opens the dashboard in your browser.
+
+You can also point it at a specific project:
+
+```bash
+dcl /path/to/project
+```
+
+Requires Node.js 18+.
+
+---
+
 ## How It Works
 
-### 1. Initialize
+Everything happens through the dashboard. `dcl` opens it, and you drive the workflow with keyboard shortcuts and card-based UI.
 
-```
-/declare:init
-```
+### 1. Declare Futures
 
-Scaffolds the project structure: `FUTURE.md`, `MILESTONES.md`, `.planning/` directory, and the graph config.
+Create declarations directly in the dashboard — present-tense statements of fact about your project's future. Not goals, not wishes.
 
-### 2. Declare Futures
+Or use the CLI slash command in Claude Code: `/declare:future`
 
-```
-/declare:future
-```
+### 2. Derive Milestones
 
-A guided conversation captures 3-5 declarations about your project's future. Each declaration is a present-tense statement of fact — not a goal, not a wish.
+Press **P** on a declaration card. The AI works backward: "What must be true for this to hold?" and proposes milestones. They appear as cards immediately.
 
-The system detects past-derived language ("I want to avoid...", "We need to fix...") and uses Socratic reframing to help you declare from the future rather than react to the past.
+### 3. Plan Actions
 
-**Creates:** `FUTURE.md` with declarations (D-01, D-02, ...)
+Press **P** on a milestone card. The AI derives 2-5 concrete actions by asking "What work must be done?" Actions are auto-accepted and appear as cards — the action list IS the plan. No separate exec-plan files.
 
-### 3. Derive Milestones
+### 4. Review & Approve
 
-```
-/declare:milestones
-```
+Navigate cards with **Arrow keys**. Press **A** to approve, **E** to edit, **D** to delete. Milestones only move to "Ready to Execute" when all their actions are approved.
 
-Works backward from declarations: "What must be true for D-01 to hold?" Each milestone maps to one or more declarations through causal edges in the DAG.
+### 5. Execute
 
-**Creates:** `MILESTONES.md` with milestones (M-01, M-02, ...)
-
-### 4. Plan Actions
-
-```
-/declare:actions M-01
-```
-
-Or press **P** on any milestone card in the dashboard. The AI derives 2-5 concrete actions per milestone by asking "What work must be done to achieve this?" Actions are auto-accepted and appear as cards immediately — the action list IS the plan.
-
-Each action has a title and a "produces" field describing its deliverable. No separate exec-plan files — the milestone's action list is the execution plan.
-
-**Creates:** `.planning/milestones/M-XX-*/PLAN.md`
-
-### 5. Review & Execute
-
-In the dashboard, review each action card. Press **A** to approve, **E** to edit, **D** to delete. Once all actions for a milestone are approved, press **E** to execute.
-
-The executor gets the full why-chain context: declaration statement → milestone description → action details + sibling actions. It reads your codebase, implements the changes, and commits.
+Press **E** on an approved action. Declare spawns a Claude Code agent with the full context chain: declaration statement → milestone description → action details + sibling actions. The agent reads your codebase, implements changes, and commits.
 
 ### 6. Verify & Complete
 
-```
-/declare:verify M-01              # Conversational UAT — validates deliverables
-/declare:audit M-01               # Cross-reference actions against declarations
-/declare:complete-milestone M-01  # Archive, tag release, prepare next cycle
-```
-
-### 7. Navigate
-
-```
-/declare:trace A-03       # Why does this action exist? Walk the why-chain
-/declare:visualize        # ASCII tree of the full DAG with status markers
-/declare:prioritize M-01  # Rank actions by unblocking power
-/declare:status           # Layer counts, health indicators
-/declare:dashboard        # Live interactive DAG in the browser
-```
+Use `/declare:verify M-01` to validate deliverables through conversational UAT, or `/declare:audit M-01` to cross-reference against declarations.
 
 ---
 
@@ -114,19 +103,13 @@ Milestones (M-XX)       "What must be true" (derived backward)
 Actions (A-XX)          "What must be done" (derived backward)
 ```
 
-Each layer connects to the one above through causal edges. Every action traces back to a declaration. Orphan nodes (actions without a milestone, milestones without a declaration) are detected and flagged.
-
-The graph engine (`DeclareDag`) uses dual adjacency lists for O(1) bidirectional lookups — trace upward (why-chains) or traverse downward (what depends on this) with equal efficiency.
+Each layer connects to the one above through causal edges. Every action traces back to a declaration. Orphan nodes are detected and flagged.
 
 ---
 
 ## Dashboard
 
-```
-/declare:dashboard
-```
-
-Starts a local server and opens an interactive browser view. The dashboard is the primary interface for planning, review, and execution.
+The dashboard is the primary interface. `dcl` opens it automatically.
 
 ### Lifecycle Column Browser
 
@@ -140,73 +123,47 @@ Drill into the three-layer DAG: Declarations → Milestones → Actions. Each le
 | **In Execution** | Currently being executed by an agent |
 | **Done** | Completed (collapsible) |
 
-Cards show inline status: title, description, status badges, action counts, and review state. The action buttons row (Plan, Edit, Delete, Approve, Execute) is always visible — no hidden menus.
-
 ### Keyboard Shortcuts
 
-Single keys act on the focused card (use arrow keys to navigate):
+Single keys act on the focused card:
 
 | Key | Action |
 |-----|--------|
-| **P** | Plan — derive actions/milestones |
-| **A** | Approve the focused card |
-| **E** | Edit (opens inline textarea) |
+| **P** | Plan — derive milestones or actions |
+| **A** | Approve |
+| **E** | Edit / Execute (context-dependent) |
 | **D** | Delete |
-| **Arrow Up/Down** | Move focus between cards |
+| **Arrow Up/Down** | Navigate between cards |
 | **Arrow Right/Enter** | Drill into card |
 | **Arrow Left** | Go back one level |
 | **Ctrl+Shift+A** | Approve all visible |
-| **Ctrl+Shift+P** | Global plan (top-right button) |
+| **Ctrl+Shift+P** | Global plan |
+| **C** | Open command bar |
 
 ### Activity Panel
 
-Right-side panel showing real-time agent activity. Every agent spawn — planning, execution, revision — appears as a persistent card with type, target, elapsed time, and status. Cards survive page refresh. Completed agents show "View Result".
-
-### Command Bar
-
-Press **C** to open the command input at the bottom. Type natural language or slash commands. The command bar dispatches to the server API.
+Right-side panel showing real-time agent activity. Every agent spawn — planning, execution, revision — appears as a card with type, target, elapsed time, and status. Completed agents show "View Result".
 
 ### Mesh UI Integration
 
-The server writes `.planning/server.port` on startup (deleted on shutdown) so external tools like the Mesh UI Declare plugin can discover and embed the dashboard.
+The server writes `.planning/server.port` on startup (deleted on shutdown) so external tools like the Mesh UI Declare plugin can embed the dashboard.
 
 ---
 
-## Integrity & Alignment
+## CLI Commands
 
-Declare doesn't just track what's done — it tracks whether commitments are being honored.
-
-### Integrity States
-
-| Status | Meaning |
-|--------|---------|
-| `KEPT` | Commitment fulfilled as declared |
-| `HONORED` | Commitment couldn't be kept, but the honor protocol was followed |
-| `BROKEN` | Commitment not fulfilled, no acknowledgment |
-| `RENEGOTIATED` | Commitment explicitly changed through renegotiation flow |
-
-The **honor protocol** for a commitment you can't keep: acknowledge the break, inform affected parties, clean up the mess, renegotiate a new commitment.
-
-### Alignment Monitoring
-
-- **Drift detection** — Are current actions still aligned with declared futures?
-- **Occurrence checks** — AI verifies declarations still hold at milestone completion
-- **Renegotiation flow** — When a declaration no longer fits, renegotiate it into `FUTURE-ARCHIVE.md`
-- **Wholeness visualization** — Each node shows its computed wholeness state in the dashboard
-
----
-
-## Commands
+While the dashboard is the primary interface, all operations are also available as slash commands in Claude Code:
 
 ### Core Workflow
 
 | Command | What it does |
 |---------|--------------|
-| `/declare:init` | Scaffold project structure and install commands |
+| `/declare:init` | Scaffold project structure |
 | `/declare:future` | Guided conversation to capture declared futures |
 | `/declare:milestones` | Derive milestones backward from declarations |
 | `/declare:actions [M-XX]` | Derive actions for a milestone |
 | `/declare:execute [M-XX]` | Execute actions with full context |
+| `/declare:dashboard` | Open the dashboard (same as `dcl`) |
 
 ### Planning Support
 
@@ -220,138 +177,37 @@ The **honor protocol** for a commitment you can't keep: acknowledge the break, i
 
 | Command | What it does |
 |---------|--------------|
-| `/declare:verify [M-XX]` | Conversational UAT — validates deliverables, spawns debuggers on failure |
-| `/declare:audit [M-XX]` | Cross-reference actions against declarations, identify gaps |
-| `/declare:debug` | Systematic debugging with scientific method and checkpoint persistence |
+| `/declare:verify [M-XX]` | Conversational UAT — validates deliverables |
+| `/declare:audit [M-XX]` | Cross-reference actions against declarations |
+| `/declare:debug` | Systematic debugging with checkpoint persistence |
 
 ### Navigation
 
 | Command | What it does |
 |---------|--------------|
-| `/declare:trace <node>` | Walk the why-chain from any node up to its declaration |
-| `/declare:visualize` | ASCII tree of the full DAG with status markers |
-| `/declare:prioritize [M-XX]` | Rank actions by dependency weight (unblocking power) |
-| `/declare:status` | Graph health, layer counts, integrity and alignment metrics |
-| `/declare:dashboard` | Live interactive DAG in the browser |
+| `/declare:trace <node>` | Walk the why-chain from any node to its declaration |
+| `/declare:visualize` | ASCII tree of the full DAG |
+| `/declare:prioritize [M-XX]` | Rank actions by unblocking power |
+| `/declare:status` | Graph health, layer counts |
 
-### Productivity
-
-| Command | What it does |
-|---------|--------------|
-| `/declare:quick` | Ad-hoc task with atomic commit, outside milestone structure |
-| `/declare:add-todo` | Capture an idea or task for later |
-| `/declare:check-todos` | List pending todos, route to milestone or quick task |
-
-### Session Management
+### Session & Lifecycle
 
 | Command | What it does |
 |---------|--------------|
-| `/declare:progress` | Current position, recent work summary, route to next action |
-| `/declare:pause` | Snapshot work state to `.continue-here.md` for safe handoff |
-| `/declare:resume` | Restore full context from previous session |
-
-### Lifecycle
-
-| Command | What it does |
-|---------|--------------|
-| `/declare:new-project` | Deep context gathering, PROJECT.md + STATE.md creation |
+| `/declare:progress` | Current position, route to next action |
+| `/declare:pause` | Snapshot state for safe handoff |
+| `/declare:resume` | Restore context from previous session |
+| `/declare:complete-milestone` | Archive, tag release, prepare next cycle |
 | `/declare:new-cycle` | Archive declarations, reset for next cycle |
-| `/declare:complete-milestone` | Snapshot graph, tag release, prepare next cycle |
 
 ### Maintenance
 
 | Command | What it does |
 |---------|--------------|
-| `/declare:health` | Diagnose `.planning/` directory health, repair issues |
-| `/declare:settings` | Configure workflow toggles interactively |
-| `/declare:set-profile` | Switch model profile (quality / balanced / budget) |
-| `/declare:update` | Update to latest npm version with local-patch preservation |
-| `/declare:reapply-patches` | Reapply local modifications after an update |
+| `/declare:health` | Diagnose `.planning/` health, repair issues |
+| `/declare:settings` | Configure workflow toggles |
+| `/declare:update` | Update to latest npm version |
 | `/declare:help` | Show all commands |
-
----
-
-## Project Structure
-
-```
-FUTURE.md                              # Active declared futures
-MILESTONES.md                          # Active milestones
-FUTURE-ARCHIVE.md                      # Completed cycle declarations
-
-.planning/
-├── PROJECT.md                         # Project context and goals
-├── STATE.md                           # Current work state
-├── config.json                        # Project settings
-├── agent-state.json                   # Agent lifecycle state
-├── server.port                        # Active server port (auto-managed)
-├── milestones/
-│   ├── M-XX-slug/
-│   │   ├── PLAN.md                    # Actions for this milestone
-│   │   ├── execution.log             # Execution output log
-│   │   └── VERIFICATION.md           # Integrity proof after execution
-│   └── v1.0/                          # Archived milestone cycle
-└── codebase/                          # Codebase analysis artifacts
-```
-
----
-
-## Getting Started
-
-### Install
-
-```bash
-npx declare-cc@latest
-```
-
-Or install globally:
-
-```bash
-npm install -g declare-cc
-declare                    # Opens dashboard for current directory
-```
-
-Requires Node.js 18+.
-
-### Quick Start
-
-```
-/declare:init                  # Scaffold the project
-/declare:future                # Declare 3-5 futures
-/declare:milestones            # Derive milestones backward
-/declare:dashboard             # Open the live dashboard
-```
-
-Then in the dashboard: press **P** to plan actions, **A** to approve, **E** to execute. Everything flows through the card-based UI.
-
-### Recommended: Skip Permissions Mode
-
-Declare spawns agents and runs CLI tools frequently. For frictionless operation:
-
-```bash
-claude --dangerously-skip-permissions
-```
-
-<details>
-<summary><strong>Alternative: Granular Permissions</strong></summary>
-
-Add to `.claude/settings.json`:
-
-```json
-{
-  "permissions": {
-    "allow": [
-      "Bash(node:*)",
-      "Bash(git add:*)",
-      "Bash(git commit:*)",
-      "Bash(git status:*)",
-      "Bash(git log:*)",
-      "Bash(git diff:*)"
-    ]
-  }
-}
-```
-
-</details>
 
 ---
 
@@ -359,11 +215,11 @@ Add to `.claude/settings.json`:
 
 ### Concurrent Planning
 
-Multiple milestones can be planned simultaneously. The action derivation runner uses a session Map — no singleton locks, no 409 errors. Each session broadcasts independently via SSE.
+Multiple milestones can be planned simultaneously. Each planning session broadcasts independently via SSE — no singleton locks, no blocking.
 
 ### Rich Execution Context
 
-When an action executes, the AI agent receives the full why-chain:
+When an action executes, the spawned Claude Code agent receives the full why-chain:
 
 ```
 Declaration: D-01 — "The system handles all edge cases gracefully"
@@ -378,31 +234,15 @@ Other actions (context only):
 - A-08: Build error reporting dashboard
 ```
 
-The executor reads the codebase, implements changes, verifies them, and commits — all autonomously.
+The agent reads the codebase, implements changes, verifies them, and commits — autonomously.
 
 ### Status Propagation
 
-The DAG maintains status consistency bottom-up:
-
 ```
-Actions → check produced files exist → mark DONE
-    ↓
-Milestones → all actions DONE → mark DONE
-    ↓
-Declarations → all milestones DONE → mark DONE
+Actions DONE → Milestones DONE → Declarations DONE
 ```
 
-### Atomic Git Commits
-
-Every action gets its own commit:
-
-```
-feat(M-01): create database schema
-feat(M-01): implement auth service
-feat(M-01): build API endpoints
-```
-
-Git bisect finds the exact failing action. Each action is independently revertable.
+Bottom-up. Automatic.
 
 ### Zero Runtime Dependencies
 
@@ -410,28 +250,53 @@ The entire CLI bundles to a single `dist/declare-tools.cjs` via esbuild. No `nod
 
 ---
 
+## Integrity & Alignment
+
+Declare tracks whether commitments are being honored, not just whether tasks are complete.
+
+| Status | Meaning |
+|--------|---------|
+| `KEPT` | Commitment fulfilled as declared |
+| `HONORED` | Couldn't keep it, but followed the honor protocol |
+| `BROKEN` | Not fulfilled, no acknowledgment |
+| `RENEGOTIATED` | Explicitly changed through renegotiation |
+
+The **honor protocol**: acknowledge the break, inform affected parties, clean up, renegotiate.
+
+---
+
+## Project Structure
+
+```
+.planning/
+├── PROJECT.md                         # Project context
+├── STATE.md                           # Current work state
+├── config.json                        # Settings
+├── agent-state.json                   # Agent lifecycle state
+├── server.port                        # Active server port (auto-managed)
+├── milestones/
+│   └── M-XX-slug/
+│       ├── PLAN.md                    # Actions for this milestone
+│       └── execution.log             # Execution output
+└── codebase/                          # Codebase analysis docs
+
+FUTURE.md                              # Active declared futures
+MILESTONES.md                          # Active milestones
+```
+
+---
+
 ## Fork Boundary
 
-Declare is forked from [GSD (Get Shit Done)](https://github.com/gsd-build/get-shit-done), a meta-prompting and context engineering system for Claude Code.
-
-### What's Carried Forward
-
-- **Agent orchestration** — Planner, executor, researcher, verifier agent patterns
-- **Slash command interface** — `.claude/commands/` directory, markdown meta-prompts
-- **esbuild bundling** — Single-file CJS distribution, zero runtime deps
-- **Markdown artifacts** — `.planning/` directory as source of truth
-- **Atomic git commits** — Every state change produces a traceable commit
-- **Context engineering** — Fresh context per agent, structured XML plans
-
-### What's Replaced
+Forked from [GSD (Get Shit Done)](https://github.com/gsd-build/get-shit-done).
 
 | GSD | Declare | Why |
 |-----|---------|-----|
-| Linear phases (1, 2, 3...) | Three-layer DAG (D → M → A) | Phases are past-derived sequencing; DAGs represent causal structure |
-| `ROADMAP.md` | `FUTURE.md` + `MILESTONES.md` | The present is given by the future you're living into |
-| Separate EXEC-PLAN files per action | Action list IS the plan | Actions define what to do; the executor gets full context automatically |
-| Sequential execution | Concurrent planning + execution | Multiple milestones plan/execute in parallel |
-| Phase numbers | Milestone IDs (M-XX) | Milestones derive from declarations, not arbitrary ordering |
+| Linear phases | Three-layer DAG (D → M → A) | DAGs represent causal structure |
+| `ROADMAP.md` | `FUTURE.md` + `MILESTONES.md` | Present given by the future you're living into |
+| Separate EXEC-PLAN files | Action list IS the plan | Executor gets full context automatically |
+| Claude Code slash commands first | Dashboard first (`dcl`) | Visual workflow, agents spawned from UI |
+| Sequential execution | Concurrent planning + execution | Multiple milestones in parallel |
 
 ---
 
