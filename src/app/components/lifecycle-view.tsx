@@ -78,9 +78,11 @@ export function LifecycleView() {
   const drillRef = useRef(drill);
   const focusRef = useRef(focusIdx);
   const itemsRef = useRef(items);
+  const spawnAgentRef = useRef(spawnAgent);
   drillRef.current = drill;
   focusRef.current = focusIdx;
   itemsRef.current = items;
+  spawnAgentRef.current = spawnAgent;
 
   // Scroll focused item into view
   useEffect(() => {
@@ -136,9 +138,9 @@ export function LifecycleView() {
           const item = currentItems[currentFocus];
           if (!item) break;
           if (item.nodeType === "declaration") {
-            spawnAgent.mutate({ endpoint: "derive", body: { declarationId: item.id } });
+            spawnAgentRef.current.mutate({ endpoint: "derive", body: { declarationId: item.id } });
           } else if (item.nodeType === "milestone") {
-            spawnAgent.mutate({ endpoint: "plan-actions", body: { milestoneId: item.id } });
+            spawnAgentRef.current.mutate({ endpoint: "plan-actions", body: { milestoneId: item.id } });
           }
           break;
         }

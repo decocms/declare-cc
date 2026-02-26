@@ -136,23 +136,23 @@ export function DetailPanel({ item, isRunning }: DetailPanelProps) {
               {isRunning ? "Running..." : spawnAgent.isPending ? "Deriving..." : "Derive Milestones"}
             </button>
           )}
-          {item.nodeType === "milestone" && (
-            <>
-              <button
-                onClick={() => spawnAgent.mutate({ endpoint: "plan-actions", body: { milestoneId: item.id } })}
-                disabled={spawnAgent.isPending || isRunning}
-                className="w-full h-8 text-xs font-medium rounded-md bg-node-act-bg text-node-act border border-node-act/20 hover:brightness-90 transition-colors disabled:opacity-50"
-              >
-                {isRunning ? "Running..." : "Plan Actions"}
-              </button>
-              <button
-                onClick={() => spawnAgent.mutate({ endpoint: "verify", body: { milestoneId: item.id } })}
-                disabled={spawnAgent.isPending || isRunning}
-                className="w-full h-8 text-xs font-medium rounded-md bg-node-decl-bg text-node-decl border border-node-decl/20 hover:brightness-90 transition-colors disabled:opacity-50"
-              >
-                {isRunning ? "Running..." : "Verify"}
-              </button>
-            </>
+          {item.nodeType === "milestone" && (item.actionCount ?? 0) === 0 && (
+            <button
+              onClick={() => spawnAgent.mutate({ endpoint: "plan-actions", body: { milestoneId: item.id } })}
+              disabled={spawnAgent.isPending || isRunning}
+              className="w-full h-8 text-xs font-medium rounded-md bg-node-act-bg text-node-act border border-node-act/20 hover:brightness-90 transition-colors disabled:opacity-50"
+            >
+              {isRunning ? "Running..." : "Plan Actions"}
+            </button>
+          )}
+          {item.nodeType === "milestone" && (item.actionCount ?? 0) > 0 && (
+            <button
+              onClick={() => spawnAgent.mutate({ endpoint: "verify", body: { milestoneId: item.id } })}
+              disabled={spawnAgent.isPending || isRunning}
+              className="w-full h-8 text-xs font-medium rounded-md bg-node-decl-bg text-node-decl border border-node-decl/20 hover:brightness-90 transition-colors disabled:opacity-50"
+            >
+              {isRunning ? "Running..." : "Verify"}
+            </button>
           )}
           {item.nodeType === "action" && (
             <button
