@@ -1,6 +1,7 @@
 import { createRootRouteWithContext, Outlet } from "@tanstack/react-router";
 import { useState, useEffect, useCallback } from "react";
 import type { QueryClient } from "@tanstack/react-query";
+import { useGraph } from "../hooks/use-graph";
 
 interface RouterContext {
   queryClient: QueryClient;
@@ -23,7 +24,6 @@ function useTheme() {
     localStorage.theme = next ? "dark" : "light";
   }, [dark]);
 
-  // Listen for system changes when no explicit preference
   useEffect(() => {
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
     const handler = (e: MediaQueryListEvent) => {
@@ -41,18 +41,42 @@ function useTheme() {
 
 function RootLayout() {
   const { dark, toggle } = useTheme();
+  const { data: graph } = useGraph();
+
+  const d = graph?.stats?.declarations ?? 0;
+  const m = graph?.stats?.milestones ?? 0;
+  const a = graph?.stats?.actions ?? 0;
+  const projectName = graph?.projectName ?? "Declare";
 
   return (
     <div className="flex h-screen flex-col">
-      <header className="flex h-12 shrink-0 items-center justify-between border-b bg-card px-5">
-        <h1 className="text-sm font-semibold text-foreground">Declare</h1>
-        <button
-          onClick={toggle}
-          className="h-7 px-2 text-xs rounded-md border bg-card hover:bg-accent transition-colors text-muted-foreground"
-          title={dark ? "Switch to light mode" : "Switch to dark mode"}
-        >
-          {dark ? "☀︎ Light" : "☾ Dark"}
-        </button>
+      <header className="flex h-10 shrink-0 items-center justify-between border-b bg-card px-4">
+        <div className="flex items-center gap-4">
+          <h1 className="text-sm font-semibold text-foreground">{projectName}</h1>
+          <span className="text-[11px] text-muted-foreground">
+            {d}D &middot; {m}M &middot; {a}A
+          </span>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="text-[10px] text-muted-foreground hidden sm:block">
+            <kbd className="font-mono">↑↓</kbd> nav
+            <span className="mx-1">&middot;</span>
+            <kbd className="font-mono">→</kbd> in
+            <span className="mx-1">&middot;</span>
+            <kbd className="font-mono">←</kbd> back
+            <span className="mx-1">&middot;</span>
+            <kbd className="font-mono">a</kbd> approve
+            <span className="mx-1">&middot;</span>
+            <kbd className="font-mono">p</kbd> plan
+          </span>
+          <button
+            onClick={toggle}
+            className="h-6 w-6 flex items-center justify-center text-xs rounded-md border bg-card hover:bg-accent transition-colors text-muted-foreground"
+            title={dark ? "Switch to light mode" : "Switch to dark mode"}
+          >
+            {dark ? "☀" : "☾"}
+          </button>
+        </div>
       </header>
       <main className="flex flex-1 overflow-hidden">
         <Outlet />

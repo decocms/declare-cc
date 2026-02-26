@@ -37,16 +37,16 @@ export function DetailPanel({ item, isRunning }: DetailPanelProps) {
     item.nodeType === "declaration" ? "Declaration" :
     item.nodeType === "milestone" ? "Milestone" : "Action";
 
-  const typeColor =
-    item.nodeType === "declaration" ? "text-blue-700 dark:text-blue-400" :
-    item.nodeType === "milestone" ? "text-purple-700 dark:text-purple-400" : "text-green-700 dark:text-green-400";
+  const colorVar =
+    item.nodeType === "declaration" ? "--color-node-decl" :
+    item.nodeType === "milestone" ? "--color-node-mile" : "--color-node-act";
 
   return (
     <aside className="w-72 shrink-0 border-l flex flex-col overflow-y-auto">
       <div className="p-4 space-y-4">
         {/* Header */}
         <div>
-          <p className={`text-[10px] font-medium uppercase tracking-wider ${typeColor}`}>
+          <p style={{ color: `var(${colorVar})` }} className="text-[10px] font-medium uppercase tracking-wider">
             {typeLabel}
           </p>
           <p className="text-xs font-mono text-muted-foreground mt-0.5">{item.id}</p>
@@ -83,7 +83,7 @@ export function DetailPanel({ item, isRunning }: DetailPanelProps) {
             <p className="text-[10px] font-medium uppercase text-muted-foreground mb-1">Realizes</p>
             <div className="flex flex-wrap gap-1">
               {item.realizes.map((r) => (
-                <span key={r} className="text-xs px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400 font-mono">
+                <span key={r} className="text-xs px-1.5 py-0.5 rounded bg-node-decl-bg text-node-decl font-mono">
                   {r}
                 </span>
               ))}
@@ -131,7 +131,7 @@ export function DetailPanel({ item, isRunning }: DetailPanelProps) {
             <button
               onClick={() => spawnAgent.mutate({ endpoint: "derive", body: { declarationId: item.id } })}
               disabled={spawnAgent.isPending || isRunning}
-              className="w-full h-8 text-xs font-medium rounded-md bg-purple-100 dark:bg-purple-500/10 text-purple-700 dark:text-purple-400 border border-purple-500/20 hover:bg-purple-500/20 transition-colors disabled:opacity-50"
+              className="w-full h-8 text-xs font-medium rounded-md bg-node-mile-bg text-node-mile border border-node-mile/20 hover:brightness-90 transition-colors disabled:opacity-50"
             >
               {isRunning ? "Running..." : spawnAgent.isPending ? "Deriving..." : "Derive Milestones"}
             </button>
@@ -141,14 +141,14 @@ export function DetailPanel({ item, isRunning }: DetailPanelProps) {
               <button
                 onClick={() => spawnAgent.mutate({ endpoint: "plan-actions", body: { milestoneId: item.id } })}
                 disabled={spawnAgent.isPending || isRunning}
-                className="w-full h-8 text-xs font-medium rounded-md bg-green-100 dark:bg-green-500/10 text-green-700 dark:text-green-400 border border-green-500/20 hover:bg-green-500/20 transition-colors disabled:opacity-50"
+                className="w-full h-8 text-xs font-medium rounded-md bg-node-act-bg text-node-act border border-node-act/20 hover:brightness-90 transition-colors disabled:opacity-50"
               >
                 {isRunning ? "Running..." : "Plan Actions"}
               </button>
               <button
                 onClick={() => spawnAgent.mutate({ endpoint: "verify", body: { milestoneId: item.id } })}
                 disabled={spawnAgent.isPending || isRunning}
-                className="w-full h-8 text-xs font-medium rounded-md bg-blue-100 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 transition-colors disabled:opacity-50"
+                className="w-full h-8 text-xs font-medium rounded-md bg-node-decl-bg text-node-decl border border-node-decl/20 hover:brightness-90 transition-colors disabled:opacity-50"
               >
                 {isRunning ? "Running..." : "Verify"}
               </button>
@@ -158,7 +158,7 @@ export function DetailPanel({ item, isRunning }: DetailPanelProps) {
             <button
               onClick={() => spawnAgent.mutate({ endpoint: "execute", body: { actionId: item.id } })}
               disabled={spawnAgent.isPending}
-              className="w-full h-8 text-xs font-medium rounded-md bg-green-100 dark:bg-green-500/10 text-green-700 dark:text-green-400 border border-green-500/20 hover:bg-green-500/20 transition-colors disabled:opacity-50"
+              className="w-full h-8 text-xs font-medium rounded-md bg-node-act-bg text-node-act border border-node-act/20 hover:brightness-90 transition-colors disabled:opacity-50"
             >
               {spawnAgent.isPending ? "Executing..." : "Execute"}
             </button>

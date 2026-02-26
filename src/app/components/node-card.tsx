@@ -21,22 +21,10 @@ interface NodeCardProps {
   onDelete?: () => void;
 }
 
-const TYPE_COLORS: Record<NodeType, { id: string; border: string; bg: string }> = {
-  declaration: {
-    id: "text-blue-700 dark:text-blue-400",
-    border: "border-blue-300 dark:border-blue-500/20",
-    bg: "hover:bg-blue-50 dark:hover:bg-blue-500/5",
-  },
-  milestone: {
-    id: "text-purple-700 dark:text-purple-400",
-    border: "border-purple-300 dark:border-purple-500/20",
-    bg: "hover:bg-purple-50 dark:hover:bg-purple-500/5",
-  },
-  action: {
-    id: "text-green-700 dark:text-green-400",
-    border: "border-green-300 dark:border-green-500/20",
-    bg: "hover:bg-green-50 dark:hover:bg-green-500/5",
-  },
+const TYPE_STYLES: Record<NodeType, { idVar: string; borderVar: string; bgVar: string }> = {
+  declaration: { idVar: "--color-node-decl", borderVar: "--color-node-decl", bgVar: "--color-node-decl-bg" },
+  milestone:   { idVar: "--color-node-mile", borderVar: "--color-node-mile", bgVar: "--color-node-mile-bg" },
+  action:      { idVar: "--color-node-act",  borderVar: "--color-node-act",  bgVar: "--color-node-act-bg" },
 };
 
 export function NodeCard({
@@ -53,26 +41,28 @@ export function NodeCard({
   onEdit,
   onDelete,
 }: NodeCardProps) {
-  const colors = TYPE_COLORS[type];
+  const vars = TYPE_STYLES[type];
 
   return (
     <div
       onClick={onClick}
       role="button"
       tabIndex={0}
+      style={{
+        borderColor: isRunning ? undefined : `var(${vars.borderVar} / 0.3)`,
+      }}
       className={[
-        "rounded-lg border p-4 transition-all cursor-pointer",
-        colors.border,
-        colors.bg,
-        focused
-          ? "ring-2 ring-brand/40 bg-accent"
-          : "bg-card",
+        "rounded-lg border p-4 transition-all cursor-pointer hover:brightness-[0.98] dark:hover:brightness-110",
+        focused ? "ring-2 ring-brand/40 bg-accent" : "bg-card",
         isRunning ? "border-warning/40" : "",
       ].join(" ")}
     >
       {/* Header: ID + Title */}
       <div className="flex items-baseline gap-2 min-w-0">
-        <span className={`text-xs font-mono font-semibold shrink-0 ${colors.id}`}>
+        <span
+          style={{ color: `var(${vars.idVar})` }}
+          className="text-xs font-mono font-semibold shrink-0"
+        >
           {id}
         </span>
         <h3 className="text-sm font-semibold text-foreground truncate">{title}</h3>
