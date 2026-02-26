@@ -252,27 +252,24 @@ export function LifecycleView() {
       {/* Topbar — full width, breadcrumb + shortcuts + theme */}
       <header className="flex h-10 shrink-0 items-center justify-between border-b bg-card px-4">
         <div className="flex items-center gap-2 text-sm min-w-0">
-          {drill.level === "declarations" ? (
-            <span className="font-semibold text-foreground">{projectName}</span>
-          ) : (
-            <>
-              <button onClick={() => navigateTo("declarations")} className="text-muted-foreground hover:text-foreground transition-colors" title="Home">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-              </button>
-              {breadcrumbs.filter(bc => !bc.isHome).map((bc, i) => (
-                <span key={i} className="flex items-center gap-2 min-w-0">
-                  <span className="text-muted-foreground text-xs">&rsaquo;</span>
-                  {bc.onClick ? (
-                    <button onClick={bc.onClick} className="text-muted-foreground hover:text-foreground transition-colors truncate text-xs">
-                      {bc.label}
-                    </button>
-                  ) : (
-                    <span className="font-semibold text-foreground truncate text-xs">{bc.label}</span>
-                  )}
-                </span>
-              ))}
-            </>
-          )}
+          <button
+            onClick={() => navigateTo("declarations")}
+            className={`font-semibold shrink-0 transition-colors ${drill.level === "declarations" ? "text-foreground" : "text-muted-foreground hover:text-foreground cursor-pointer"}`}
+          >
+            {projectName}
+          </button>
+          {breadcrumbs.filter(bc => !bc.isHome).map((bc, i) => (
+            <span key={i} className="flex items-center gap-2 min-w-0">
+              <span className="text-muted-foreground text-xs shrink-0">&rsaquo;</span>
+              {bc.onClick ? (
+                <button onClick={bc.onClick} className="text-muted-foreground hover:text-foreground transition-colors truncate text-xs">
+                  {bc.label}
+                </button>
+              ) : (
+                <span className="font-medium text-foreground truncate text-xs">{bc.label}</span>
+              )}
+            </span>
+          ))}
         </div>
         <div className="flex items-center gap-3 shrink-0">
           <span className="text-[10px] text-muted-foreground hidden sm:block">
