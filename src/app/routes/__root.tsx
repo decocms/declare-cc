@@ -66,8 +66,6 @@ function RootLayout() {
             <kbd className="font-mono">←</kbd> back
             <span className="mx-1">&middot;</span>
             <kbd className="font-mono">a</kbd> approve
-            <span className="mx-1">&middot;</span>
-            <kbd className="font-mono">p</kbd> plan
           </span>
           <button
             onClick={toggle}

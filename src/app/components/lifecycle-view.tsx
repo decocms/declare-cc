@@ -55,10 +55,28 @@ export function LifecycleView() {
   };
   const listRef = useRef<HTMLDivElement>(null);
 
-  const approve = useApprove();
+  const approveRaw = useApprove();
   const deleteNode = useDeleteNode();
   const { data: agents = [] } = useAgents();
   const spawnAgent = useSpawnAgent();
+
+  /** Approve → then auto-plan next level */
+  function approveAndPlan(ids: string[]) {
+    approveRaw.mutate(ids, {
+      onSuccess: () => {
+        for (const id of ids) {
+          const prefix = id.split("-")[0];
+          if (prefix === "D") {
+            // Declaration approved → derive milestones
+            spawnAgent.mutate({ endpoint: "derive", body: { declarationId: id } });
+          } else if (prefix === "M") {
+            // Milestone approved → plan actions
+            spawnAgent.mutate({ endpoint: "plan-actions", body: { milestoneId: id } });
+          }
+        }
+      },
+    });
+  }
 
   const items = getItems(graph, drill);
 
@@ -127,28 +145,17 @@ export function LifecycleView() {
           break;
         case "a":
           e.preventDefault();
-          if (currentItems[currentFocus]) approve.mutate([currentItems[currentFocus].id]);
+          if (currentItems[currentFocus]) approveAndPlan([currentItems[currentFocus].id]);
           break;
         case "d":
           e.preventDefault();
           if (currentItems[currentFocus]) deleteNode.mutate({ id: currentItems[currentFocus].id, type: currentItems[currentFocus].nodeType });
           break;
-        case "p": {
-          e.preventDefault();
-          const item = currentItems[currentFocus];
-          if (!item) break;
-          if (item.nodeType === "declaration") {
-            spawnAgentRef.current.mutate({ endpoint: "derive", body: { declarationId: item.id } });
-          } else if (item.nodeType === "milestone") {
-            spawnAgentRef.current.mutate({ endpoint: "plan-actions", body: { milestoneId: item.id } });
-          }
-          break;
-        }
         case "A":
           e.preventDefault();
           {
             const draftIds = currentItems.filter((i) => i.review !== "approved").map((i) => i.id);
-            if (draftIds.length > 0) approve.mutate(draftIds);
+            if (draftIds.length > 0) approveAndPlan(draftIds);
           }
           break;
       }
@@ -209,7 +216,7 @@ export function LifecycleView() {
 
   function approveAll() {
     const draftIds = items.filter((i) => i.review !== "approved").map((i) => i.id);
-    if (draftIds.length > 0) approve.mutate(draftIds);
+    if (draftIds.length > 0) approveAndPlan(draftIds);
   }
 
   const breadcrumbs = buildBreadcrumbs(graph, drill, navigateTo);
@@ -283,7 +290,7 @@ export function LifecycleView() {
               focused={i === focusIdx}
               onClick={() => setFocusIdx(i)}
               onDoubleClick={() => handleDrillIn(items, i, drill)}
-              onApprove={() => approve.mutate([item.id])}
+              onApprove={() => approveAndPlan([item.id])}
               onDelete={() => deleteNode.mutate({ id: item.id, type: item.nodeType })}
             />
           ))

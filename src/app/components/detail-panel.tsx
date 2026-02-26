@@ -119,31 +119,13 @@ export function DetailPanel({ item, isRunning }: DetailPanelProps) {
           </p>
         )}
 
-        {/* Agent actions */}
+        {/* Agent actions — only Verify and Execute remain; Approve triggers planning */}
         <div className="border-t pt-3 space-y-2">
           {isRunning && (
             <div className="flex items-center gap-2 text-xs text-warning animate-pulse">
               <span className="h-2 w-2 rounded-full bg-warning" />
               Agent running...
             </div>
-          )}
-          {item.nodeType === "declaration" && (item.milestoneCount ?? 0) === 0 && (
-            <button
-              onClick={() => spawnAgent.mutate({ endpoint: "derive", body: { declarationId: item.id } })}
-              disabled={spawnAgent.isPending || isRunning}
-              className="w-full h-8 text-xs font-medium rounded-md bg-node-mile-bg text-node-mile border border-node-mile/20 hover:brightness-90 transition-colors disabled:opacity-50"
-            >
-              {isRunning ? "Running..." : spawnAgent.isPending ? "Deriving..." : "Derive Milestones"}
-            </button>
-          )}
-          {item.nodeType === "milestone" && (item.actionCount ?? 0) === 0 && (
-            <button
-              onClick={() => spawnAgent.mutate({ endpoint: "plan-actions", body: { milestoneId: item.id } })}
-              disabled={spawnAgent.isPending || isRunning}
-              className="w-full h-8 text-xs font-medium rounded-md bg-node-act-bg text-node-act border border-node-act/20 hover:brightness-90 transition-colors disabled:opacity-50"
-            >
-              {isRunning ? "Running..." : "Plan Actions"}
-            </button>
           )}
           {item.nodeType === "milestone" && (item.actionCount ?? 0) > 0 && (
             <button
@@ -157,10 +139,10 @@ export function DetailPanel({ item, isRunning }: DetailPanelProps) {
           {item.nodeType === "action" && (
             <button
               onClick={() => spawnAgent.mutate({ endpoint: "execute", body: { actionId: item.id } })}
-              disabled={spawnAgent.isPending}
+              disabled={spawnAgent.isPending || isRunning}
               className="w-full h-8 text-xs font-medium rounded-md bg-node-act-bg text-node-act border border-node-act/20 hover:brightness-90 transition-colors disabled:opacity-50"
             >
-              {spawnAgent.isPending ? "Executing..." : "Execute"}
+              {isRunning ? "Running..." : "Execute"}
             </button>
           )}
         </div>
