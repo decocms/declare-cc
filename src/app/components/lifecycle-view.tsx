@@ -227,7 +227,7 @@ export function LifecycleView() {
       {/* Main list area */}
       <div className="flex flex-1 flex-col overflow-hidden">
       {/* Breadcrumb — always visible to avoid layout shift */}
-      <div className="flex items-center gap-2 border-b px-4 py-1.5 text-xs min-h-[28px]">
+      <div className="flex items-center gap-2 border-b px-4 text-xs h-7">
         {breadcrumbs.map((bc, i) => (
           <span key={i} className="flex items-center gap-2">
             {i > 0 && <span className="text-muted-foreground">&rsaquo;</span>}
@@ -254,7 +254,10 @@ export function LifecycleView() {
 
       {/* Level header */}
       <div className="flex items-center justify-between px-4 py-3">
-        <h2 className="text-xs font-medium uppercase tracking-wide text-brand">
+        <h2
+          style={{ color: `var(--color-node-${drill.level === "declarations" ? "decl" : drill.level === "milestones" ? "mile" : "act"})` }}
+          className="text-xs font-medium uppercase tracking-wide"
+        >
           {drill.level} <span className="text-muted-foreground ml-1">{items.length}</span>
         </h2>
       </div>
