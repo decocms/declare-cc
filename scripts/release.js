@@ -40,7 +40,7 @@ run('npm run build');
 // 3. Commit + tag
 run(`git add package.json package-lock.json dist/`);
 run(`git commit -m "chore: bump version to ${version}"`);
-run(`git tag v${version}`);
+run(`git tag -f v${version}`);
 
 console.log(`
 Done. To publish:
