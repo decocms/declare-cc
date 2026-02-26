@@ -8,7 +8,7 @@
  * streams output via SSE to connected clients, and parses structured
  * JSON results (proposed actions) on completion.
  *
- * Session-based tracking (one action derivation at a time).
+ * Concurrent session tracking — multiple action derivations can run simultaneously.
  */
 
 const { runAI } = require('./ai-runner');
@@ -44,15 +44,16 @@ function buildActionPrompt(milestone, existingActions) {
 
 /**
  * Create an action derivation runner using the Claude Agent SDK.
+ * Supports concurrent sessions — multiple action derivations can run at the same time.
  *
  * @param {Set<import('http').ServerResponse>} sseClients - Active SSE clients to broadcast to
  * @param {string} cwd - Project root directory
  * @param {object} [registry] - Agent registry for tracking
- * @returns {{ derive: (milestone: object, existingActions: Array) => { ok?: boolean, error?: string, status?: number, sessionId?: string }, stop: () => { ok?: boolean, error?: string, status?: number }, running: () => string|null }}
+ * @returns {{ derive: Function, stop: Function, stopAll: Function, running: Function }}
  */
 function createActionDerivationRunner(sseClients, cwd, registry) {
-  /** @type {{ sessionId: string, milestoneId: string, agentId?: string, abortController: AbortController } | null} */
-  let current = null;
+  /** @type {Map<string, { milestoneId: string, agentId?: string, abortController: AbortController, startTime: number }>} */
+  const sessions = new Map();
 
   /**
    * Broadcast an SSE event to all connected clients.
@@ -78,10 +79,6 @@ function createActionDerivationRunner(sseClients, cwd, registry) {
    * @returns {{ ok?: boolean, error?: string, status?: number, sessionId?: string }}
    */
   function derive(milestone, existingActions) {
-    if (current) {
-      return { error: 'busy', status: 409 };
-    }
-
     const sessionId = `action-deriv-${Date.now()}`;
     const prompt = buildActionPrompt(milestone, existingActions);
     const abortController = new AbortController();
@@ -93,7 +90,7 @@ function createActionDerivationRunner(sseClients, cwd, registry) {
       agentId = agent.id;
     }
 
-    current = { sessionId, milestoneId: milestone.id, agentId, abortController };
+    sessions.set(sessionId, { milestoneId: milestone.id, agentId, abortController, startTime: Date.now() });
 
     // Run AI asynchronously
     runAI(prompt, {
@@ -104,13 +101,15 @@ function createActionDerivationRunner(sseClients, cwd, registry) {
       onText: (text) => {
         broadcast('action-derivation-output', {
           sessionId,
+          milestoneId: milestone.id,
           text,
           stream: 'stdout',
         });
       },
     }).then(({ text, error }) => {
-      const closingAgentId = current ? current.agentId : undefined;
-      current = null;
+      const session = sessions.get(sessionId);
+      const closingAgentId = session ? session.agentId : undefined;
+      sessions.delete(sessionId);
 
       let actions = null;
       const exitCode = error ? 1 : 0;
@@ -128,6 +127,7 @@ function createActionDerivationRunner(sseClients, cwd, registry) {
 
       broadcast('action-derivation-complete', {
         sessionId,
+        milestoneId: milestone.id,
         exitCode,
         actions,
       });
@@ -142,32 +142,62 @@ function createActionDerivationRunner(sseClients, cwd, registry) {
           registry.fail(closingAgentId, 1, error || 'action derivation failed');
         }
       }
+    }).catch((err) => {
+      // Safety net: always clear session even on unexpected errors
+      const session = sessions.get(sessionId);
+      const closingAgentId = session ? session.agentId : undefined;
+      sessions.delete(sessionId);
+      broadcast('action-derivation-complete', { sessionId, milestoneId: milestone.id, exitCode: 1, actions: null });
+      if (registry && closingAgentId) {
+        registry.fail(closingAgentId, 1, String(err));
+      }
     });
 
     return { ok: true, sessionId };
   }
 
   /**
-   * Stop the currently running action derivation.
+   * Stop a specific session or all sessions.
+   * @param {string} [sessionId] - If provided, stop that session. Otherwise stop all.
    * @returns {{ ok?: boolean, error?: string, status?: number }}
    */
-  function stop() {
-    if (!current) {
-      return { error: 'not_running', status: 404 };
+  function stop(sessionId) {
+    if (sessionId) {
+      const session = sessions.get(sessionId);
+      if (!session) {
+        return { error: 'not_running', status: 404 };
+      }
+      session.abortController.abort();
+      return { ok: true };
     }
-    current.abortController.abort();
+    return stopAll();
+  }
+
+  /**
+   * Stop all running action derivation sessions.
+   * @returns {{ ok: boolean }}
+   */
+  function stopAll() {
+    for (const [, session] of sessions) {
+      session.abortController.abort();
+    }
     return { ok: true };
   }
 
   /**
-   * Return the session ID of the currently running action derivation, or null.
-   * @returns {string|null}
+   * Return info about active sessions, or null if none running.
+   * @returns {Array<{ sessionId: string, milestoneId: string, startTime: number }>|null}
    */
   function running() {
-    return current ? current.sessionId : null;
+    if (sessions.size === 0) return null;
+    return Array.from(sessions.entries()).map(([id, s]) => ({
+      sessionId: id,
+      milestoneId: s.milestoneId,
+      startTime: s.startTime,
+    }));
   }
 
-  return { derive, stop, running };
+  return { derive, stop, stopAll, running };
 }
 
 // Self-test when run directly
@@ -175,6 +205,7 @@ if (require.main === module) {
   const runner = createActionDerivationRunner(new Set(), '.');
   console.log('derive:', typeof runner.derive);
   console.log('stop:', typeof runner.stop);
+  console.log('stopAll:', typeof runner.stopAll);
   console.log('running:', typeof runner.running);
   console.log('OK');
 }

@@ -4,19 +4,24 @@
 /**
  * Process manager for Declare action execution.
  *
- * Manages Claude CLI child processes — spawn, track, stop, and stream output
- * to SSE clients in real time. One-at-a-time execution cap.
- *
- * Zero runtime dependencies. Uses Node's built-in child_process only.
+ * Uses the AI runner (Claude Agent SDK) to execute actions with full tool
+ * access. One-at-a-time execution cap. Streams output to SSE clients.
  */
 
-const { spawn } = require('node:child_process');
+const { runAI } = require('./ai-runner');
 const fs = require('node:fs');
 const path = require('node:path');
 const { findMilestoneFolder } = require('../artifacts/milestone-folders');
 
 /**
- * @typedef {{ proc: import('child_process').ChildProcess, milestoneId: string, logPath?: string, agentId?: string }} ProcessEntry
+ * @typedef {{ abortController: AbortController, milestoneId: string, logPath?: string, agentId?: string }} ProcessEntry
+ */
+
+/**
+ * @typedef {{ id: string, title: string, produces: string, status: string }} ActionInfo
+ * @typedef {{ id: string, title: string, description: string }} MilestoneInfo
+ * @typedef {{ id: string, statement: string }} DeclarationInfo
+ * @typedef {{ action: ActionInfo, milestone: MilestoneInfo|null, declaration: DeclarationInfo|null, siblingActions: ActionInfo[] }} ActionContext
  */
 
 /**
@@ -35,7 +40,67 @@ function appendLog(logPath, line) {
 }
 
 /**
- * Create a process manager that spawns and tracks Claude CLI processes.
+ * Build a rich execution prompt with full context from the graph.
+ *
+ * @param {string} actionId
+ * @param {string} milestoneId
+ * @param {ActionContext} [ctx]
+ * @returns {string}
+ */
+function buildExecutionPrompt(actionId, milestoneId, ctx) {
+  if (!ctx) {
+    return `Run /declare:execute ${milestoneId} for action ${actionId} only. Do not ask questions, execute autonomously.`;
+  }
+
+  const lines = [
+    `Execute action ${actionId} for milestone ${milestoneId}. Work autonomously — do not ask questions.`,
+    '',
+  ];
+
+  // Why-chain: declaration → milestone → action
+  if (ctx.declaration) {
+    lines.push(`## Declaration: ${ctx.declaration.id}`);
+    lines.push(ctx.declaration.statement);
+    lines.push('');
+  }
+
+  if (ctx.milestone) {
+    lines.push(`## Milestone: ${ctx.milestone.id} — ${ctx.milestone.title}`);
+    if (ctx.milestone.description) {
+      lines.push(ctx.milestone.description);
+    }
+    lines.push('');
+  }
+
+  lines.push(`## Action: ${ctx.action.id} — ${ctx.action.title}`);
+  if (ctx.action.produces) {
+    lines.push(`**Produces:** ${ctx.action.produces}`);
+  }
+  lines.push('');
+
+  // Sibling actions for awareness of what else is planned
+  if (ctx.siblingActions.length > 0) {
+    lines.push('## Other actions for this milestone (do NOT do these, just for context):');
+    for (const s of ctx.siblingActions) {
+      const statusMark = s.status === 'DONE' ? ' [DONE]' : '';
+      lines.push(`- ${s.id}: ${s.title}${s.produces ? ' (produces: ' + s.produces + ')' : ''}${statusMark}`);
+    }
+    lines.push('');
+  }
+
+  lines.push('## Instructions');
+  lines.push('1. Read the project context files: .planning/FUTURE.md, .planning/MILESTONES.md, .planning/STATE.md');
+  lines.push('2. Understand what this action needs to deliver based on the "Produces" field above');
+  lines.push('3. Explore the codebase to find the right files to modify');
+  lines.push('4. Implement the changes — write real, working code');
+  lines.push('5. Verify your changes work (run relevant tests, check for errors)');
+  lines.push('6. Commit your changes with a descriptive message');
+
+  return lines.join('\n');
+}
+
+/**
+ * Create a process manager that uses the AI runner SDK to execute actions.
  *
  * @param {Set<import('http').ServerResponse>} sseClients - Active SSE clients to broadcast to
  * @param {string} cwd - Project root directory
@@ -62,36 +127,14 @@ function createProcessManager(sseClients, cwd, registry) {
   }
 
   /**
-   * Create a line-buffered handler for a stream.
-   * Accumulates chunks, splits on newlines, emits complete lines, keeps remainder.
-   *
-   * @param {string} actionId
-   * @param {string} streamName - 'stdout' or 'stderr'
-   * @param {string | undefined} logPath - Path to execution.log (undefined to skip file logging)
-   * @returns {(chunk: Buffer) => void}
-   */
-  function createLineHandler(actionId, streamName, logPath) {
-    let buffer = '';
-    return (chunk) => {
-      buffer += chunk.toString();
-      const lines = buffer.split('\n');
-      // Keep the last element as remainder (incomplete line)
-      buffer = lines.pop() || '';
-      for (const line of lines) {
-        broadcast('action-output', { actionId, text: line, stream: streamName });
-        appendLog(logPath, `[${new Date().toISOString()}] [${actionId}] [${streamName}] ${line}`);
-      }
-    };
-  }
-
-  /**
-   * Spawn a Claude CLI process to execute an action.
+   * Execute an action using the AI runner SDK.
    *
    * @param {string} actionId - e.g. 'A-87'
    * @param {string} milestoneId - e.g. 'M-41'
+   * @param {ActionContext} [ctx] - Rich context from the graph
    * @returns {{ ok?: boolean, error?: string, status?: number }}
    */
-  function execute(actionId, milestoneId) {
+  function execute(actionId, milestoneId, ctx) {
     if (processes.size > 0) {
       return { error: 'busy', status: 409 };
     }
@@ -100,14 +143,7 @@ function createProcessManager(sseClients, cwd, registry) {
       return { error: 'already_running', status: 409 };
     }
 
-    const prompt = `Run /declare:execute ${milestoneId} for action ${actionId} only. Do not ask questions, execute autonomously.`;
-
-    const spawnEnv = { ...process.env, FORCE_COLOR: '0' };
-    delete spawnEnv.CLAUDECODE;
-    const proc = spawn('claude', ['-p', prompt], {
-      cwd,
-      env: spawnEnv,
-    });
+    const prompt = buildExecutionPrompt(actionId, milestoneId, ctx);
 
     // Resolve milestone folder for execution log
     const planningDir = path.join(cwd, '.planning');
@@ -120,6 +156,8 @@ function createProcessManager(sseClients, cwd, registry) {
       process.stderr.write(`[declare] Warning: milestone folder not found for ${milestoneId}, skipping execution log\n`);
     }
 
+    const abortController = new AbortController();
+
     /** @type {string|undefined} */
     let agentId;
     if (registry) {
@@ -127,52 +165,50 @@ function createProcessManager(sseClients, cwd, registry) {
       agentId = agent.id;
     }
 
-    processes.set(actionId, { proc, milestoneId, logPath, agentId });
+    processes.set(actionId, { abortController, milestoneId, logPath, agentId });
 
     // Write start marker to execution log
     appendLog(logPath, `\n=== START ${actionId} @ ${new Date().toISOString()} ===`);
 
-    // Pipe stdout line-by-line
-    if (proc.stdout) {
-      proc.stdout.on('data', createLineHandler(actionId, 'stdout', logPath));
-    }
-
-    // Pipe stderr line-by-line
-    if (proc.stderr) {
-      proc.stderr.on('data', createLineHandler(actionId, 'stderr', logPath));
-    }
-
-    // Process exited
-    proc.on('close', (exitCode) => {
+    // Fire and forget — results stream via SSE
+    runAI(prompt, {
+      cwd,
+      model: 'sonnet',
+      withTools: true,
+      maxTurns: 10,
+      abortController,
+      onText: (chunk) => {
+        broadcast('action-output', { actionId, text: chunk, stream: 'stdout' });
+        appendLog(logPath, `[${new Date().toISOString()}] [${actionId}] [stdout] ${chunk}`);
+      },
+    }).then(({ text, error }) => {
       const entry = processes.get(actionId);
       const entryAgentId = entry?.agentId;
-      appendLog(entry?.logPath, `=== END ${actionId} @ ${new Date().toISOString()} exit=${exitCode ?? -1} ===\n`);
+      const exitCode = error ? 1 : 0;
+      appendLog(entry?.logPath, `=== END ${actionId} @ ${new Date().toISOString()} exit=${exitCode} ===\n`);
       processes.delete(actionId);
-      broadcast('action-complete', { actionId, exitCode: exitCode ?? -1 });
+      broadcast('action-complete', { actionId, exitCode });
       if (registry && entryAgentId) {
-        if ((exitCode ?? -1) === 0) {
-          const milestoneFolder = entry?.logPath ? path.dirname(entry.logPath) : null;
+        if (exitCode === 0) {
+          const mFolder = entry?.logPath ? path.dirname(entry.logPath) : null;
           registry.complete(entryAgentId, {
             actionId,
             milestoneId: entry?.milestoneId || milestoneId,
-            summaryPath: milestoneFolder ? path.join(milestoneFolder, actionId + '-SUMMARY.md') : null,
+            summaryPath: mFolder ? path.join(mFolder, actionId + '-SUMMARY.md') : null,
             logPath: entry?.logPath || null,
           });
         } else {
-          registry.fail(entryAgentId, exitCode ?? -1, 'process exited');
+          registry.fail(entryAgentId, exitCode, error || 'execution failed');
         }
       }
-    });
-
-    // Process failed to spawn (e.g. claude not found)
-    proc.on('error', (_err) => {
+    }).catch((err) => {
       const entry = processes.get(actionId);
       const entryAgentId = entry?.agentId;
       appendLog(entry?.logPath, `=== ERROR ${actionId} @ ${new Date().toISOString()} ===\n`);
       processes.delete(actionId);
       broadcast('action-complete', { actionId, exitCode: -1 });
       if (registry && entryAgentId) {
-        registry.fail(entryAgentId, -1, 'spawn error');
+        registry.fail(entryAgentId, -1, String(err.message || err));
       }
     });
 
@@ -180,7 +216,7 @@ function createProcessManager(sseClients, cwd, registry) {
   }
 
   /**
-   * Stop a running action process with SIGTERM.
+   * Stop a running action by aborting it.
    *
    * @param {string} actionId
    * @returns {{ ok?: boolean, error?: string, status?: number }}
@@ -191,7 +227,7 @@ function createProcessManager(sseClients, cwd, registry) {
       return { error: 'not_running', status: 404 };
     }
 
-    entry.proc.kill('SIGTERM');
+    entry.abortController.abort();
     return { ok: true };
   }
 

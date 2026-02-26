@@ -41,11 +41,14 @@ async function runServe(cwd, args) {
 
   const { server, port: resolvedPort, url } = await startServer(cwd, port);
 
-  // Open browser
-  const opener = process.platform === 'darwin' ? 'open'
-    : process.platform === 'win32' ? 'start'
-    : 'xdg-open';
-  spawn(opener, [url], { stdio: 'ignore', detached: true }).unref();
+  // Open browser (skip with --no-open or DECLARE_NO_OPEN env)
+  const noOpen = args.includes('--no-open') || process.env.DECLARE_NO_OPEN;
+  if (!noOpen) {
+    const opener = process.platform === 'darwin' ? 'open'
+      : process.platform === 'win32' ? 'start'
+      : 'xdg-open';
+    spawn(opener, [url], { stdio: 'ignore', detached: true }).unref();
+  }
 
   // Keep the process alive — the server handles shutdown via SIGINT/SIGTERM
   process.on('SIGINT', () => {

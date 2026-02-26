@@ -533,28 +533,50 @@ function handleFileContent(req, res, cwd) {
  */
 function handleExecuteAction(res, cwd, actionId) {
   try {
-    const result = runGetExecPlan(cwd, ['--action', actionId]);
-    if (result.error || !result.execPlan) {
-      sendJson(res, 400, { error: 'Action not found or no exec-plan' });
+    const graph = runLoadGraph(cwd);
+    if ('error' in graph) {
+      sendJson(res, 500, { error: graph.error });
+      return;
+    }
+
+    const normalizedId = actionId.toUpperCase();
+    const action = graph.actions.find(a => a.id.toUpperCase() === normalizedId);
+    if (!action) {
+      sendJson(res, 404, { error: 'Action not found' });
       return;
     }
 
     // Approval gate: reject if action's reviewState is not 'approved'
-    const graph = runLoadGraph(cwd);
-    if (!('error' in graph)) {
-      const normalizedId = actionId.toUpperCase();
-      const action = graph.actions.find(a => a.id.toUpperCase() === normalizedId);
-      if (action && action.reviewState !== 'approved') {
-        sendJson(res, 403, {
-          error: 'Action not approved for execution',
-          unapproved: [{ id: action.id, title: action.title, reviewState: action.reviewState || 'draft' }],
-        });
-        return;
-      }
+    if (action.reviewState !== 'approved') {
+      sendJson(res, 403, {
+        error: 'Action not approved for execution',
+        unapproved: [{ id: action.id, title: action.title, reviewState: action.reviewState || 'draft' }],
+      });
+      return;
     }
 
+    // Resolve milestoneId and build full context for the executor
+    const milestoneId = (action.causes || []).find(c => c.startsWith('M-')) || (action.causes || [])[0] || actionId;
+    const milestone = graph.milestones.find(m => m.id === milestoneId);
+    const declaration = milestone
+      ? (graph.declarations || []).find(d => (milestone.realizes || []).includes(d.id))
+      : null;
+
+    // Sibling actions for context (what else is being done for this milestone)
+    const siblingActions = graph.actions.filter(a =>
+      a.id !== action.id && (a.causes || []).includes(milestoneId)
+    );
+
+    /** @type {import('./process-manager').ActionContext} */
+    const actionContext = {
+      action: { id: action.id, title: action.title, produces: action.produces || '', status: action.status },
+      milestone: milestone ? { id: milestone.id, title: milestone.title, description: milestone.description || '' } : null,
+      declaration: declaration ? { id: declaration.id, statement: declaration.statement || declaration.title || '' } : null,
+      siblingActions: siblingActions.map(a => ({ id: a.id, title: a.title, produces: a.produces || '', status: a.status })),
+    };
+
     const pm = getProcessManager(cwd);
-    const execResult = pm.execute(actionId, result.milestoneId);
+    const execResult = pm.execute(actionId, milestoneId, actionContext);
     if (execResult.error) {
       sendJson(res, execResult.status || 500, { error: execResult.error });
       return;
@@ -590,13 +612,14 @@ async function handleDerive(req, res, cwd) {
     }));
 
     const dr = getDerivationRunner(cwd);
-    const result = dr.derive(body.declarationId || null, declarations);
+    const declarationId = body.declarationId || null;
+    const result = dr.derive(declarationId, declarations);
     if (result.error) {
       sendJson(res, result.status || 500, { error: result.error });
       return;
     }
 
-    sendJson(res, 202, { ok: true, sessionId: result.sessionId });
+    sendJson(res, 202, { ok: true, sessionId: result.sessionId, declarationId });
   } catch (err) {
     sendJson(res, 400, { error: String(err) });
   }
@@ -609,14 +632,24 @@ async function handleDerive(req, res, cwd) {
  * @param {http.ServerResponse} res
  * @param {string} cwd
  */
-function handleDeriveStop(res, cwd) {
+function handleDeriveStop(req, res, cwd) {
   const dr = getDerivationRunner(cwd);
-  const result = dr.stop();
-  if (result.error) {
-    sendJson(res, result.status || 500, { error: result.error });
-  } else {
-    sendJson(res, 200, { ok: true });
-  }
+  // Support optional sessionId in body for stopping a specific session
+  let sessionId;
+  const chunks = [];
+  req.on('data', c => chunks.push(c));
+  req.on('end', () => {
+    try {
+      const body = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+      sessionId = body.sessionId;
+    } catch (_) {}
+    const result = dr.stop(sessionId);
+    if (result.error) {
+      sendJson(res, result.status || 500, { error: result.error });
+    } else {
+      sendJson(res, 200, { ok: true });
+    }
+  });
 }
 
 /**
@@ -645,6 +678,50 @@ async function handleDeriveAccept(req, res, cwd) {
     broadcastChange();
   } catch (err) {
     sendJson(res, 400, { error: String(err) });
+  }
+}
+
+/**
+ * Handle POST /api/declarations/derive-all
+ * Kicks off concurrent milestone derivation for all declarations without milestones.
+ *
+ * @param {http.ServerResponse} res
+ * @param {string} cwd
+ */
+function handleDeriveAll(res, cwd) {
+  try {
+    const graph = runLoadGraph(cwd);
+    if ('error' in graph) {
+      sendJson(res, 500, { error: graph.error });
+      return;
+    }
+
+    const declarations = graph.declarations.map(d => ({
+      id: d.id,
+      statement: d.statement,
+      milestones: d.milestones || [],
+    }));
+
+    // Find declarations without milestones
+    const needsPlanning = declarations.filter(d => !d.milestones || d.milestones.length === 0);
+    if (needsPlanning.length === 0) {
+      sendJson(res, 200, { ok: true, sessions: [], message: 'All declarations already have milestones' });
+      return;
+    }
+
+    const dr = getDerivationRunner(cwd);
+    const results = [];
+
+    for (const decl of needsPlanning) {
+      const result = dr.derive(decl.id, declarations);
+      if (result.ok) {
+        results.push({ declarationId: decl.id, sessionId: result.sessionId });
+      }
+    }
+
+    sendJson(res, 202, { ok: true, sessions: results });
+  } catch (err) {
+    sendJson(res, 500, { error: String(err) });
   }
 }
 
@@ -1436,7 +1513,8 @@ function handleReviseStop(res, cwd) {
 // ─── Refine (contextual AI suggestion) ───────────────────────────────────────
 
 /** @type {{ sessionId: string, proc: import('child_process').ChildProcess, nodeId: string, suggestion: string } | null} */
-let refineSession = null;
+/** @type {Map<string, { sessionId: string, nodeId: string, suggestion: string, abortController: AbortController, agentId?: string }>} */
+const refineSessions = new Map();
 
 /**
  * Build a contextual prompt for refining a node.
@@ -1538,11 +1616,6 @@ If the current version is already good, output exactly: LGTM — no changes need
  */
 async function handleRefine(req, res, cwd, nodeId) {
   try {
-    if (refineSession) {
-      sendJson(res, 409, { error: 'A refine session is already running' });
-      return;
-    }
-
     const body = await readJsonBody(req).catch(() => ({}));
     const mode = body.mode || 'general';
     const userMessage = body.message || '';
@@ -1559,7 +1632,7 @@ async function handleRefine(req, res, cwd, nodeId) {
       return;
     }
 
-    const sessionId = `refine-${Date.now()}`;
+    const sessionId = `refine-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const { runAI } = require('./ai-runner');
     const activityFile = path.join(cwd, '.planning', 'activity.jsonl');
     const nId = nodeId.toUpperCase();
@@ -1572,7 +1645,7 @@ async function handleRefine(req, res, cwd, nodeId) {
     } catch (_) {}
 
     const abortController = new AbortController();
-    refineSession = { sessionId, nodeId: nId, suggestion: '', abortController, agentId: refineAgentId };
+    refineSessions.set(sessionId, { sessionId, nodeId: nId, suggestion: '', abortController, agentId: refineAgentId });
 
     // Write mode gets tool access so it can directly modify files
     const isWriteMode = mode === 'write';
@@ -1580,26 +1653,27 @@ async function handleRefine(req, res, cwd, nodeId) {
     // Run AI asynchronously — streams text chunks via SSE
     runAI(prompt, {
       cwd,
-      model: isWriteMode ? 'sonnet' : 'haiku',
+      model: 'haiku',
       maxTurns: isWriteMode ? 10 : 1,
       withTools: isWriteMode,
       abortController,
       onText: (text) => {
-        if (refineSession) refineSession.suggestion += text;
+        const session = refineSessions.get(sessionId);
+        if (session) session.suggestion += text;
         const payload = `event: refine-output\ndata: ${JSON.stringify({ sessionId, nodeId: nId, text })}\n\n`;
         for (const client of sseClients) {
           try { client.write(payload); } catch (_) { sseClients.delete(client); }
         }
       },
     }).then(({ text, error }) => {
-      const suggestion = text || (refineSession ? refineSession.suggestion : '');
-      refineSession = null;
+      const session = refineSessions.get(sessionId);
+      const suggestion = text || (session ? session.suggestion : '');
+      refineSessions.delete(sessionId);
       const exitCode = error ? 1 : 0;
       const payload = `event: refine-complete\ndata: ${JSON.stringify({ sessionId, nodeId: nId, exitCode, suggestion, error })}\n\n`;
       for (const client of sseClients) {
         try { client.write(payload); } catch (_) { sseClients.delete(client); }
       }
-      // Update agent registry
       if (refineAgentId) {
         try {
           const reg = getAgentRegistry(cwd);
@@ -1607,15 +1681,13 @@ async function handleRefine(req, res, cwd, nodeId) {
           else reg.fail(refineAgentId, 1, error);
         } catch (_) {}
       }
-      // Log completion
       const phase = error ? 'error' : 'done';
       const desc = error
         ? `Review of ${nId} failed: ${error}`
         : `Review of ${nId} complete` + (suggestion.includes('LGTM') ? ' — no changes needed' : ' — suggestion ready');
       try { fs.appendFileSync(activityFile, JSON.stringify({ ts: new Date().toISOString(), tool: 'Task', phase, agent: 'Refine', desc }) + '\n'); } catch (_) {}
     }).catch((err) => {
-      // Safety net: always clear refineSession even on unexpected errors
-      refineSession = null;
+      refineSessions.delete(sessionId);
       const payload = `event: refine-complete\ndata: ${JSON.stringify({ sessionId, nodeId: nId, exitCode: 1, suggestion: '', error: String(err) })}\n\n`;
       for (const client of sseClients) { try { client.write(payload); } catch (_) { sseClients.delete(client); } }
       if (refineAgentId) { try { getAgentRegistry(cwd).fail(refineAgentId, 1, String(err)); } catch (_) {} }
@@ -1631,14 +1703,21 @@ async function handleRefine(req, res, cwd, nodeId) {
   }
 }
 
-function handleRefineStop(res) {
-  if (!refineSession) {
-    sendJson(res, 404, { error: 'No refine session running' });
-    return;
+function handleRefineStop(res, sessionId) {
+  if (sessionId) {
+    const session = refineSessions.get(sessionId);
+    if (!session) { sendJson(res, 404, { error: 'Session not found' }); return; }
+    try { session.abortController.abort(); } catch (_) {}
+    refineSessions.delete(sessionId);
+    sendJson(res, 200, { ok: true });
+  } else {
+    // Stop all
+    for (const [id, session] of refineSessions) {
+      try { session.abortController.abort(); } catch (_) {}
+    }
+    refineSessions.clear();
+    sendJson(res, 200, { ok: true });
   }
-  try { if (refineSession.abortController) refineSession.abortController.abort(); else if (refineSession.proc) refineSession.proc.kill(); } catch (_) {}
-  refineSession = null;
-  sendJson(res, 200, { ok: true });
 }
 
 async function handleRefineAccept(req, res, cwd) {
@@ -1992,6 +2071,337 @@ Apply the user's request by editing the relevant files. Be concise in your respo
   } catch (err) {
     sendJson(res, 500, { error: String(err) });
   }
+}
+
+// ─── Onboarding flow (vision prompt → questions → declarations) ───────────────
+
+/** @type {{ prompt: string, answers: any[]|null, questions: any[]|null, proposals: any[]|null, phase: string, approveIndex: number, abortController: AbortController|null, agentId?: string } | null} */
+let onboardSession = null;
+
+/**
+ * Persist onboard session to .planning/onboard-session.json.
+ * @param {string} cwd
+ */
+function persistOnboardSession(cwd) {
+  const filePath = path.join(cwd, '.planning', 'onboard-session.json');
+  if (!onboardSession) {
+    try { fs.unlinkSync(filePath); } catch (_) {}
+    return;
+  }
+  try {
+    const data = {
+      prompt: onboardSession.prompt,
+      answers: onboardSession.answers,
+      questions: onboardSession.questions,
+      proposals: onboardSession.proposals,
+      phase: onboardSession.phase,
+      approveIndex: onboardSession.approveIndex || 0,
+      savedAt: new Date().toISOString(),
+    };
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+  } catch (_) {}
+}
+
+/**
+ * Restore onboard session from disk (without abortController).
+ * @param {string} cwd
+ * @returns {boolean} Whether a session was restored
+ */
+function restoreOnboardSession(cwd) {
+  const filePath = path.join(cwd, '.planning', 'onboard-session.json');
+  try {
+    if (!fs.existsSync(filePath)) return false;
+    const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    // Only restore if the session has meaningful state (not mid-stream)
+    if (data.phase === 'questions' && !data.questions) return false;
+    if (data.phase === 'proposals' && !data.proposals) return false;
+    onboardSession = {
+      prompt: data.prompt,
+      answers: data.answers,
+      questions: data.questions,
+      proposals: data.proposals,
+      phase: data.phase,
+      approveIndex: data.approveIndex || 0,
+      abortController: null,
+    };
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
+ * Handle POST /api/onboard
+ * Takes { message }, spawns haiku agent to generate clarification questions,
+ * streams via SSE, completes with onboard-questions-complete.
+ */
+async function handleOnboard(req, res, cwd) {
+  try {
+    if (onboardSession) {
+      sendJson(res, 409, { error: 'An onboarding session is already running' });
+      return;
+    }
+
+    const body = await readJsonBody(req);
+    const message = (body.message || '').trim();
+    if (!message) {
+      sendJson(res, 400, { error: 'No message provided' });
+      return;
+    }
+
+    const { runAI } = require('./ai-runner');
+    const activityFile = path.join(cwd, '.planning', 'activity.jsonl');
+
+    const prompt = `You are helping a user plan their software project. They have described their vision:
+
+"${message}"
+
+Identify 3-5 important clarification questions that should be answered before breaking this vision into concrete declarations. Focus on:
+- Scope boundaries (what's included vs excluded?)
+- Key technical decisions that affect the architecture
+- Target users and use cases
+- Priority and sequencing preferences
+- Success criteria and constraints
+
+Output ONLY a JSON array of question objects:
+[{"question": "The question text", "context": "Why this matters for planning", "options": ["Option A", "Option B"]}]
+
+The options array is optional — include it only when there are clear alternatives to choose from.`;
+
+    let agentId;
+    try {
+      const reg = getAgentRegistry(cwd);
+      const agent = reg.spawn('onboard', 'project', '');
+      agentId = agent.id;
+    } catch (_) {}
+
+    const abortController = new AbortController();
+    onboardSession = { prompt: message, answers: null, questions: null, proposals: null, phase: 'questions', approveIndex: 0, abortController, agentId };
+    persistOnboardSession(cwd);
+
+    runAI(prompt, {
+      cwd,
+      model: 'haiku',
+      maxTurns: 1,
+      abortController,
+      onText: (text) => {
+        const payload = `event: onboard-output\ndata: ${JSON.stringify({ text })}\n\n`;
+        for (const client of sseClients) {
+          try { client.write(payload); } catch (_) { sseClients.delete(client); }
+        }
+      },
+    }).then(({ text, error }) => {
+      let questions = null;
+      if (!error && text) {
+        try {
+          questions = JSON.parse(text.trim());
+        } catch (_) {
+          const jsonMatch = text.match(/\[[\s\S]*\]/);
+          if (jsonMatch) { try { questions = JSON.parse(jsonMatch[0]); } catch (_2) {} }
+        }
+      }
+
+      if (onboardSession && questions) {
+        onboardSession.questions = questions;
+        persistOnboardSession(cwd);
+      }
+
+      const payload = `event: onboard-questions-complete\ndata: ${JSON.stringify({ questions, error })}\n\n`;
+      for (const client of sseClients) {
+        try { client.write(payload); } catch (_) { sseClients.delete(client); }
+      }
+
+      if (agentId) {
+        try {
+          const reg = getAgentRegistry(cwd);
+          if (!error) reg.complete(agentId, { questionCount: Array.isArray(questions) ? questions.length : 0 });
+          else reg.fail(agentId, 1, error);
+        } catch (_) {}
+      }
+
+      try { fs.appendFileSync(activityFile, JSON.stringify({ ts: new Date().toISOString(), tool: 'Task', phase: error ? 'error' : 'done', agent: 'Onboard', desc: error ? `Onboard questions failed: ${error}` : `Onboard: ${Array.isArray(questions) ? questions.length : 0} questions` }) + '\n'); } catch (_) {}
+    }).catch((err) => {
+      if (agentId) { try { getAgentRegistry(cwd).fail(agentId, 1, String(err)); } catch (_) {} }
+    });
+
+    try { fs.appendFileSync(activityFile, JSON.stringify({ ts: new Date().toISOString(), tool: 'Task', phase: 'start', agent: 'Onboard', desc: 'Generating clarification questions' }) + '\n'); } catch (_) {}
+
+    sendJson(res, 202, { ok: true });
+  } catch (err) {
+    sendJson(res, 500, { error: String(err) });
+  }
+}
+
+/**
+ * Handle POST /api/onboard/answer
+ * Takes { answers }, spawns sonnet agent to propose 4-6 declarations.
+ */
+async function handleOnboardAnswer(req, res, cwd) {
+  try {
+    if (!onboardSession) {
+      sendJson(res, 400, { error: 'No onboarding session active' });
+      return;
+    }
+
+    const body = await readJsonBody(req);
+    const answers = body.answers || [];
+    onboardSession.answers = answers;
+    onboardSession.phase = 'proposals';
+    persistOnboardSession(cwd);
+
+    const { runAI } = require('./ai-runner');
+    const activityFile = path.join(cwd, '.planning', 'activity.jsonl');
+
+    let answersBlock = '';
+    if (answers.length > 0) {
+      answersBlock = '\n\nThe user answered these clarification questions:\n' +
+        answers.map(a => `Q: ${a.question}\nA: ${a.answer}`).join('\n\n');
+    }
+
+    const prompt = `You are helping a user break down their software project vision into concrete declarations.
+
+The user's vision: "${onboardSession.prompt}"${answersBlock}
+
+In the Declare framework, a "declaration" is a statement about what WILL be true when the project succeeds. Each declaration should be:
+- A concrete, verifiable outcome (not a task or feature)
+- Scoped to be achievable independently
+- Written as a present-tense statement of truth (e.g., "Users can sign in with Google OAuth")
+
+Propose 4-6 declarations that together cover the user's vision. Each should be distinct and non-overlapping.
+
+Output ONLY a JSON array:
+[{"title": "Short declaration title", "statement": "The full declaration statement written as a present-tense truth", "reasoning": "Brief explanation of why this declaration matters"}]`;
+
+    let agentId;
+    try {
+      const reg = getAgentRegistry(cwd);
+      const agent = reg.spawn('onboard-propose', 'project', '');
+      agentId = agent.id;
+    } catch (_) {}
+
+    const abortController = new AbortController();
+    onboardSession.abortController = abortController;
+    if (agentId) onboardSession.agentId = agentId;
+
+    runAI(prompt, {
+      cwd,
+      model: 'sonnet',
+      maxTurns: 1,
+      abortController,
+      onText: (text) => {
+        const payload = `event: onboard-output\ndata: ${JSON.stringify({ text })}\n\n`;
+        for (const client of sseClients) {
+          try { client.write(payload); } catch (_) { sseClients.delete(client); }
+        }
+      },
+    }).then(({ text, error }) => {
+      let proposals = null;
+      if (!error && text) {
+        try {
+          proposals = JSON.parse(text.trim());
+        } catch (_) {
+          const jsonMatch = text.match(/\[[\s\S]*\]/);
+          if (jsonMatch) { try { proposals = JSON.parse(jsonMatch[0]); } catch (_2) {} }
+        }
+      }
+
+      if (onboardSession && proposals) {
+        onboardSession.proposals = proposals;
+        persistOnboardSession(cwd);
+      }
+
+      const payload = `event: onboard-proposals-complete\ndata: ${JSON.stringify({ proposals, error })}\n\n`;
+      for (const client of sseClients) {
+        try { client.write(payload); } catch (_) { sseClients.delete(client); }
+      }
+
+      if (agentId) {
+        try {
+          const reg = getAgentRegistry(cwd);
+          if (!error) reg.complete(agentId, { proposalCount: Array.isArray(proposals) ? proposals.length : 0 });
+          else reg.fail(agentId, 1, error);
+        } catch (_) {}
+      }
+
+      try { fs.appendFileSync(activityFile, JSON.stringify({ ts: new Date().toISOString(), tool: 'Task', phase: error ? 'error' : 'done', agent: 'Onboard', desc: error ? `Onboard proposals failed: ${error}` : `Onboard: ${Array.isArray(proposals) ? proposals.length : 0} proposals` }) + '\n'); } catch (_) {}
+    }).catch((err) => {
+      if (agentId) { try { getAgentRegistry(cwd).fail(agentId, 1, String(err)); } catch (_) {} }
+    });
+
+    try { fs.appendFileSync(activityFile, JSON.stringify({ ts: new Date().toISOString(), tool: 'Task', phase: 'start', agent: 'Onboard', desc: 'Generating declaration proposals' }) + '\n'); } catch (_) {}
+
+    sendJson(res, 202, { ok: true });
+  } catch (err) {
+    sendJson(res, 500, { error: String(err) });
+  }
+}
+
+/**
+ * Handle POST /api/onboard/approve
+ * Takes { title, statement }, creates a declaration and triggers milestone derivation.
+ */
+async function handleOnboardApprove(req, res, cwd) {
+  try {
+    const body = await readJsonBody(req);
+    const { title, statement } = body;
+
+    if (!title || !statement) {
+      sendJson(res, 400, { error: 'Missing title or statement' });
+      return;
+    }
+
+    // Create the declaration
+    const result = runAddDeclaration(cwd, ['--title', title, '--statement', statement]);
+    if ('error' in result) {
+      sendJson(res, 400, { error: result.error });
+      return;
+    }
+
+    // Auto-approve — user already approved during onboarding
+    setReviewState(cwd, result.id, 'approved');
+
+    broadcastChange();
+
+    // Update onboard session phase/index
+    if (onboardSession) {
+      onboardSession.phase = 'approving';
+      onboardSession.approveIndex = (onboardSession.approveIndex || 0) + 1;
+      persistOnboardSession(cwd);
+    }
+
+    // Auto-trigger milestone derivation for this new declaration
+    try {
+      const graph = runLoadGraph(cwd);
+      if (!('error' in graph)) {
+        const declarations = graph.declarations.map(d => ({
+          id: d.id,
+          statement: d.statement,
+          milestones: d.milestones || [],
+        }));
+        const dr = getDerivationRunner(cwd);
+        dr.derive(result.id, declarations);
+      }
+    } catch (_) {
+      // Derivation failure is non-critical — declaration was still created
+    }
+
+    sendJson(res, 201, result);
+  } catch (err) {
+    sendJson(res, 500, { error: String(err) });
+  }
+}
+
+/**
+ * Handle POST /api/onboard/cancel
+ * Aborts running agent, clears session.
+ */
+function handleOnboardCancel(req, res, cwd) {
+  if (onboardSession && onboardSession.abortController) {
+    onboardSession.abortController.abort();
+  }
+  onboardSession = null;
+  persistOnboardSession(cwd);
+  sendJson(res, 200, { ok: true });
 }
 
 /**
@@ -2404,11 +2814,16 @@ function route(req, res, cwd) {
       return;
     }
     if (urlPath === '/api/milestones/derive/stop') {
-      handleDeriveStop(res, cwd);
+      handleDeriveStop(req, res, cwd);
       return;
     }
     if (urlPath === '/api/milestones/derive/accept') {
       handleDeriveAccept(req, res, cwd);
+      return;
+    }
+
+    if (urlPath === '/api/declarations/derive-all') {
+      handleDeriveAll(res, cwd);
       return;
     }
 
@@ -2560,6 +2975,31 @@ function route(req, res, cwd) {
       return;
     }
 
+    // Onboarding flow: POST /api/onboard[/answer|/approve|/cancel]
+    if (urlPath === '/api/onboard/complete') {
+      // Mark onboarding as done, clear session
+      onboardSession = null;
+      persistOnboardSession(cwd);
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+    if (urlPath === '/api/onboard') {
+      handleOnboard(req, res, cwd);
+      return;
+    }
+    if (urlPath === '/api/onboard/answer') {
+      handleOnboardAnswer(req, res, cwd);
+      return;
+    }
+    if (urlPath === '/api/onboard/approve') {
+      handleOnboardApprove(req, res, cwd);
+      return;
+    }
+    if (urlPath === '/api/onboard/cancel') {
+      handleOnboardCancel(req, res, cwd);
+      return;
+    }
+
     if (urlPath === '/api/execution-manifest') {
       handleSaveManifest(req, res, cwd);
       return;
@@ -2689,7 +3129,30 @@ function route(req, res, cwd) {
 
   if (urlPath === '/api/derivation/running') {
     const dr = getDerivationRunner(cwd);
-    sendJson(res, 200, { running: dr.running() });
+    const runningSessions = dr.running();
+    sendJson(res, 200, {
+      running: runningSessions ? runningSessions[0].sessionId : null,
+      sessions: runningSessions,
+    });
+    return;
+  }
+
+  if (urlPath === '/api/onboard/state') {
+    // Restore from disk if not in memory
+    if (!onboardSession) restoreOnboardSession(cwd);
+    if (onboardSession) {
+      sendJson(res, 200, {
+        active: true,
+        prompt: onboardSession.prompt,
+        phase: onboardSession.phase,
+        questions: onboardSession.questions,
+        proposals: onboardSession.proposals,
+        answers: onboardSession.answers,
+        approveIndex: onboardSession.approveIndex || 0,
+      });
+    } else {
+      sendJson(res, 200, { active: false });
+    }
     return;
   }
 
@@ -2820,9 +3283,16 @@ async function startServer(cwd, port) {
     });
   });
 
-  // Write port file so `dcl` can find us on next invocation
+  // Write port file so external tools (Mesh UI, `dcl`) can discover which port we're on
   const portFilePath = require('path').join(cwd, '.planning', 'server.port');
   require('fs').writeFileSync(portFilePath, String(resolvedPort), 'utf-8');
+
+  // Clean up port file on shutdown
+  const deletePortFile = () => {
+    try { require('fs').unlinkSync(portFilePath); } catch (_) {}
+  };
+  server.on('close', deletePortFile);
+  process.on('exit', deletePortFile);
 
   // Restore agent state from previous run
   const reg = getAgentRegistry(cwd);

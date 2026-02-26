@@ -1552,7 +1552,7 @@ var require_help = __commonJS({
             usage: "/declare:help"
           }
         ],
-        version: "0.6.0"
+        version: "1.0.0"
       };
     }
     module2.exports = { runHelp: runHelp2 };
@@ -1883,6 +1883,7 @@ var require_add_milestones_batch = __commonJS({
         milestones.push({
           id,
           title: input.title,
+          description: input.description || "",
           status: "PENDING",
           realizes,
           hasPlan: false
@@ -1893,7 +1894,7 @@ var require_add_milestones_batch = __commonJS({
             decl.milestones.push(id);
           }
         }
-        results.push({ id, title: input.title, realizes, status: "PENDING" });
+        results.push({ id, title: input.title, description: input.description || "", realizes, status: "PENDING" });
       }
       const futureOutput = writeFutureFile(declarations, projectName);
       writeFileSync(futurePath, futureOutput, "utf-8");
@@ -4276,273 +4277,6 @@ var require_health_check = __commonJS({
   }
 });
 
-// src/server/process-manager.js
-var require_process_manager = __commonJS({
-  "src/server/process-manager.js"(exports2, module2) {
-    "use strict";
-    var { spawn } = require("node:child_process");
-    var fs = require("node:fs");
-    var path = require("node:path");
-    var { findMilestoneFolder } = require_milestone_folders();
-    function appendLog(logPath, line) {
-      if (!logPath) return;
-      try {
-        fs.appendFileSync(logPath, line + "\n", "utf-8");
-      } catch (_) {
-      }
-    }
-    function createProcessManager(sseClients, cwd, registry) {
-      const processes = /* @__PURE__ */ new Map();
-      function broadcast(event, data) {
-        const payload = `event: ${event}
-data: ${JSON.stringify(data)}
-
-`;
-        for (const client of sseClients) {
-          try {
-            client.write(payload);
-          } catch (_) {
-            sseClients.delete(client);
-          }
-        }
-      }
-      function createLineHandler(actionId, streamName, logPath) {
-        let buffer = "";
-        return (chunk) => {
-          buffer += chunk.toString();
-          const lines = buffer.split("\n");
-          buffer = lines.pop() || "";
-          for (const line of lines) {
-            broadcast("action-output", { actionId, text: line, stream: streamName });
-            appendLog(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] [${actionId}] [${streamName}] ${line}`);
-          }
-        };
-      }
-      function execute(actionId, milestoneId) {
-        if (processes.size > 0) {
-          return { error: "busy", status: 409 };
-        }
-        if (processes.has(actionId)) {
-          return { error: "already_running", status: 409 };
-        }
-        const prompt = `Run /declare:execute ${milestoneId} for action ${actionId} only. Do not ask questions, execute autonomously.`;
-        const spawnEnv = { ...process.env, FORCE_COLOR: "0" };
-        delete spawnEnv.CLAUDECODE;
-        const proc = spawn("claude", ["-p", prompt], {
-          cwd,
-          env: spawnEnv
-        });
-        const planningDir = path.join(cwd, ".planning");
-        const milestoneFolder = findMilestoneFolder(planningDir, milestoneId);
-        let logPath;
-        if (milestoneFolder) {
-          logPath = path.join(milestoneFolder, "execution.log");
-        } else {
-          process.stderr.write(`[declare] Warning: milestone folder not found for ${milestoneId}, skipping execution log
-`);
-        }
-        let agentId;
-        if (registry) {
-          const agent = registry.spawn("execution", actionId, milestoneId);
-          agentId = agent.id;
-        }
-        processes.set(actionId, { proc, milestoneId, logPath, agentId });
-        appendLog(logPath, `
-=== START ${actionId} @ ${(/* @__PURE__ */ new Date()).toISOString()} ===`);
-        if (proc.stdout) {
-          proc.stdout.on("data", createLineHandler(actionId, "stdout", logPath));
-        }
-        if (proc.stderr) {
-          proc.stderr.on("data", createLineHandler(actionId, "stderr", logPath));
-        }
-        proc.on("close", (exitCode) => {
-          const entry = processes.get(actionId);
-          const entryAgentId = entry?.agentId;
-          appendLog(entry?.logPath, `=== END ${actionId} @ ${(/* @__PURE__ */ new Date()).toISOString()} exit=${exitCode ?? -1} ===
-`);
-          processes.delete(actionId);
-          broadcast("action-complete", { actionId, exitCode: exitCode ?? -1 });
-          if (registry && entryAgentId) {
-            if ((exitCode ?? -1) === 0) {
-              const milestoneFolder2 = entry?.logPath ? path.dirname(entry.logPath) : null;
-              registry.complete(entryAgentId, {
-                actionId,
-                milestoneId: entry?.milestoneId || milestoneId,
-                summaryPath: milestoneFolder2 ? path.join(milestoneFolder2, actionId + "-SUMMARY.md") : null,
-                logPath: entry?.logPath || null
-              });
-            } else {
-              registry.fail(entryAgentId, exitCode ?? -1, "process exited");
-            }
-          }
-        });
-        proc.on("error", (_err) => {
-          const entry = processes.get(actionId);
-          const entryAgentId = entry?.agentId;
-          appendLog(entry?.logPath, `=== ERROR ${actionId} @ ${(/* @__PURE__ */ new Date()).toISOString()} ===
-`);
-          processes.delete(actionId);
-          broadcast("action-complete", { actionId, exitCode: -1 });
-          if (registry && entryAgentId) {
-            registry.fail(entryAgentId, -1, "spawn error");
-          }
-        });
-        return { ok: true };
-      }
-      function stop(actionId) {
-        const entry = processes.get(actionId);
-        if (!entry) {
-          return { error: "not_running", status: 404 };
-        }
-        entry.proc.kill("SIGTERM");
-        return { ok: true };
-      }
-      function running() {
-        return [...processes.keys()];
-      }
-      return { execute, stop, running };
-    }
-    module2.exports = { createProcessManager };
-  }
-});
-
-// src/server/derivation-runner.js
-var require_derivation_runner = __commonJS({
-  "src/server/derivation-runner.js"(exports2, module2) {
-    "use strict";
-    var { spawn } = require("node:child_process");
-    function buildPrompt(declarationId, declarations) {
-      let targets;
-      if (declarationId) {
-        targets = declarations.filter((d) => d.id === declarationId);
-      } else {
-        targets = declarations.filter(
-          (d) => !d.milestones || d.milestones.length === 0
-        );
-      }
-      const formatted = targets.map((d) => `- ${d.id}: ${d.statement}`).join("\n");
-      return 'You are deriving milestones for a Declare project. Given these declarations, propose 2-4 milestones per declaration by asking "For this to be true, what must be true?" Output ONLY a JSON array with no markdown fencing: [{"title": "milestone title", "realizes": "D-XX", "reason": "why this must be true"}]. Declarations:\n\n' + formatted;
-    }
-    function createDerivationRunner(sseClients, cwd, registry) {
-      let current = null;
-      function broadcast(event, data) {
-        const payload = `event: ${event}
-data: ${JSON.stringify(data)}
-
-`;
-        for (const client of sseClients) {
-          try {
-            client.write(payload);
-          } catch (_) {
-            sseClients.delete(client);
-          }
-        }
-      }
-      function createLineHandler(sessionId, streamName, accumulator) {
-        let buffer = "";
-        return (chunk) => {
-          const text = chunk.toString();
-          if (streamName === "stdout") {
-            accumulator.text += text;
-          }
-          buffer += text;
-          const lines = buffer.split("\n");
-          buffer = lines.pop() || "";
-          for (const line of lines) {
-            broadcast("derivation-output", {
-              sessionId,
-              text: line,
-              stream: streamName
-            });
-          }
-        };
-      }
-      function derive(declarationId, declarations) {
-        if (current) {
-          return { error: "busy", status: 409 };
-        }
-        const sessionId = `deriv-${Date.now()}`;
-        const prompt = buildPrompt(declarationId, declarations);
-        const env = { ...process.env, FORCE_COLOR: "0" };
-        delete env.CLAUDECODE;
-        const proc = spawn("claude", ["-p", prompt, "--output-format", "text"], {
-          cwd,
-          env
-        });
-        let agentId;
-        if (registry) {
-          const agent = registry.spawn("derivation", declarationId || "all", "");
-          agentId = agent.id;
-        }
-        current = { sessionId, proc, agentId };
-        const stdout = { text: "" };
-        if (proc.stdout) {
-          proc.stdout.on("data", createLineHandler(sessionId, "stdout", stdout));
-        }
-        if (proc.stderr) {
-          proc.stderr.on("data", createLineHandler(sessionId, "stderr", stdout));
-        }
-        proc.on("close", (exitCode) => {
-          let milestones = null;
-          const closingAgentId = current ? current.agentId : void 0;
-          if (exitCode === 0) {
-            try {
-              milestones = JSON.parse(stdout.text.trim());
-            } catch (_) {
-            }
-          }
-          current = null;
-          broadcast("derivation-complete", {
-            sessionId,
-            exitCode: exitCode ?? -1,
-            milestones
-          });
-          if (registry && closingAgentId) {
-            if ((exitCode ?? -1) === 0) {
-              const milestoneIds = Array.isArray(milestones) ? milestones.map((m) => m.id || m.title || "unknown").filter(Boolean) : [];
-              registry.complete(closingAgentId, { milestones: milestoneIds });
-            } else {
-              registry.fail(closingAgentId, exitCode ?? -1, "derivation failed");
-            }
-          }
-        });
-        proc.on("error", (_err) => {
-          const errorAgentId = current ? current.agentId : void 0;
-          current = null;
-          broadcast("derivation-complete", {
-            sessionId,
-            exitCode: -1,
-            milestones: null
-          });
-          if (registry && errorAgentId) {
-            registry.fail(errorAgentId, -1, "spawn error");
-          }
-        });
-        return { ok: true, sessionId };
-      }
-      function stop() {
-        if (!current) {
-          return { error: "not_running", status: 404 };
-        }
-        current.proc.kill("SIGTERM");
-        return { ok: true };
-      }
-      function running() {
-        return current ? current.sessionId : null;
-      }
-      return { derive, stop, running };
-    }
-    if (require.main === module2) {
-      const runner = createDerivationRunner(/* @__PURE__ */ new Set(), ".");
-      console.log("derive:", typeof runner.derive);
-      console.log("stop:", typeof runner.stop);
-      console.log("running:", typeof runner.running);
-      console.log("OK");
-    }
-    module2.exports = { createDerivationRunner };
-  }
-});
-
 // src/server/ai-runner.js
 var require_ai_runner = __commonJS({
   "src/server/ai-runner.js"(exports2, module2) {
@@ -4558,7 +4292,7 @@ var require_ai_runner = __commonJS({
     async function runAI(prompt, opts = {}) {
       const queryFn = await getQuery();
       const abortController = opts.abortController || new AbortController();
-      const timeoutMs = opts.withTools || opts.allowedTools ? 5 * 60 * 1e3 : 2 * 60 * 1e3;
+      const timeoutMs = opts.withTools || opts.allowedTools ? 10 * 60 * 1e3 : 2 * 60 * 1e3;
       const timeoutId = setTimeout(() => {
         if (!abortController.signal.aborted) abortController.abort();
       }, timeoutMs);
@@ -4573,7 +4307,7 @@ var require_ai_runner = __commonJS({
           cwd: opts.cwd || process.cwd(),
           abortController,
           env,
-          systemPrompt: "You are a helpful assistant. Respond concisely and directly."
+          systemPrompt: opts.systemPrompt || "You are a helpful assistant. Respond concisely and directly."
         };
         if (opts.withTools || opts.allowedTools) {
           queryOpts.allowedTools = opts.allowedTools || ["Read", "Write", "Edit", "Bash", "Glob", "Grep"];
@@ -4624,6 +4358,313 @@ var require_ai_runner = __commonJS({
   }
 });
 
+// src/server/process-manager.js
+var require_process_manager = __commonJS({
+  "src/server/process-manager.js"(exports2, module2) {
+    "use strict";
+    var { runAI } = require_ai_runner();
+    var fs = require("node:fs");
+    var path = require("node:path");
+    var { findMilestoneFolder } = require_milestone_folders();
+    function appendLog(logPath, line) {
+      if (!logPath) return;
+      try {
+        fs.appendFileSync(logPath, line + "\n", "utf-8");
+      } catch (_) {
+      }
+    }
+    function buildExecutionPrompt(actionId, milestoneId, ctx) {
+      if (!ctx) {
+        return `Run /declare:execute ${milestoneId} for action ${actionId} only. Do not ask questions, execute autonomously.`;
+      }
+      const lines = [
+        `Execute action ${actionId} for milestone ${milestoneId}. Work autonomously \u2014 do not ask questions.`,
+        ""
+      ];
+      if (ctx.declaration) {
+        lines.push(`## Declaration: ${ctx.declaration.id}`);
+        lines.push(ctx.declaration.statement);
+        lines.push("");
+      }
+      if (ctx.milestone) {
+        lines.push(`## Milestone: ${ctx.milestone.id} \u2014 ${ctx.milestone.title}`);
+        if (ctx.milestone.description) {
+          lines.push(ctx.milestone.description);
+        }
+        lines.push("");
+      }
+      lines.push(`## Action: ${ctx.action.id} \u2014 ${ctx.action.title}`);
+      if (ctx.action.produces) {
+        lines.push(`**Produces:** ${ctx.action.produces}`);
+      }
+      lines.push("");
+      if (ctx.siblingActions.length > 0) {
+        lines.push("## Other actions for this milestone (do NOT do these, just for context):");
+        for (const s of ctx.siblingActions) {
+          const statusMark = s.status === "DONE" ? " [DONE]" : "";
+          lines.push(`- ${s.id}: ${s.title}${s.produces ? " (produces: " + s.produces + ")" : ""}${statusMark}`);
+        }
+        lines.push("");
+      }
+      lines.push("## Instructions");
+      lines.push("1. Read the project context files: .planning/FUTURE.md, .planning/MILESTONES.md, .planning/STATE.md");
+      lines.push('2. Understand what this action needs to deliver based on the "Produces" field above');
+      lines.push("3. Explore the codebase to find the right files to modify");
+      lines.push("4. Implement the changes \u2014 write real, working code");
+      lines.push("5. Verify your changes work (run relevant tests, check for errors)");
+      lines.push("6. Commit your changes with a descriptive message");
+      return lines.join("\n");
+    }
+    function createProcessManager(sseClients, cwd, registry) {
+      const processes = /* @__PURE__ */ new Map();
+      function broadcast(event, data) {
+        const payload = `event: ${event}
+data: ${JSON.stringify(data)}
+
+`;
+        for (const client of sseClients) {
+          try {
+            client.write(payload);
+          } catch (_) {
+            sseClients.delete(client);
+          }
+        }
+      }
+      function execute(actionId, milestoneId, ctx) {
+        if (processes.size > 0) {
+          return { error: "busy", status: 409 };
+        }
+        if (processes.has(actionId)) {
+          return { error: "already_running", status: 409 };
+        }
+        const prompt = buildExecutionPrompt(actionId, milestoneId, ctx);
+        const planningDir = path.join(cwd, ".planning");
+        const milestoneFolder = findMilestoneFolder(planningDir, milestoneId);
+        let logPath;
+        if (milestoneFolder) {
+          logPath = path.join(milestoneFolder, "execution.log");
+        } else {
+          process.stderr.write(`[declare] Warning: milestone folder not found for ${milestoneId}, skipping execution log
+`);
+        }
+        const abortController = new AbortController();
+        let agentId;
+        if (registry) {
+          const agent = registry.spawn("execution", actionId, milestoneId);
+          agentId = agent.id;
+        }
+        processes.set(actionId, { abortController, milestoneId, logPath, agentId });
+        appendLog(logPath, `
+=== START ${actionId} @ ${(/* @__PURE__ */ new Date()).toISOString()} ===`);
+        runAI(prompt, {
+          cwd,
+          model: "sonnet",
+          withTools: true,
+          maxTurns: 10,
+          abortController,
+          onText: (chunk) => {
+            broadcast("action-output", { actionId, text: chunk, stream: "stdout" });
+            appendLog(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] [${actionId}] [stdout] ${chunk}`);
+          }
+        }).then(({ text, error }) => {
+          const entry = processes.get(actionId);
+          const entryAgentId = entry?.agentId;
+          const exitCode = error ? 1 : 0;
+          appendLog(entry?.logPath, `=== END ${actionId} @ ${(/* @__PURE__ */ new Date()).toISOString()} exit=${exitCode} ===
+`);
+          processes.delete(actionId);
+          broadcast("action-complete", { actionId, exitCode });
+          if (registry && entryAgentId) {
+            if (exitCode === 0) {
+              const mFolder = entry?.logPath ? path.dirname(entry.logPath) : null;
+              registry.complete(entryAgentId, {
+                actionId,
+                milestoneId: entry?.milestoneId || milestoneId,
+                summaryPath: mFolder ? path.join(mFolder, actionId + "-SUMMARY.md") : null,
+                logPath: entry?.logPath || null
+              });
+            } else {
+              registry.fail(entryAgentId, exitCode, error || "execution failed");
+            }
+          }
+        }).catch((err) => {
+          const entry = processes.get(actionId);
+          const entryAgentId = entry?.agentId;
+          appendLog(entry?.logPath, `=== ERROR ${actionId} @ ${(/* @__PURE__ */ new Date()).toISOString()} ===
+`);
+          processes.delete(actionId);
+          broadcast("action-complete", { actionId, exitCode: -1 });
+          if (registry && entryAgentId) {
+            registry.fail(entryAgentId, -1, String(err.message || err));
+          }
+        });
+        return { ok: true };
+      }
+      function stop(actionId) {
+        const entry = processes.get(actionId);
+        if (!entry) {
+          return { error: "not_running", status: 404 };
+        }
+        entry.abortController.abort();
+        return { ok: true };
+      }
+      function running() {
+        return [...processes.keys()];
+      }
+      return { execute, stop, running };
+    }
+    module2.exports = { createProcessManager };
+  }
+});
+
+// src/server/derivation-runner.js
+var require_derivation_runner = __commonJS({
+  "src/server/derivation-runner.js"(exports2, module2) {
+    "use strict";
+    var { runAI } = require_ai_runner();
+    function buildPrompt(declarationId, declarations) {
+      let targets;
+      if (declarationId) {
+        targets = declarations.filter((d) => d.id === declarationId);
+      } else {
+        targets = declarations.filter(
+          (d) => !d.milestones || d.milestones.length === 0
+        );
+      }
+      const formatted = targets.map((d) => `- ${d.id}: ${d.statement}`).join("\n");
+      return 'You are deriving milestones for a Declare project. Given these declarations, propose 2-4 milestones per declaration by asking "For this to be true, what must be true?" Each milestone needs a concise title AND a detailed description explaining what it delivers, its scope, and success criteria. Output ONLY a JSON array with no markdown fencing: [{"title": "short milestone title", "description": "Detailed description of what this milestone delivers, its scope and boundaries, and how to verify it is complete.", "realizes": "D-XX", "reason": "why this must be true"}]. Declarations:\n\n' + formatted;
+    }
+    function createDerivationRunner(sseClients, cwd, registry) {
+      const sessions = /* @__PURE__ */ new Map();
+      function broadcast(event, data) {
+        const payload = `event: ${event}
+data: ${JSON.stringify(data)}
+
+`;
+        for (const client of sseClients) {
+          try {
+            client.write(payload);
+          } catch (_) {
+            sseClients.delete(client);
+          }
+        }
+      }
+      function derive(declarationId, declarations) {
+        const sessionId = `deriv-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        const prompt = buildPrompt(declarationId, declarations);
+        const abortController = new AbortController();
+        let agentId;
+        if (registry) {
+          const agent = registry.spawn("derivation", declarationId || "all", "");
+          agentId = agent.id;
+        }
+        sessions.set(sessionId, { abortController, agentId, declarationId, startTime: Date.now() });
+        broadcast("derivation-output", {
+          sessionId,
+          declarationId,
+          text: "Spawning AI agent\u2026",
+          stream: "status"
+        });
+        runAI(prompt, {
+          cwd,
+          model: "sonnet",
+          maxTurns: 1,
+          abortController,
+          onText: (chunk) => {
+            broadcast("derivation-output", {
+              sessionId,
+              declarationId,
+              text: chunk,
+              stream: "stdout"
+            });
+          }
+        }).then(({ text, error }) => {
+          const session = sessions.get(sessionId);
+          const closingAgentId = session ? session.agentId : void 0;
+          sessions.delete(sessionId);
+          if (error) {
+            broadcast("derivation-complete", {
+              sessionId,
+              declarationId,
+              exitCode: 1,
+              milestones: null,
+              error
+            });
+            if (registry && closingAgentId) {
+              registry.fail(closingAgentId, 1, error);
+            }
+            return;
+          }
+          let milestones = null;
+          try {
+            milestones = JSON.parse(text.trim());
+          } catch (_) {
+            const match = text.match(/\[[\s\S]*\]/);
+            if (match) {
+              try {
+                milestones = JSON.parse(match[0]);
+              } catch (__) {
+              }
+            }
+          }
+          broadcast("derivation-complete", {
+            sessionId,
+            declarationId,
+            exitCode: 0,
+            milestones
+          });
+          if (registry && closingAgentId) {
+            const milestoneIds = Array.isArray(milestones) ? milestones.map((m) => m.id || m.title || "unknown").filter(Boolean) : [];
+            registry.complete(closingAgentId, { milestones: milestoneIds });
+          }
+        }).catch((err) => {
+          const session = sessions.get(sessionId);
+          const errorAgentId = session ? session.agentId : void 0;
+          sessions.delete(sessionId);
+          broadcast("derivation-complete", {
+            sessionId,
+            declarationId,
+            exitCode: -1,
+            milestones: null,
+            error: String(err.message || err)
+          });
+          if (registry && errorAgentId) {
+            registry.fail(errorAgentId, -1, "error");
+          }
+        });
+        return { ok: true, sessionId };
+      }
+      function stop(sessionId) {
+        if (sessionId) {
+          const session = sessions.get(sessionId);
+          if (!session) {
+            return { error: "not_running", status: 404 };
+          }
+          session.abortController.abort();
+          return { ok: true };
+        }
+        return stopAll();
+      }
+      function stopAll() {
+        for (const [, session] of sessions) {
+          session.abortController.abort();
+        }
+        return { ok: true };
+      }
+      function running() {
+        if (sessions.size === 0) return null;
+        return Array.from(sessions.entries()).map(([id, s]) => ({
+          sessionId: id,
+          declarationId: s.declarationId,
+          startTime: s.startTime
+        }));
+      }
+      return { derive, stop, stopAll, running };
+    }
+    module2.exports = { createDerivationRunner };
+  }
+});
+
 // src/server/action-derivation-runner.js
 var require_action_derivation_runner = __commonJS({
   "src/server/action-derivation-runner.js"(exports2, module2) {
@@ -4645,7 +4686,7 @@ Milestone:
       return prompt;
     }
     function createActionDerivationRunner(sseClients, cwd, registry) {
-      let current = null;
+      const sessions = /* @__PURE__ */ new Map();
       function broadcast(event, data) {
         const payload = `event: ${event}
 data: ${JSON.stringify(data)}
@@ -4660,9 +4701,6 @@ data: ${JSON.stringify(data)}
         }
       }
       function derive(milestone, existingActions) {
-        if (current) {
-          return { error: "busy", status: 409 };
-        }
         const sessionId = `action-deriv-${Date.now()}`;
         const prompt = buildActionPrompt(milestone, existingActions);
         const abortController = new AbortController();
@@ -4671,7 +4709,7 @@ data: ${JSON.stringify(data)}
           const agent = registry.spawn("action-derivation", milestone.id, milestone.id);
           agentId = agent.id;
         }
-        current = { sessionId, milestoneId: milestone.id, agentId, abortController };
+        sessions.set(sessionId, { milestoneId: milestone.id, agentId, abortController, startTime: Date.now() });
         runAI(prompt, {
           cwd,
           model: "haiku",
@@ -4680,13 +4718,15 @@ data: ${JSON.stringify(data)}
           onText: (text) => {
             broadcast("action-derivation-output", {
               sessionId,
+              milestoneId: milestone.id,
               text,
               stream: "stdout"
             });
           }
         }).then(({ text, error }) => {
-          const closingAgentId = current ? current.agentId : void 0;
-          current = null;
+          const session = sessions.get(sessionId);
+          const closingAgentId = session ? session.agentId : void 0;
+          sessions.delete(sessionId);
           let actions = null;
           const exitCode = error ? 1 : 0;
           if (!error && text) {
@@ -4704,6 +4744,7 @@ data: ${JSON.stringify(data)}
           }
           broadcast("action-derivation-complete", {
             sessionId,
+            milestoneId: milestone.id,
             exitCode,
             actions
           });
@@ -4718,31 +4759,48 @@ data: ${JSON.stringify(data)}
             }
           }
         }).catch((err) => {
-          const closingAgentId = current ? current.agentId : void 0;
-          current = null;
-          broadcast("action-derivation-complete", { sessionId, exitCode: 1, actions: null });
+          const session = sessions.get(sessionId);
+          const closingAgentId = session ? session.agentId : void 0;
+          sessions.delete(sessionId);
+          broadcast("action-derivation-complete", { sessionId, milestoneId: milestone.id, exitCode: 1, actions: null });
           if (registry && closingAgentId) {
             registry.fail(closingAgentId, 1, String(err));
           }
         });
         return { ok: true, sessionId };
       }
-      function stop() {
-        if (!current) {
-          return { error: "not_running", status: 404 };
+      function stop(sessionId) {
+        if (sessionId) {
+          const session = sessions.get(sessionId);
+          if (!session) {
+            return { error: "not_running", status: 404 };
+          }
+          session.abortController.abort();
+          return { ok: true };
         }
-        current.abortController.abort();
+        return stopAll();
+      }
+      function stopAll() {
+        for (const [, session] of sessions) {
+          session.abortController.abort();
+        }
         return { ok: true };
       }
       function running() {
-        return current ? current.sessionId : null;
+        if (sessions.size === 0) return null;
+        return Array.from(sessions.entries()).map(([id, s]) => ({
+          sessionId: id,
+          milestoneId: s.milestoneId,
+          startTime: s.startTime
+        }));
       }
-      return { derive, stop, running };
+      return { derive, stop, stopAll, running };
     }
     if (require.main === module2) {
       const runner = createActionDerivationRunner(/* @__PURE__ */ new Set(), ".");
       console.log("derive:", typeof runner.derive);
       console.log("stop:", typeof runner.stop);
+      console.log("stopAll:", typeof runner.stopAll);
       console.log("running:", typeof runner.running);
       console.log("OK");
     }
@@ -4754,13 +4812,14 @@ data: ${JSON.stringify(data)}
 var require_revision_runner = __commonJS({
   "src/server/revision-runner.js"(exports2, module2) {
     "use strict";
-    var { spawn } = require("node:child_process");
+    var { runAI } = require_ai_runner();
     var fs = require("node:fs");
     var path = require("node:path");
     function buildRevisionPrompt(artifactContent, annotations) {
       const annotationList = annotations.map((a) => `- Line ${a.line}: ${a.text}`).join("\n");
-      return "You are revising a plan artifact based on reviewer annotations. Do NOT implement anything \u2014 only update the plan document.\n\n## Current plan content\n\n" + artifactContent + "\n\n## Reviewer annotations to address\n\n" + annotationList + "\n\n## Instructions\n\nRevise the plan above to address ALL the reviewer's annotations. Output ONLY the revised plan content \u2014 no explanations, no markdown fencing, no preamble. The output will directly replace the current file.";
+      return "## Current plan content\n\n" + artifactContent + "\n\n## Reviewer annotations to address\n\n" + annotationList + "\n\n## Instructions\n\nRevise the plan above to address ALL the reviewer's annotations. Output ONLY the revised plan content \u2014 no explanations, no markdown fencing, no preamble. The output will directly replace the current file.";
     }
+    var SYSTEM_PROMPT = "You are revising a plan artifact based on reviewer annotations. Do NOT implement anything \u2014 only update the plan document. Output ONLY the revised content with no markdown fencing or preamble.";
     function createRevisionRunner(sseClients, cwd, onComplete, registry) {
       let current = null;
       function broadcast(event, data) {
@@ -4775,26 +4834,6 @@ data: ${JSON.stringify(data)}
             sseClients.delete(client);
           }
         }
-      }
-      function createLineHandler(sessionId, nodeId, streamName, accumulator) {
-        let buffer = "";
-        return (chunk) => {
-          const text = chunk.toString();
-          if (streamName === "stdout") {
-            accumulator.text += text;
-          }
-          buffer += text;
-          const lines = buffer.split("\n");
-          buffer = lines.pop() || "";
-          for (const line of lines) {
-            broadcast("revision-output", {
-              sessionId,
-              nodeId,
-              text: line,
-              stream: streamName
-            });
-          }
-        };
       }
       function stripMarkdownFencing(text) {
         const trimmed = text.trim();
@@ -4824,89 +4863,89 @@ data: ${JSON.stringify(data)}
           fs.copyFileSync(artifactPath, versionedPath);
         } catch (_) {
         }
-        const spawnEnv = { ...process.env, FORCE_COLOR: "0" };
-        delete spawnEnv.CLAUDECODE;
-        const proc = spawn("claude", ["-p", prompt, "--output-format", "text"], {
-          cwd,
-          env: spawnEnv
-        });
+        const abortController = new AbortController();
         let agentId;
         if (registry) {
           const agent = registry.spawn("revision", nodeId, "");
           agentId = agent.id;
         }
-        current = { sessionId, proc, nodeId, agentId };
-        const stdout = { text: "" };
-        if (proc.stdout) {
-          proc.stdout.on("data", createLineHandler(sessionId, nodeId, "stdout", stdout));
-        }
-        if (proc.stderr) {
-          proc.stderr.on("data", createLineHandler(sessionId, nodeId, "stderr", stdout));
-        }
-        proc.on("close", (exitCode) => {
+        current = { sessionId, abortController, nodeId, agentId };
+        runAI(prompt, {
+          cwd,
+          model: "sonnet",
+          systemPrompt: SYSTEM_PROMPT,
+          abortController,
+          onText: (chunk) => {
+            broadcast("revision-output", {
+              sessionId,
+              nodeId,
+              text: chunk,
+              stream: "stdout"
+            });
+          }
+        }).then(({ text, error }) => {
           const completedNodeId = current ? current.nodeId : nodeId;
           const closingAgentId = current ? current.agentId : void 0;
           current = null;
-          if (exitCode === 0) {
-            try {
-              const revisedContent = stripMarkdownFencing(stdout.text);
-              fs.writeFileSync(artifactPath, revisedContent, "utf-8");
-              const annPath = path.join(cwd, ".planning", "annotations", completedNodeId.toUpperCase() + ".json");
-              let annData = { nodeId: completedNodeId.toUpperCase(), annotations: [], revisionRound: 0 };
-              if (fs.existsSync(annPath)) {
-                try {
-                  annData = JSON.parse(fs.readFileSync(annPath, "utf-8"));
-                } catch (_) {
-                }
-              }
-              const newRound = (annData.revisionRound || 0) + 1;
-              annData.revisionRound = newRound;
-              const annDir = path.dirname(annPath);
-              fs.mkdirSync(annDir, { recursive: true });
-              fs.writeFileSync(annPath, JSON.stringify(annData, null, 2), "utf-8");
-              broadcast("revision-complete", {
-                sessionId,
-                nodeId: completedNodeId,
-                exitCode,
-                revisionRound: newRound
-              });
-              if (onComplete) {
-                try {
-                  onComplete(completedNodeId);
-                } catch (_) {
-                }
-              }
-              if (registry && closingAgentId) {
-                registry.complete(closingAgentId, {
-                  nodeId: completedNodeId,
-                  planPath: artifactPath,
-                  revisionRound: newRound
-                });
-              }
-            } catch (err) {
-              broadcast("revision-complete", {
-                sessionId,
-                nodeId: completedNodeId,
-                exitCode: -1,
-                error: true
-              });
-              if (registry && closingAgentId) {
-                registry.fail(closingAgentId, -1, "revision post-processing error");
-              }
-            }
-          } else {
+          if (error) {
             broadcast("revision-complete", {
               sessionId,
               nodeId: completedNodeId,
-              exitCode: exitCode ?? -1,
+              exitCode: 1,
               error: true
             });
             if (registry && closingAgentId) {
-              registry.fail(closingAgentId, exitCode ?? -1, "revision failed");
+              registry.fail(closingAgentId, 1, error);
+            }
+            return;
+          }
+          try {
+            const revisedContent = stripMarkdownFencing(text);
+            fs.writeFileSync(artifactPath, revisedContent, "utf-8");
+            const annPath = path.join(cwd, ".planning", "annotations", completedNodeId.toUpperCase() + ".json");
+            let annData = { nodeId: completedNodeId.toUpperCase(), annotations: [], revisionRound: 0 };
+            if (fs.existsSync(annPath)) {
+              try {
+                annData = JSON.parse(fs.readFileSync(annPath, "utf-8"));
+              } catch (_) {
+              }
+            }
+            const newRound = (annData.revisionRound || 0) + 1;
+            annData.revisionRound = newRound;
+            const annDir = path.dirname(annPath);
+            fs.mkdirSync(annDir, { recursive: true });
+            fs.writeFileSync(annPath, JSON.stringify(annData, null, 2), "utf-8");
+            broadcast("revision-complete", {
+              sessionId,
+              nodeId: completedNodeId,
+              exitCode: 0,
+              revisionRound: newRound
+            });
+            if (onComplete) {
+              try {
+                onComplete(completedNodeId);
+              } catch (_) {
+              }
+            }
+            if (registry && closingAgentId) {
+              registry.complete(closingAgentId, {
+                nodeId: completedNodeId,
+                planPath: artifactPath,
+                revisionRound: newRound
+              });
+            }
+          } catch (err) {
+            broadcast("revision-complete", {
+              sessionId,
+              nodeId: completedNodeId,
+              exitCode: -1,
+              error: true
+            });
+            if (registry && closingAgentId) {
+              registry.fail(closingAgentId, -1, "revision post-processing error");
             }
           }
-        });
-        proc.on("error", (_err) => {
+        }).catch((err) => {
           const errorAgentId = current ? current.agentId : void 0;
           current = null;
           broadcast("revision-complete", {
@@ -4916,7 +4955,7 @@ data: ${JSON.stringify(data)}
             error: true
           });
           if (registry && errorAgentId) {
-            registry.fail(errorAgentId, -1, "spawn error");
+            registry.fail(errorAgentId, -1, "error");
           }
         });
         return { ok: true, sessionId };
@@ -4925,7 +4964,7 @@ data: ${JSON.stringify(data)}
         if (!current) {
           return { error: "not_running", status: 404 };
         }
-        current.proc.kill("SIGTERM");
+        current.abortController.abort();
         return { ok: true };
       }
       function running() {
@@ -5572,7 +5611,8 @@ var require_lifecycle_stages = __commonJS({
 var require_pipeline_runner = __commonJS({
   "src/server/pipeline-runner.js"(exports2, module2) {
     "use strict";
-    var { spawn, execSync } = require("node:child_process");
+    var { runAI } = require_ai_runner();
+    var { execSync } = require("node:child_process");
     var fs = require("node:fs");
     var path = require("node:path");
     var { findMilestoneFolder } = require_milestone_folders();
@@ -5585,10 +5625,10 @@ var require_pipeline_runner = __commonJS({
       } catch (_) {
       }
     }
-    function isTransientFailure(exitCode, stderrOutput) {
+    function isTransientFailure(exitCode, errorOutput) {
       if (exitCode === 124 || exitCode === 137 || exitCode === -1) return true;
-      const patterns = /ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOMEM|SIGKILL|SIGTERM|socket hang up|network timeout/i;
-      return patterns.test(stderrOutput);
+      const patterns = /ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOMEM|SIGKILL|SIGTERM|socket hang up|network timeout|Cancelled/i;
+      return patterns.test(errorOutput);
     }
     function generateExecutionReport(cwd, results, pipelineStartTime, pipelineStopped, startSha) {
       try {
@@ -5645,7 +5685,7 @@ ${rows}
     function createPipelineRunner(sseClients, cwd, registry) {
       let isRunning = false;
       let stopRequested = false;
-      const activeProcesses = /* @__PURE__ */ new Map();
+      const activeControllers = /* @__PURE__ */ new Map();
       let results = [];
       let pipelineState = null;
       let pausedOnFailure = null;
@@ -5670,7 +5710,7 @@ ${rows}
           completedActions: pipelineState.completedActions,
           failedActions: pipelineState.failedActions,
           stoppedActions: pipelineState.stoppedActions,
-          activeActions: [...activeProcesses.keys()],
+          activeActions: [...activeControllers.keys()],
           outputBuffers,
           pausedOnFailure,
           timestamp: Date.now()
@@ -5725,105 +5765,75 @@ data: ${JSON.stringify(data)}
         }
       }
       function executeAction(actionId, milestoneId) {
-        return new Promise((resolve) => {
-          const startedAt = (/* @__PURE__ */ new Date()).toISOString();
-          const startTime = Date.now();
-          if (registry) {
-            const agent = registry.spawn("execution", actionId, milestoneId);
-            actionAgentIds.set(actionId, agent.id);
-          }
-          const prompt = `Run /declare:execute ${milestoneId} for action ${actionId} only. Do not ask questions, execute autonomously.`;
-          const spawnEnv = { ...process.env, FORCE_COLOR: "0" };
-          delete spawnEnv.CLAUDECODE;
-          const proc = spawn("claude", ["-p", prompt], {
-            cwd,
-            env: spawnEnv
-          });
-          activeProcesses.set(actionId, proc);
-          const planningDir = path.join(cwd, ".planning");
-          const milestoneFolder = findMilestoneFolder(planningDir, milestoneId);
-          const logPath = milestoneFolder ? path.join(milestoneFolder, "execution.log") : void 0;
-          appendLog(logPath, `
+        const startedAt = (/* @__PURE__ */ new Date()).toISOString();
+        const startTime = Date.now();
+        if (registry) {
+          const agent = registry.spawn("execution", actionId, milestoneId);
+          actionAgentIds.set(actionId, agent.id);
+        }
+        const prompt = `Run /declare:execute ${milestoneId} for action ${actionId} only. Do not ask questions, execute autonomously.`;
+        const abortController = new AbortController();
+        activeControllers.set(actionId, abortController);
+        const planningDir = path.join(cwd, ".planning");
+        const milestoneFolder = findMilestoneFolder(planningDir, milestoneId);
+        const logPath = milestoneFolder ? path.join(milestoneFolder, "execution.log") : void 0;
+        appendLog(logPath, `
 === START ${actionId} (pipeline) @ ${startedAt} ===`);
-          let stdoutBuf = "";
-          let stderrBuf = "";
-          let stderrFull = "";
-          if (proc.stdout) {
-            proc.stdout.on("data", (chunk) => {
-              stdoutBuf += chunk.toString();
-              const lines = stdoutBuf.split("\n");
-              stdoutBuf = lines.pop() || "";
-              for (const line of lines) {
-                broadcast("action-output", { actionId, text: line, stream: "stdout" });
-                appendLog(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] [${actionId}] [stdout] ${line}`);
-                if (!outputBuffers[actionId]) outputBuffers[actionId] = "";
-                outputBuffers[actionId] += line + "\n";
-                if (outputBuffers[actionId].length > OUTPUT_BUFFER_MAX) {
-                  outputBuffers[actionId] = outputBuffers[actionId].slice(-OUTPUT_BUFFER_MAX);
-                }
-              }
-            });
-          }
-          if (proc.stderr) {
-            proc.stderr.on("data", (chunk) => {
-              const text = chunk.toString();
-              stderrFull += text;
-              stderrBuf += text;
-              const lines = stderrBuf.split("\n");
-              stderrBuf = lines.pop() || "";
-              for (const line of lines) {
-                broadcast("action-output", { actionId, text: line, stream: "stderr" });
-                appendLog(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] [${actionId}] [stderr] ${line}`);
-                if (!outputBuffers[actionId]) outputBuffers[actionId] = "";
-                outputBuffers[actionId] += line + "\n";
-                if (outputBuffers[actionId].length > OUTPUT_BUFFER_MAX) {
-                  outputBuffers[actionId] = outputBuffers[actionId].slice(-OUTPUT_BUFFER_MAX);
-                }
-              }
-            });
-          }
-          proc.on("close", (exitCode) => {
-            const code = exitCode ?? -1;
-            const completedAt = (/* @__PURE__ */ new Date()).toISOString();
-            const durationMs = Date.now() - startTime;
-            appendLog(logPath, `=== END ${actionId} (pipeline) @ ${completedAt} exit=${code} duration=${durationMs}ms ===
-`);
-            activeProcesses.delete(actionId);
-            broadcast("action-complete", { actionId, exitCode: code, durationMs });
-            if (registry) {
-              const aId = actionAgentIds.get(actionId);
-              if (aId) {
-                if (code === 0) {
-                  registry.complete(aId, {
-                    actionId,
-                    milestoneId,
-                    logPath: logPath || null,
-                    durationMs
-                  });
-                } else {
-                  registry.fail(aId, code, "process exited");
-                }
-                actionAgentIds.delete(actionId);
-              }
+        return runAI(prompt, {
+          cwd,
+          model: "sonnet",
+          withTools: true,
+          maxTurns: 10,
+          abortController,
+          onText: (chunk) => {
+            broadcast("action-output", { actionId, text: chunk, stream: "stdout" });
+            appendLog(logPath, `[${(/* @__PURE__ */ new Date()).toISOString()}] [${actionId}] [stdout] ${chunk}`);
+            if (!outputBuffers[actionId]) outputBuffers[actionId] = "";
+            outputBuffers[actionId] += chunk;
+            if (outputBuffers[actionId].length > OUTPUT_BUFFER_MAX) {
+              outputBuffers[actionId] = outputBuffers[actionId].slice(-OUTPUT_BUFFER_MAX);
             }
-            resolve({ actionId, milestoneId, exitCode: code, stderrOutput: stderrFull, durationMs, startedAt, completedAt, retried: false, attempts: 1 });
-          });
-          proc.on("error", (_err) => {
-            const completedAt = (/* @__PURE__ */ new Date()).toISOString();
-            const durationMs = Date.now() - startTime;
-            appendLog(logPath, `=== ERROR ${actionId} (pipeline) @ ${completedAt} ===
+          }
+        }).then(({ text, error }) => {
+          const exitCode = error ? 1 : 0;
+          const completedAt = (/* @__PURE__ */ new Date()).toISOString();
+          const durationMs = Date.now() - startTime;
+          appendLog(logPath, `=== END ${actionId} (pipeline) @ ${completedAt} exit=${exitCode} duration=${durationMs}ms ===
 `);
-            activeProcesses.delete(actionId);
-            broadcast("action-complete", { actionId, exitCode: -1, durationMs });
-            if (registry) {
-              const aId = actionAgentIds.get(actionId);
-              if (aId) {
-                registry.fail(aId, -1, "spawn error");
-                actionAgentIds.delete(actionId);
+          activeControllers.delete(actionId);
+          broadcast("action-complete", { actionId, exitCode, durationMs });
+          if (registry) {
+            const aId = actionAgentIds.get(actionId);
+            if (aId) {
+              if (exitCode === 0) {
+                registry.complete(aId, {
+                  actionId,
+                  milestoneId,
+                  logPath: logPath || null,
+                  durationMs
+                });
+              } else {
+                registry.fail(aId, exitCode, error || "execution failed");
               }
+              actionAgentIds.delete(actionId);
             }
-            resolve({ actionId, milestoneId, exitCode: -1, stderrOutput: stderrFull, durationMs, startedAt, completedAt, retried: false, attempts: 1 });
-          });
+          }
+          return { actionId, milestoneId, exitCode, errorOutput: error || "", durationMs, startedAt, completedAt, retried: false, attempts: 1 };
+        }).catch((err) => {
+          const completedAt = (/* @__PURE__ */ new Date()).toISOString();
+          const durationMs = Date.now() - startTime;
+          appendLog(logPath, `=== ERROR ${actionId} (pipeline) @ ${completedAt} ===
+`);
+          activeControllers.delete(actionId);
+          broadcast("action-complete", { actionId, exitCode: -1, durationMs });
+          if (registry) {
+            const aId = actionAgentIds.get(actionId);
+            if (aId) {
+              registry.fail(aId, -1, String(err.message || err));
+              actionAgentIds.delete(actionId);
+            }
+          }
+          return { actionId, milestoneId, exitCode: -1, errorOutput: String(err.message || err), durationMs, startedAt, completedAt, retried: false, attempts: 1 };
         });
       }
       function start() {
@@ -5894,7 +5904,7 @@ data: ${JSON.stringify(data)}
             const waveResults = await Promise.all(promises);
             for (let ri = 0; ri < waveResults.length; ri++) {
               const r = waveResults[ri];
-              if (r.exitCode !== 0 && !stopRequested && isTransientFailure(r.exitCode, r.stderrOutput)) {
+              if (r.exitCode !== 0 && !stopRequested && isTransientFailure(r.exitCode, r.errorOutput)) {
                 broadcast("action-retry", { actionId: r.actionId, milestoneId: r.milestoneId, attempt: 2, reason: "transient failure detected" });
                 appendLog(
                   findMilestoneFolder(path.join(cwd, ".planning"), r.milestoneId) ? path.join(findMilestoneFolder(path.join(cwd, ".planning"), r.milestoneId), "execution.log") : void 0,
@@ -5954,7 +5964,7 @@ data: ${JSON.stringify(data)}
           const finalResults = [...results];
           isRunning = false;
           if (stopRequested) {
-            for (const actionId of activeProcesses.keys()) {
+            for (const actionId of activeControllers.keys()) {
               finalState.stoppedActions.push(actionId);
             }
           }
@@ -6014,9 +6024,9 @@ data: ${JSON.stringify(data)}
           skipResolve("stop");
           skipResolve = null;
         }
-        for (const [actionId, proc] of activeProcesses) {
+        for (const [actionId, controller] of activeControllers) {
           try {
-            proc.kill("SIGTERM");
+            controller.abort();
           } catch (_) {
           }
           if (registry) {
@@ -6039,7 +6049,7 @@ data: ${JSON.stringify(data)}
           running: isRunning,
           currentWave: pipelineState.currentWave,
           totalWaves: pipelineState.totalWaves,
-          activeActions: [...activeProcesses.keys()],
+          activeActions: [...activeControllers.keys()],
           completedActions: pipelineState.completedActions,
           failedActions: pipelineState.failedActions,
           results
@@ -6067,7 +6077,7 @@ data: ${JSON.stringify(data)}
           totalActions: totalActionCount,
           completedActions: pipelineState ? pipelineState.completedActions : [],
           failedActions: pipelineState ? pipelineState.failedActions : [],
-          activeActions: [...activeProcesses.keys()],
+          activeActions: [...activeControllers.keys()],
           outputBuffers,
           pausedOnFailure
         };
@@ -6610,25 +6620,38 @@ var require_server = __commonJS({
     }
     function handleExecuteAction(res, cwd, actionId) {
       try {
-        const result = runGetExecPlan2(cwd, ["--action", actionId]);
-        if (result.error || !result.execPlan) {
-          sendJson(res, 400, { error: "Action not found or no exec-plan" });
+        const graph = runLoadGraph2(cwd);
+        if ("error" in graph) {
+          sendJson(res, 500, { error: graph.error });
           return;
         }
-        const graph = runLoadGraph2(cwd);
-        if (!("error" in graph)) {
-          const normalizedId = actionId.toUpperCase();
-          const action = graph.actions.find((a) => a.id.toUpperCase() === normalizedId);
-          if (action && action.reviewState !== "approved") {
-            sendJson(res, 403, {
-              error: "Action not approved for execution",
-              unapproved: [{ id: action.id, title: action.title, reviewState: action.reviewState || "draft" }]
-            });
-            return;
-          }
+        const normalizedId = actionId.toUpperCase();
+        const action = graph.actions.find((a) => a.id.toUpperCase() === normalizedId);
+        if (!action) {
+          sendJson(res, 404, { error: "Action not found" });
+          return;
         }
+        if (action.reviewState !== "approved") {
+          sendJson(res, 403, {
+            error: "Action not approved for execution",
+            unapproved: [{ id: action.id, title: action.title, reviewState: action.reviewState || "draft" }]
+          });
+          return;
+        }
+        const milestoneId = (action.causes || []).find((c) => c.startsWith("M-")) || (action.causes || [])[0] || actionId;
+        const milestone = graph.milestones.find((m) => m.id === milestoneId);
+        const declaration = milestone ? (graph.declarations || []).find((d) => (milestone.realizes || []).includes(d.id)) : null;
+        const siblingActions = graph.actions.filter(
+          (a) => a.id !== action.id && (a.causes || []).includes(milestoneId)
+        );
+        const actionContext = {
+          action: { id: action.id, title: action.title, produces: action.produces || "", status: action.status },
+          milestone: milestone ? { id: milestone.id, title: milestone.title, description: milestone.description || "" } : null,
+          declaration: declaration ? { id: declaration.id, statement: declaration.statement || declaration.title || "" } : null,
+          siblingActions: siblingActions.map((a) => ({ id: a.id, title: a.title, produces: a.produces || "", status: a.status }))
+        };
         const pm = getProcessManager(cwd);
-        const execResult = pm.execute(actionId, result.milestoneId);
+        const execResult = pm.execute(actionId, milestoneId, actionContext);
         if (execResult.error) {
           sendJson(res, execResult.status || 500, { error: execResult.error });
           return;
@@ -6652,24 +6675,35 @@ var require_server = __commonJS({
           milestones: d.milestones || []
         }));
         const dr = getDerivationRunner(cwd);
-        const result = dr.derive(body.declarationId || null, declarations);
+        const declarationId = body.declarationId || null;
+        const result = dr.derive(declarationId, declarations);
         if (result.error) {
           sendJson(res, result.status || 500, { error: result.error });
           return;
         }
-        sendJson(res, 202, { ok: true, sessionId: result.sessionId });
+        sendJson(res, 202, { ok: true, sessionId: result.sessionId, declarationId });
       } catch (err) {
         sendJson(res, 400, { error: String(err) });
       }
     }
-    function handleDeriveStop(res, cwd) {
+    function handleDeriveStop(req, res, cwd) {
       const dr = getDerivationRunner(cwd);
-      const result = dr.stop();
-      if (result.error) {
-        sendJson(res, result.status || 500, { error: result.error });
-      } else {
-        sendJson(res, 200, { ok: true });
-      }
+      let sessionId;
+      const chunks = [];
+      req.on("data", (c) => chunks.push(c));
+      req.on("end", () => {
+        try {
+          const body = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
+          sessionId = body.sessionId;
+        } catch (_) {
+        }
+        const result = dr.stop(sessionId);
+        if (result.error) {
+          sendJson(res, result.status || 500, { error: result.error });
+        } else {
+          sendJson(res, 200, { ok: true });
+        }
+      });
     }
     async function handleDeriveAccept(req, res, cwd) {
       try {
@@ -6687,6 +6721,36 @@ var require_server = __commonJS({
         broadcastChange();
       } catch (err) {
         sendJson(res, 400, { error: String(err) });
+      }
+    }
+    function handleDeriveAll(res, cwd) {
+      try {
+        const graph = runLoadGraph2(cwd);
+        if ("error" in graph) {
+          sendJson(res, 500, { error: graph.error });
+          return;
+        }
+        const declarations = graph.declarations.map((d) => ({
+          id: d.id,
+          statement: d.statement,
+          milestones: d.milestones || []
+        }));
+        const needsPlanning = declarations.filter((d) => !d.milestones || d.milestones.length === 0);
+        if (needsPlanning.length === 0) {
+          sendJson(res, 200, { ok: true, sessions: [], message: "All declarations already have milestones" });
+          return;
+        }
+        const dr = getDerivationRunner(cwd);
+        const results = [];
+        for (const decl of needsPlanning) {
+          const result = dr.derive(decl.id, declarations);
+          if (result.ok) {
+            results.push({ declarationId: decl.id, sessionId: result.sessionId });
+          }
+        }
+        sendJson(res, 202, { ok: true, sessions: results });
+      } catch (err) {
+        sendJson(res, 500, { error: String(err) });
       }
     }
     function handleActionDerive(res, cwd, milestoneId) {
@@ -7198,7 +7262,7 @@ data: ${JSON.stringify(data)}
         sendJson(res, 200, { ok: true });
       }
     }
-    var refineSession = null;
+    var refineSessions = /* @__PURE__ */ new Map();
     function buildRefinePrompt(nodeId, graph, mode, userMessage) {
       const id = nodeId.toUpperCase();
       const prefix = id.split("-")[0];
@@ -7303,10 +7367,6 @@ If the current version is already good, output exactly: LGTM \u2014 no changes n
     }
     async function handleRefine(req, res, cwd, nodeId) {
       try {
-        if (refineSession) {
-          sendJson(res, 409, { error: "A refine session is already running" });
-          return;
-        }
         const body = await readJsonBody(req).catch(() => ({}));
         const mode = body.mode || "general";
         const userMessage = body.message || "";
@@ -7320,7 +7380,7 @@ If the current version is already good, output exactly: LGTM \u2014 no changes n
           sendJson(res, 404, { error: "Node not found: " + nodeId });
           return;
         }
-        const sessionId = `refine-${Date.now()}`;
+        const sessionId = `refine-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
         const { runAI } = require_ai_runner();
         const activityFile = path.join(cwd, ".planning", "activity.jsonl");
         const nId = nodeId.toUpperCase();
@@ -7332,16 +7392,17 @@ If the current version is already good, output exactly: LGTM \u2014 no changes n
         } catch (_) {
         }
         const abortController = new AbortController();
-        refineSession = { sessionId, nodeId: nId, suggestion: "", abortController, agentId: refineAgentId };
+        refineSessions.set(sessionId, { sessionId, nodeId: nId, suggestion: "", abortController, agentId: refineAgentId });
         const isWriteMode = mode === "write";
         runAI(prompt, {
           cwd,
-          model: isWriteMode ? "sonnet" : "haiku",
+          model: "haiku",
           maxTurns: isWriteMode ? 10 : 1,
           withTools: isWriteMode,
           abortController,
           onText: (text) => {
-            if (refineSession) refineSession.suggestion += text;
+            const session = refineSessions.get(sessionId);
+            if (session) session.suggestion += text;
             const payload = `event: refine-output
 data: ${JSON.stringify({ sessionId, nodeId: nId, text })}
 
@@ -7355,8 +7416,9 @@ data: ${JSON.stringify({ sessionId, nodeId: nId, text })}
             }
           }
         }).then(({ text, error }) => {
-          const suggestion = text || (refineSession ? refineSession.suggestion : "");
-          refineSession = null;
+          const session = refineSessions.get(sessionId);
+          const suggestion = text || (session ? session.suggestion : "");
+          refineSessions.delete(sessionId);
           const exitCode = error ? 1 : 0;
           const payload = `event: refine-complete
 data: ${JSON.stringify({ sessionId, nodeId: nId, exitCode, suggestion, error })}
@@ -7384,7 +7446,7 @@ data: ${JSON.stringify({ sessionId, nodeId: nId, exitCode, suggestion, error })}
           } catch (_) {
           }
         }).catch((err) => {
-          refineSession = null;
+          refineSessions.delete(sessionId);
           const payload = `event: refine-complete
 data: ${JSON.stringify({ sessionId, nodeId: nId, exitCode: 1, suggestion: "", error: String(err) })}
 
@@ -7410,18 +7472,29 @@ data: ${JSON.stringify({ sessionId, nodeId: nId, exitCode: 1, suggestion: "", er
         sendJson(res, 500, { error: String(err) });
       }
     }
-    function handleRefineStop(res) {
-      if (!refineSession) {
-        sendJson(res, 404, { error: "No refine session running" });
-        return;
+    function handleRefineStop(res, sessionId) {
+      if (sessionId) {
+        const session = refineSessions.get(sessionId);
+        if (!session) {
+          sendJson(res, 404, { error: "Session not found" });
+          return;
+        }
+        try {
+          session.abortController.abort();
+        } catch (_) {
+        }
+        refineSessions.delete(sessionId);
+        sendJson(res, 200, { ok: true });
+      } else {
+        for (const [id, session] of refineSessions) {
+          try {
+            session.abortController.abort();
+          } catch (_) {
+          }
+        }
+        refineSessions.clear();
+        sendJson(res, 200, { ok: true });
       }
-      try {
-        if (refineSession.abortController) refineSession.abortController.abort();
-        else if (refineSession.proc) refineSession.proc.kill();
-      } catch (_) {
-      }
-      refineSession = null;
-      sendJson(res, 200, { ok: true });
     }
     async function handleRefineAccept(req, res, cwd) {
       try {
@@ -7784,6 +7857,331 @@ data: ${JSON.stringify({ sessionId, exitCode, result: text, error })}
       } catch (err) {
         sendJson(res, 500, { error: String(err) });
       }
+    }
+    var onboardSession = null;
+    function persistOnboardSession(cwd) {
+      const filePath = path.join(cwd, ".planning", "onboard-session.json");
+      if (!onboardSession) {
+        try {
+          fs.unlinkSync(filePath);
+        } catch (_) {
+        }
+        return;
+      }
+      try {
+        const data = {
+          prompt: onboardSession.prompt,
+          answers: onboardSession.answers,
+          questions: onboardSession.questions,
+          proposals: onboardSession.proposals,
+          phase: onboardSession.phase,
+          approveIndex: onboardSession.approveIndex || 0,
+          savedAt: (/* @__PURE__ */ new Date()).toISOString()
+        };
+        fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8");
+      } catch (_) {
+      }
+    }
+    function restoreOnboardSession(cwd) {
+      const filePath = path.join(cwd, ".planning", "onboard-session.json");
+      try {
+        if (!fs.existsSync(filePath)) return false;
+        const data = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+        if (data.phase === "questions" && !data.questions) return false;
+        if (data.phase === "proposals" && !data.proposals) return false;
+        onboardSession = {
+          prompt: data.prompt,
+          answers: data.answers,
+          questions: data.questions,
+          proposals: data.proposals,
+          phase: data.phase,
+          approveIndex: data.approveIndex || 0,
+          abortController: null
+        };
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+    async function handleOnboard(req, res, cwd) {
+      try {
+        if (onboardSession) {
+          sendJson(res, 409, { error: "An onboarding session is already running" });
+          return;
+        }
+        const body = await readJsonBody(req);
+        const message = (body.message || "").trim();
+        if (!message) {
+          sendJson(res, 400, { error: "No message provided" });
+          return;
+        }
+        const { runAI } = require_ai_runner();
+        const activityFile = path.join(cwd, ".planning", "activity.jsonl");
+        const prompt = `You are helping a user plan their software project. They have described their vision:
+
+"${message}"
+
+Identify 3-5 important clarification questions that should be answered before breaking this vision into concrete declarations. Focus on:
+- Scope boundaries (what's included vs excluded?)
+- Key technical decisions that affect the architecture
+- Target users and use cases
+- Priority and sequencing preferences
+- Success criteria and constraints
+
+Output ONLY a JSON array of question objects:
+[{"question": "The question text", "context": "Why this matters for planning", "options": ["Option A", "Option B"]}]
+
+The options array is optional \u2014 include it only when there are clear alternatives to choose from.`;
+        let agentId;
+        try {
+          const reg = getAgentRegistry(cwd);
+          const agent = reg.spawn("onboard", "project", "");
+          agentId = agent.id;
+        } catch (_) {
+        }
+        const abortController = new AbortController();
+        onboardSession = { prompt: message, answers: null, questions: null, proposals: null, phase: "questions", approveIndex: 0, abortController, agentId };
+        persistOnboardSession(cwd);
+        runAI(prompt, {
+          cwd,
+          model: "haiku",
+          maxTurns: 1,
+          abortController,
+          onText: (text) => {
+            const payload = `event: onboard-output
+data: ${JSON.stringify({ text })}
+
+`;
+            for (const client of sseClients) {
+              try {
+                client.write(payload);
+              } catch (_) {
+                sseClients.delete(client);
+              }
+            }
+          }
+        }).then(({ text, error }) => {
+          let questions = null;
+          if (!error && text) {
+            try {
+              questions = JSON.parse(text.trim());
+            } catch (_) {
+              const jsonMatch = text.match(/\[[\s\S]*\]/);
+              if (jsonMatch) {
+                try {
+                  questions = JSON.parse(jsonMatch[0]);
+                } catch (_2) {
+                }
+              }
+            }
+          }
+          if (onboardSession && questions) {
+            onboardSession.questions = questions;
+            persistOnboardSession(cwd);
+          }
+          const payload = `event: onboard-questions-complete
+data: ${JSON.stringify({ questions, error })}
+
+`;
+          for (const client of sseClients) {
+            try {
+              client.write(payload);
+            } catch (_) {
+              sseClients.delete(client);
+            }
+          }
+          if (agentId) {
+            try {
+              const reg = getAgentRegistry(cwd);
+              if (!error) reg.complete(agentId, { questionCount: Array.isArray(questions) ? questions.length : 0 });
+              else reg.fail(agentId, 1, error);
+            } catch (_) {
+            }
+          }
+          try {
+            fs.appendFileSync(activityFile, JSON.stringify({ ts: (/* @__PURE__ */ new Date()).toISOString(), tool: "Task", phase: error ? "error" : "done", agent: "Onboard", desc: error ? `Onboard questions failed: ${error}` : `Onboard: ${Array.isArray(questions) ? questions.length : 0} questions` }) + "\n");
+          } catch (_) {
+          }
+        }).catch((err) => {
+          if (agentId) {
+            try {
+              getAgentRegistry(cwd).fail(agentId, 1, String(err));
+            } catch (_) {
+            }
+          }
+        });
+        try {
+          fs.appendFileSync(activityFile, JSON.stringify({ ts: (/* @__PURE__ */ new Date()).toISOString(), tool: "Task", phase: "start", agent: "Onboard", desc: "Generating clarification questions" }) + "\n");
+        } catch (_) {
+        }
+        sendJson(res, 202, { ok: true });
+      } catch (err) {
+        sendJson(res, 500, { error: String(err) });
+      }
+    }
+    async function handleOnboardAnswer(req, res, cwd) {
+      try {
+        if (!onboardSession) {
+          sendJson(res, 400, { error: "No onboarding session active" });
+          return;
+        }
+        const body = await readJsonBody(req);
+        const answers = body.answers || [];
+        onboardSession.answers = answers;
+        onboardSession.phase = "proposals";
+        persistOnboardSession(cwd);
+        const { runAI } = require_ai_runner();
+        const activityFile = path.join(cwd, ".planning", "activity.jsonl");
+        let answersBlock = "";
+        if (answers.length > 0) {
+          answersBlock = "\n\nThe user answered these clarification questions:\n" + answers.map((a) => `Q: ${a.question}
+A: ${a.answer}`).join("\n\n");
+        }
+        const prompt = `You are helping a user break down their software project vision into concrete declarations.
+
+The user's vision: "${onboardSession.prompt}"${answersBlock}
+
+In the Declare framework, a "declaration" is a statement about what WILL be true when the project succeeds. Each declaration should be:
+- A concrete, verifiable outcome (not a task or feature)
+- Scoped to be achievable independently
+- Written as a present-tense statement of truth (e.g., "Users can sign in with Google OAuth")
+
+Propose 4-6 declarations that together cover the user's vision. Each should be distinct and non-overlapping.
+
+Output ONLY a JSON array:
+[{"title": "Short declaration title", "statement": "The full declaration statement written as a present-tense truth", "reasoning": "Brief explanation of why this declaration matters"}]`;
+        let agentId;
+        try {
+          const reg = getAgentRegistry(cwd);
+          const agent = reg.spawn("onboard-propose", "project", "");
+          agentId = agent.id;
+        } catch (_) {
+        }
+        const abortController = new AbortController();
+        onboardSession.abortController = abortController;
+        if (agentId) onboardSession.agentId = agentId;
+        runAI(prompt, {
+          cwd,
+          model: "sonnet",
+          maxTurns: 1,
+          abortController,
+          onText: (text) => {
+            const payload = `event: onboard-output
+data: ${JSON.stringify({ text })}
+
+`;
+            for (const client of sseClients) {
+              try {
+                client.write(payload);
+              } catch (_) {
+                sseClients.delete(client);
+              }
+            }
+          }
+        }).then(({ text, error }) => {
+          let proposals = null;
+          if (!error && text) {
+            try {
+              proposals = JSON.parse(text.trim());
+            } catch (_) {
+              const jsonMatch = text.match(/\[[\s\S]*\]/);
+              if (jsonMatch) {
+                try {
+                  proposals = JSON.parse(jsonMatch[0]);
+                } catch (_2) {
+                }
+              }
+            }
+          }
+          if (onboardSession && proposals) {
+            onboardSession.proposals = proposals;
+            persistOnboardSession(cwd);
+          }
+          const payload = `event: onboard-proposals-complete
+data: ${JSON.stringify({ proposals, error })}
+
+`;
+          for (const client of sseClients) {
+            try {
+              client.write(payload);
+            } catch (_) {
+              sseClients.delete(client);
+            }
+          }
+          if (agentId) {
+            try {
+              const reg = getAgentRegistry(cwd);
+              if (!error) reg.complete(agentId, { proposalCount: Array.isArray(proposals) ? proposals.length : 0 });
+              else reg.fail(agentId, 1, error);
+            } catch (_) {
+            }
+          }
+          try {
+            fs.appendFileSync(activityFile, JSON.stringify({ ts: (/* @__PURE__ */ new Date()).toISOString(), tool: "Task", phase: error ? "error" : "done", agent: "Onboard", desc: error ? `Onboard proposals failed: ${error}` : `Onboard: ${Array.isArray(proposals) ? proposals.length : 0} proposals` }) + "\n");
+          } catch (_) {
+          }
+        }).catch((err) => {
+          if (agentId) {
+            try {
+              getAgentRegistry(cwd).fail(agentId, 1, String(err));
+            } catch (_) {
+            }
+          }
+        });
+        try {
+          fs.appendFileSync(activityFile, JSON.stringify({ ts: (/* @__PURE__ */ new Date()).toISOString(), tool: "Task", phase: "start", agent: "Onboard", desc: "Generating declaration proposals" }) + "\n");
+        } catch (_) {
+        }
+        sendJson(res, 202, { ok: true });
+      } catch (err) {
+        sendJson(res, 500, { error: String(err) });
+      }
+    }
+    async function handleOnboardApprove(req, res, cwd) {
+      try {
+        const body = await readJsonBody(req);
+        const { title, statement } = body;
+        if (!title || !statement) {
+          sendJson(res, 400, { error: "Missing title or statement" });
+          return;
+        }
+        const result = runAddDeclaration2(cwd, ["--title", title, "--statement", statement]);
+        if ("error" in result) {
+          sendJson(res, 400, { error: result.error });
+          return;
+        }
+        setReviewState(cwd, result.id, "approved");
+        broadcastChange();
+        if (onboardSession) {
+          onboardSession.phase = "approving";
+          onboardSession.approveIndex = (onboardSession.approveIndex || 0) + 1;
+          persistOnboardSession(cwd);
+        }
+        try {
+          const graph = runLoadGraph2(cwd);
+          if (!("error" in graph)) {
+            const declarations = graph.declarations.map((d) => ({
+              id: d.id,
+              statement: d.statement,
+              milestones: d.milestones || []
+            }));
+            const dr = getDerivationRunner(cwd);
+            dr.derive(result.id, declarations);
+          }
+        } catch (_) {
+        }
+        sendJson(res, 201, result);
+      } catch (err) {
+        sendJson(res, 500, { error: String(err) });
+      }
+    }
+    function handleOnboardCancel(req, res, cwd) {
+      if (onboardSession && onboardSession.abortController) {
+        onboardSession.abortController.abort();
+      }
+      onboardSession = null;
+      persistOnboardSession(cwd);
+      sendJson(res, 200, { ok: true });
     }
     function handleArchiveNode(res, cwd, nodeId) {
       const id = nodeId.toUpperCase();
@@ -8152,11 +8550,15 @@ data: ${JSON.stringify({ reason: "delete", nodeId: id })}
           return;
         }
         if (urlPath === "/api/milestones/derive/stop") {
-          handleDeriveStop(res, cwd);
+          handleDeriveStop(req, res, cwd);
           return;
         }
         if (urlPath === "/api/milestones/derive/accept") {
           handleDeriveAccept(req, res, cwd);
+          return;
+        }
+        if (urlPath === "/api/declarations/derive-all") {
+          handleDeriveAll(res, cwd);
           return;
         }
         const actionDeriveMatch = urlPath.match(/^\/api\/milestones\/([^/]+)\/actions\/derive$/);
@@ -8280,6 +8682,28 @@ data: ${JSON.stringify({ reason: "delete", nodeId: id })}
           handleCommand(req, res, cwd);
           return;
         }
+        if (urlPath === "/api/onboard/complete") {
+          onboardSession = null;
+          persistOnboardSession(cwd);
+          sendJson(res, 200, { ok: true });
+          return;
+        }
+        if (urlPath === "/api/onboard") {
+          handleOnboard(req, res, cwd);
+          return;
+        }
+        if (urlPath === "/api/onboard/answer") {
+          handleOnboardAnswer(req, res, cwd);
+          return;
+        }
+        if (urlPath === "/api/onboard/approve") {
+          handleOnboardApprove(req, res, cwd);
+          return;
+        }
+        if (urlPath === "/api/onboard/cancel") {
+          handleOnboardCancel(req, res, cwd);
+          return;
+        }
         if (urlPath === "/api/execution-manifest") {
           handleSaveManifest(req, res, cwd);
           return;
@@ -8383,7 +8807,28 @@ data: ${JSON.stringify({ reason: "delete", nodeId: id })}
       }
       if (urlPath === "/api/derivation/running") {
         const dr = getDerivationRunner(cwd);
-        sendJson(res, 200, { running: dr.running() });
+        const runningSessions = dr.running();
+        sendJson(res, 200, {
+          running: runningSessions ? runningSessions[0].sessionId : null,
+          sessions: runningSessions
+        });
+        return;
+      }
+      if (urlPath === "/api/onboard/state") {
+        if (!onboardSession) restoreOnboardSession(cwd);
+        if (onboardSession) {
+          sendJson(res, 200, {
+            active: true,
+            prompt: onboardSession.prompt,
+            phase: onboardSession.phase,
+            questions: onboardSession.questions,
+            proposals: onboardSession.proposals,
+            answers: onboardSession.answers,
+            approveIndex: onboardSession.approveIndex || 0
+          });
+        } else {
+          sendJson(res, 200, { active: false });
+        }
         return;
       }
       const actionDeriveRunningMatch = urlPath.match(/^\/api\/milestones\/([^/]+)\/actions\/derive\/running$/);
@@ -8471,6 +8916,14 @@ data: ${JSON.stringify({ reason: "delete", nodeId: id })}
       });
       const portFilePath = require("path").join(cwd, ".planning", "server.port");
       require("fs").writeFileSync(portFilePath, String(resolvedPort), "utf-8");
+      const deletePortFile = () => {
+        try {
+          require("fs").unlinkSync(portFilePath);
+        } catch (_) {
+        }
+      };
+      server.on("close", deletePortFile);
+      process.on("exit", deletePortFile);
       const reg = getAgentRegistry(cwd);
       const restored = reg.restoreFromDisk();
       if (restored.interrupted > 0) {
@@ -8499,8 +8952,11 @@ var require_serve = __commonJS({
     async function runServe2(cwd, args) {
       const port = parsePortFlag(args) || parseInt(process.env.PORT || "", 10) || 3847;
       const { server, port: resolvedPort, url } = await startServer(cwd, port);
-      const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
-      spawn(opener, [url], { stdio: "ignore", detached: true }).unref();
+      const noOpen = args.includes("--no-open") || process.env.DECLARE_NO_OPEN;
+      if (!noOpen) {
+        const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+        spawn(opener, [url], { stdio: "ignore", detached: true }).unref();
+      }
       process.on("SIGINT", () => {
         server.close(() => process.exit(0));
       });

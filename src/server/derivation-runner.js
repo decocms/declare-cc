@@ -4,15 +4,14 @@
 /**
  * Derivation runner for browser-based milestone derivation.
  *
- * Spawns a Claude CLI subprocess with a scoped derivation prompt,
- * streams output line-by-line to SSE clients, and parses structured
+ * Uses the AI runner (Claude Agent SDK) to generate milestone proposals.
+ * Streams output line-by-line to SSE clients and parses structured
  * JSON results (proposed milestones) on completion.
  *
- * Session-based tracking (one derivation at a time).
- * Zero runtime dependencies — uses Node's built-in child_process only.
+ * Concurrent session tracking — multiple derivations can run simultaneously.
  */
 
-const { spawn } = require('node:child_process');
+const { runAI } = require('./ai-runner');
 
 /**
  * @typedef {{ id: string, statement: string, milestones?: string[] }} Declaration
@@ -32,7 +31,6 @@ function buildPrompt(declarationId, declarations) {
   if (declarationId) {
     targets = declarations.filter((d) => d.id === declarationId);
   } else {
-    // Include all declarations that have no milestones yet
     targets = declarations.filter(
       (d) => !d.milestones || d.milestones.length === 0
     );
@@ -46,23 +44,27 @@ function buildPrompt(declarationId, declarations) {
     'You are deriving milestones for a Declare project. ' +
     'Given these declarations, propose 2-4 milestones per declaration by asking ' +
     '"For this to be true, what must be true?" ' +
+    'Each milestone needs a concise title AND a detailed description explaining what it delivers, ' +
+    'its scope, and success criteria. ' +
     'Output ONLY a JSON array with no markdown fencing: ' +
-    '[{"title": "milestone title", "realizes": "D-XX", "reason": "why this must be true"}]. ' +
+    '[{"title": "short milestone title", "description": "Detailed description of what this milestone delivers, its scope and boundaries, and how to verify it is complete.", "realizes": "D-XX", "reason": "why this must be true"}]. ' +
     'Declarations:\n\n' +
     formatted
   );
 }
 
 /**
- * Create a derivation runner that spawns and tracks Claude CLI derivation processes.
+ * Create a derivation runner that uses the AI runner SDK for milestone derivation.
+ * Supports concurrent sessions — multiple derivations can run at the same time.
  *
  * @param {Set<import('http').ServerResponse>} sseClients - Active SSE clients to broadcast to
  * @param {string} cwd - Project root directory
- * @returns {{ derive: (declarationId: string|null, declarations: Declaration[]) => { ok?: boolean, error?: string, status?: number, sessionId?: string }, stop: () => { ok?: boolean, error?: string, status?: number }, running: () => string|null }}
+ * @param {any} [registry] - Optional agent registry
+ * @returns {{ derive: Function, stop: Function, stopAll: Function, running: Function }}
  */
 function createDerivationRunner(sseClients, cwd, registry) {
-  /** @type {{ sessionId: string, proc: import('child_process').ChildProcess, agentId?: string } | null} */
-  let current = null;
+  /** @type {Map<string, { abortController: AbortController, agentId?: string, declarationId: string|null, startTime: number }>} */
+  const sessions = new Map();
 
   /**
    * Broadcast an SSE event to all connected clients.
@@ -81,57 +83,17 @@ function createDerivationRunner(sseClients, cwd, registry) {
   }
 
   /**
-   * Create a line-buffered handler for a stream.
-   * Accumulates chunks, splits on newlines, emits complete lines via SSE.
-   *
-   * @param {string} sessionId
-   * @param {string} streamName - 'stdout' or 'stderr'
-   * @param {{ text: string }} accumulator - Object to accumulate full text for stdout
-   * @returns {(chunk: Buffer) => void}
-   */
-  function createLineHandler(sessionId, streamName, accumulator) {
-    let buffer = '';
-    return (chunk) => {
-      const text = chunk.toString();
-      if (streamName === 'stdout') {
-        accumulator.text += text;
-      }
-      buffer += text;
-      const lines = buffer.split('\n');
-      // Keep the last element as remainder (incomplete line)
-      buffer = lines.pop() || '';
-      for (const line of lines) {
-        broadcast('derivation-output', {
-          sessionId,
-          text: line,
-          stream: streamName,
-        });
-      }
-    };
-  }
-
-  /**
-   * Spawn a Claude CLI process to derive milestones.
+   * Spawn an AI agent to derive milestones.
+   * No longer blocks on existing sessions — supports concurrent derivation.
    *
    * @param {string|null} declarationId - Specific declaration ID, or null for all unmatched
    * @param {Declaration[]} declarations - Array of declaration objects
    * @returns {{ ok?: boolean, error?: string, status?: number, sessionId?: string }}
    */
   function derive(declarationId, declarations) {
-    if (current) {
-      return { error: 'busy', status: 409 };
-    }
-
-    const sessionId = `deriv-${Date.now()}`;
+    const sessionId = `deriv-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const prompt = buildPrompt(declarationId, declarations);
-
-    const env = { ...process.env, FORCE_COLOR: '0' };
-    delete env.CLAUDECODE;
-
-    const proc = spawn('claude', ['-p', prompt, '--output-format', 'text'], {
-      cwd,
-      env,
-    });
+    const abortController = new AbortController();
 
     /** @type {string|undefined} */
     let agentId;
@@ -140,61 +102,84 @@ function createDerivationRunner(sseClients, cwd, registry) {
       agentId = agent.id;
     }
 
-    current = { sessionId, proc, agentId };
+    sessions.set(sessionId, { abortController, agentId, declarationId, startTime: Date.now() });
 
-    // Accumulator for full stdout text (for JSON parsing on completion)
-    const stdout = { text: '' };
-
-    // Pipe stdout line-by-line
-    if (proc.stdout) {
-      proc.stdout.on('data', createLineHandler(sessionId, 'stdout', stdout));
-    }
-
-    // Pipe stderr line-by-line
-    if (proc.stderr) {
-      proc.stderr.on('data', createLineHandler(sessionId, 'stderr', stdout));
-    }
-
-    // Process exited
-    proc.on('close', (exitCode) => {
-      let milestones = null;
-      const closingAgentId = current ? current.agentId : undefined;
-      if (exitCode === 0) {
-        try {
-          milestones = JSON.parse(stdout.text.trim());
-        } catch (_) {
-          // Parse failure — milestones stays null, UI can show raw output
-        }
-      }
-      current = null;
-      broadcast('derivation-complete', {
-        sessionId,
-        exitCode: exitCode ?? -1,
-        milestones,
-      });
-      if (registry && closingAgentId) {
-        if ((exitCode ?? -1) === 0) {
-          const milestoneIds = Array.isArray(milestones)
-            ? milestones.map(m => m.id || m.title || 'unknown').filter(Boolean)
-            : [];
-          registry.complete(closingAgentId, { milestones: milestoneIds });
-        } else {
-          registry.fail(closingAgentId, exitCode ?? -1, 'derivation failed');
-        }
-      }
+    // Broadcast initial status
+    broadcast('derivation-output', {
+      sessionId, declarationId,
+      text: 'Spawning AI agent\u2026',
+      stream: 'status',
     });
 
-    // Process failed to spawn (e.g. claude not found)
-    proc.on('error', (_err) => {
-      const errorAgentId = current ? current.agentId : undefined;
-      current = null;
+    // Fire and forget — results stream via SSE
+    runAI(prompt, {
+      cwd,
+      model: 'sonnet',
+      maxTurns: 1,
+      abortController,
+      onText: (chunk) => {
+        broadcast('derivation-output', {
+          sessionId, declarationId,
+          text: chunk,
+          stream: 'stdout',
+        });
+      },
+    }).then(({ text, error }) => {
+      const session = sessions.get(sessionId);
+      const closingAgentId = session ? session.agentId : undefined;
+      sessions.delete(sessionId);
+
+      if (error) {
+        broadcast('derivation-complete', {
+          sessionId, declarationId,
+          exitCode: 1,
+          milestones: null,
+          error,
+        });
+        if (registry && closingAgentId) {
+          registry.fail(closingAgentId, 1, error);
+        }
+        return;
+      }
+
+      // Parse milestones from result
+      let milestones = null;
+      try {
+        milestones = JSON.parse(text.trim());
+      } catch (_) {
+        // Try to find a JSON array within the text
+        const match = text.match(/\[[\s\S]*\]/);
+        if (match) {
+          try { milestones = JSON.parse(match[0]); } catch (__) {}
+        }
+      }
+
       broadcast('derivation-complete', {
-        sessionId,
+        sessionId, declarationId,
+        exitCode: 0,
+        milestones,
+      });
+
+      if (registry && closingAgentId) {
+        const milestoneIds = Array.isArray(milestones)
+          ? milestones.map(m => m.id || m.title || 'unknown').filter(Boolean)
+          : [];
+        registry.complete(closingAgentId, { milestones: milestoneIds });
+      }
+    }).catch((err) => {
+      const session = sessions.get(sessionId);
+      const errorAgentId = session ? session.agentId : undefined;
+      sessions.delete(sessionId);
+
+      broadcast('derivation-complete', {
+        sessionId, declarationId,
         exitCode: -1,
         milestones: null,
+        error: String(err.message || err),
       });
+
       if (registry && errorAgentId) {
-        registry.fail(errorAgentId, -1, 'spawn error');
+        registry.fail(errorAgentId, -1, 'error');
       }
     });
 
@@ -202,37 +187,48 @@ function createDerivationRunner(sseClients, cwd, registry) {
   }
 
   /**
-   * Stop the currently running derivation process with SIGTERM.
+   * Stop a specific derivation session or all sessions.
    *
+   * @param {string} [sessionId] - If provided, stop that session. Otherwise stop all.
    * @returns {{ ok?: boolean, error?: string, status?: number }}
    */
-  function stop() {
-    if (!current) {
-      return { error: 'not_running', status: 404 };
+  function stop(sessionId) {
+    if (sessionId) {
+      const session = sessions.get(sessionId);
+      if (!session) {
+        return { error: 'not_running', status: 404 };
+      }
+      session.abortController.abort();
+      return { ok: true };
     }
+    return stopAll();
+  }
 
-    current.proc.kill('SIGTERM');
+  /**
+   * Stop all running derivation sessions.
+   * @returns {{ ok: boolean }}
+   */
+  function stopAll() {
+    for (const [, session] of sessions) {
+      session.abortController.abort();
+    }
     return { ok: true };
   }
 
   /**
-   * Return the session ID of the currently running derivation, or null.
-   * @returns {string|null}
+   * Return info about active sessions, or null if none running.
+   * @returns {Array<{ sessionId: string, declarationId: string|null, startTime: number }>|null}
    */
   function running() {
-    return current ? current.sessionId : null;
+    if (sessions.size === 0) return null;
+    return Array.from(sessions.entries()).map(([id, s]) => ({
+      sessionId: id,
+      declarationId: s.declarationId,
+      startTime: s.startTime,
+    }));
   }
 
-  return { derive, stop, running };
-}
-
-// Self-test when run directly
-if (require.main === module) {
-  const runner = createDerivationRunner(new Set(), '.');
-  console.log('derive:', typeof runner.derive);
-  console.log('stop:', typeof runner.stop);
-  console.log('running:', typeof runner.running);
-  console.log('OK');
+  return { derive, stop, stopAll, running };
 }
 
 module.exports = { createDerivationRunner };

@@ -8,10 +8,11 @@
  * in declared wave order. Waves execute sequentially; actions within a wave
  * execute concurrently. Streams SSE events for live progress tracking.
  *
- * Zero runtime dependencies. CJS module.
+ * Uses the AI runner (Claude Agent SDK) instead of spawning subprocesses.
  */
 
-const { spawn, execSync } = require('node:child_process');
+const { runAI } = require('./ai-runner');
+const { execSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const { findMilestoneFolder } = require('../artifacts/milestone-folders');
@@ -36,7 +37,7 @@ function appendLog(logPath, line) {
  *   actionId: string,
  *   milestoneId: string,
  *   exitCode: number,
- *   stderrOutput: string,
+ *   errorOutput: string,
  *   durationMs: number,
  *   startedAt: string,
  *   completedAt: string,
@@ -62,14 +63,14 @@ function appendLog(logPath, line) {
 /**
  * Detect transient failures that warrant automatic retry.
  * @param {number} exitCode
- * @param {string} stderrOutput
+ * @param {string} errorOutput
  * @returns {boolean}
  */
-function isTransientFailure(exitCode, stderrOutput) {
-  // Timeout (124) or OOM kill (137)
+function isTransientFailure(exitCode, errorOutput) {
+  // Timeout or cancellation-like errors
   if (exitCode === 124 || exitCode === 137 || exitCode === -1) return true;
-  const patterns = /ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOMEM|SIGKILL|SIGTERM|socket hang up|network timeout/i;
-  return patterns.test(stderrOutput);
+  const patterns = /ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOMEM|SIGKILL|SIGTERM|socket hang up|network timeout|Cancelled/i;
+  return patterns.test(errorOutput);
 }
 
 /**
@@ -140,8 +141,8 @@ function createPipelineRunner(sseClients, cwd, registry) {
   let isRunning = false;
   /** @type {boolean} */
   let stopRequested = false;
-  /** @type {Map<string, import('child_process').ChildProcess>} */
-  const activeProcesses = new Map();
+  /** @type {Map<string, AbortController>} */
+  const activeControllers = new Map();
   /** @type {ActionResult[]} */
   let results = [];
   /** @type {{ currentWave: number, totalWaves: number, completedActions: string[], failedActions: string[], stoppedActions: string[], skippedActions: string[] } | null} */
@@ -177,7 +178,7 @@ function createPipelineRunner(sseClients, cwd, registry) {
       completedActions: pipelineState.completedActions,
       failedActions: pipelineState.failedActions,
       stoppedActions: pipelineState.stoppedActions,
-      activeActions: [...activeProcesses.keys()],
+      activeActions: [...activeControllers.keys()],
       outputBuffers: outputBuffers,
       pausedOnFailure: pausedOnFailure,
       timestamp: Date.now(),
@@ -239,121 +240,86 @@ function createPipelineRunner(sseClients, cwd, registry) {
   }
 
   /**
-   * Execute a single action and return a promise that resolves when done.
+   * Execute a single action using runAI and return a promise that resolves when done.
    * @param {string} actionId
    * @param {string} milestoneId
    * @returns {Promise<ActionResult>}
    */
   function executeAction(actionId, milestoneId) {
-    return new Promise((resolve) => {
-      const startedAt = new Date().toISOString();
-      const startTime = Date.now();
+    const startedAt = new Date().toISOString();
+    const startTime = Date.now();
 
-      // Register this action execution with the agent registry
+    // Register this action execution with the agent registry
+    if (registry) {
+      const agent = registry.spawn('execution', actionId, milestoneId);
+      actionAgentIds.set(actionId, agent.id);
+    }
+
+    const prompt = `Run /declare:execute ${milestoneId} for action ${actionId} only. Do not ask questions, execute autonomously.`;
+    const abortController = new AbortController();
+
+    activeControllers.set(actionId, abortController);
+
+    // Log path
+    const planningDir = path.join(cwd, '.planning');
+    const milestoneFolder = findMilestoneFolder(planningDir, milestoneId);
+    const logPath = milestoneFolder ? path.join(milestoneFolder, 'execution.log') : undefined;
+    appendLog(logPath, `\n=== START ${actionId} (pipeline) @ ${startedAt} ===`);
+
+    return runAI(prompt, {
+      cwd,
+      model: 'sonnet',
+      withTools: true,
+      maxTurns: 10,
+      abortController,
+      onText: (chunk) => {
+        broadcast('action-output', { actionId, text: chunk, stream: 'stdout' });
+        appendLog(logPath, `[${new Date().toISOString()}] [${actionId}] [stdout] ${chunk}`);
+        // Buffer output for restore on page refresh
+        if (!outputBuffers[actionId]) outputBuffers[actionId] = '';
+        outputBuffers[actionId] += chunk;
+        if (outputBuffers[actionId].length > OUTPUT_BUFFER_MAX) {
+          outputBuffers[actionId] = outputBuffers[actionId].slice(-OUTPUT_BUFFER_MAX);
+        }
+      },
+    }).then(({ text, error }) => {
+      const exitCode = error ? 1 : 0;
+      const completedAt = new Date().toISOString();
+      const durationMs = Date.now() - startTime;
+      appendLog(logPath, `=== END ${actionId} (pipeline) @ ${completedAt} exit=${exitCode} duration=${durationMs}ms ===\n`);
+      activeControllers.delete(actionId);
+      broadcast('action-complete', { actionId, exitCode, durationMs });
       if (registry) {
-        const agent = registry.spawn('execution', actionId, milestoneId);
-        actionAgentIds.set(actionId, agent.id);
-      }
-
-      const prompt = `Run /declare:execute ${milestoneId} for action ${actionId} only. Do not ask questions, execute autonomously.`;
-      const spawnEnv = { ...process.env, FORCE_COLOR: '0' };
-      delete spawnEnv.CLAUDECODE;
-      const proc = spawn('claude', ['-p', prompt], {
-        cwd,
-        env: spawnEnv,
-      });
-
-      activeProcesses.set(actionId, proc);
-
-      // Log path
-      const planningDir = path.join(cwd, '.planning');
-      const milestoneFolder = findMilestoneFolder(planningDir, milestoneId);
-      const logPath = milestoneFolder ? path.join(milestoneFolder, 'execution.log') : undefined;
-      appendLog(logPath, `\n=== START ${actionId} (pipeline) @ ${startedAt} ===`);
-
-      // Line-buffered output + full stderr accumulator for retry detection
-      let stdoutBuf = '';
-      let stderrBuf = '';
-      let stderrFull = '';
-
-      if (proc.stdout) {
-        proc.stdout.on('data', (chunk) => {
-          stdoutBuf += chunk.toString();
-          const lines = stdoutBuf.split('\n');
-          stdoutBuf = lines.pop() || '';
-          for (const line of lines) {
-            broadcast('action-output', { actionId, text: line, stream: 'stdout' });
-            appendLog(logPath, `[${new Date().toISOString()}] [${actionId}] [stdout] ${line}`);
-            // Buffer output for restore on page refresh
-            if (!outputBuffers[actionId]) outputBuffers[actionId] = '';
-            outputBuffers[actionId] += line + '\n';
-            if (outputBuffers[actionId].length > OUTPUT_BUFFER_MAX) {
-              outputBuffers[actionId] = outputBuffers[actionId].slice(-OUTPUT_BUFFER_MAX);
-            }
+        const aId = actionAgentIds.get(actionId);
+        if (aId) {
+          if (exitCode === 0) {
+            registry.complete(aId, {
+              actionId,
+              milestoneId,
+              logPath: logPath || null,
+              durationMs,
+            });
+          } else {
+            registry.fail(aId, exitCode, error || 'execution failed');
           }
-        });
-      }
-      if (proc.stderr) {
-        proc.stderr.on('data', (chunk) => {
-          const text = chunk.toString();
-          stderrFull += text;
-          stderrBuf += text;
-          const lines = stderrBuf.split('\n');
-          stderrBuf = lines.pop() || '';
-          for (const line of lines) {
-            broadcast('action-output', { actionId, text: line, stream: 'stderr' });
-            appendLog(logPath, `[${new Date().toISOString()}] [${actionId}] [stderr] ${line}`);
-            // Buffer output for restore on page refresh
-            if (!outputBuffers[actionId]) outputBuffers[actionId] = '';
-            outputBuffers[actionId] += line + '\n';
-            if (outputBuffers[actionId].length > OUTPUT_BUFFER_MAX) {
-              outputBuffers[actionId] = outputBuffers[actionId].slice(-OUTPUT_BUFFER_MAX);
-            }
-          }
-        });
-      }
-
-      proc.on('close', (exitCode) => {
-        const code = exitCode ?? -1;
-        const completedAt = new Date().toISOString();
-        const durationMs = Date.now() - startTime;
-        appendLog(logPath, `=== END ${actionId} (pipeline) @ ${completedAt} exit=${code} duration=${durationMs}ms ===\n`);
-        activeProcesses.delete(actionId);
-        broadcast('action-complete', { actionId, exitCode: code, durationMs });
-        if (registry) {
-          const aId = actionAgentIds.get(actionId);
-          if (aId) {
-            if (code === 0) {
-              registry.complete(aId, {
-                actionId,
-                milestoneId,
-                logPath: logPath || null,
-                durationMs,
-              });
-            } else {
-              registry.fail(aId, code, 'process exited');
-            }
-            actionAgentIds.delete(actionId);
-          }
+          actionAgentIds.delete(actionId);
         }
-        resolve({ actionId, milestoneId, exitCode: code, stderrOutput: stderrFull, durationMs, startedAt, completedAt, retried: false, attempts: 1 });
-      });
-
-      proc.on('error', (_err) => {
-        const completedAt = new Date().toISOString();
-        const durationMs = Date.now() - startTime;
-        appendLog(logPath, `=== ERROR ${actionId} (pipeline) @ ${completedAt} ===\n`);
-        activeProcesses.delete(actionId);
-        broadcast('action-complete', { actionId, exitCode: -1, durationMs });
-        if (registry) {
-          const aId = actionAgentIds.get(actionId);
-          if (aId) {
-            registry.fail(aId, -1, 'spawn error');
-            actionAgentIds.delete(actionId);
-          }
+      }
+      return { actionId, milestoneId, exitCode, errorOutput: error || '', durationMs, startedAt, completedAt, retried: false, attempts: 1 };
+    }).catch((err) => {
+      const completedAt = new Date().toISOString();
+      const durationMs = Date.now() - startTime;
+      appendLog(logPath, `=== ERROR ${actionId} (pipeline) @ ${completedAt} ===\n`);
+      activeControllers.delete(actionId);
+      broadcast('action-complete', { actionId, exitCode: -1, durationMs });
+      if (registry) {
+        const aId = actionAgentIds.get(actionId);
+        if (aId) {
+          registry.fail(aId, -1, String(err.message || err));
+          actionAgentIds.delete(actionId);
         }
-        resolve({ actionId, milestoneId, exitCode: -1, stderrOutput: stderrFull, durationMs, startedAt, completedAt, retried: false, attempts: 1 });
-      });
+      }
+      return { actionId, milestoneId, exitCode: -1, errorOutput: String(err.message || err), durationMs, startedAt, completedAt, retried: false, attempts: 1 };
     });
   }
 
@@ -444,7 +410,7 @@ function createPipelineRunner(sseClients, cwd, registry) {
         // Retry transient failures once
         for (let ri = 0; ri < waveResults.length; ri++) {
           const r = waveResults[ri];
-          if (r.exitCode !== 0 && !stopRequested && isTransientFailure(r.exitCode, r.stderrOutput)) {
+          if (r.exitCode !== 0 && !stopRequested && isTransientFailure(r.exitCode, r.errorOutput)) {
             broadcast('action-retry', { actionId: r.actionId, milestoneId: r.milestoneId, attempt: 2, reason: 'transient failure detected' });
             appendLog(
               findMilestoneFolder(path.join(cwd, '.planning'), r.milestoneId)
@@ -516,7 +482,7 @@ function createPipelineRunner(sseClients, cwd, registry) {
 
       // Mark any remaining active as stopped
       if (stopRequested) {
-        for (const actionId of activeProcesses.keys()) {
+        for (const actionId of activeControllers.keys()) {
           finalState.stoppedActions.push(actionId);
         }
       }
@@ -575,7 +541,7 @@ function createPipelineRunner(sseClients, cwd, registry) {
   }
 
   /**
-   * Stop the pipeline execution. Kills all active processes.
+   * Stop the pipeline execution. Aborts all active AI runs.
    * @returns {{ ok?: boolean, error?: string }}
    */
   function stop() {
@@ -591,8 +557,8 @@ function createPipelineRunner(sseClients, cwd, registry) {
       skipResolve = null;
     }
 
-    for (const [actionId, proc] of activeProcesses) {
-      try { proc.kill('SIGTERM'); } catch (_) {}
+    for (const [actionId, controller] of activeControllers) {
+      try { controller.abort(); } catch (_) {}
       if (registry) {
         const aId = actionAgentIds.get(actionId);
         if (aId) {
@@ -624,7 +590,7 @@ function createPipelineRunner(sseClients, cwd, registry) {
       running: isRunning,
       currentWave: pipelineState.currentWave,
       totalWaves: pipelineState.totalWaves,
-      activeActions: [...activeProcesses.keys()],
+      activeActions: [...activeControllers.keys()],
       completedActions: pipelineState.completedActions,
       failedActions: pipelineState.failedActions,
       results,
@@ -669,7 +635,7 @@ function createPipelineRunner(sseClients, cwd, registry) {
       totalActions: totalActionCount,
       completedActions: pipelineState ? pipelineState.completedActions : [],
       failedActions: pipelineState ? pipelineState.failedActions : [],
-      activeActions: [...activeProcesses.keys()],
+      activeActions: [...activeControllers.keys()],
       outputBuffers: outputBuffers,
       pausedOnFailure: pausedOnFailure,
     };

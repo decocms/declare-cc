@@ -47,7 +47,6 @@ function loadActionsFromFolders(planningDir) {
     }
 
     for (const action of actions) {
-      const execPlanPath = join(milestonesDir, entry.name, `${action.id}-EXEC-PLAN.md`);
       allActions.push({
         id: action.id,
         title: action.title,
@@ -55,7 +54,6 @@ function loadActionsFromFolders(planningDir) {
         produces: action.produces,
         reviewState: action.reviewState || 'draft',
         causes: milestone ? [milestone] : [],
-        hasExecPlan: existsSync(execPlanPath),
       });
     }
   }

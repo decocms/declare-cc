@@ -4,15 +4,14 @@
 /**
  * Revision runner for browser-based plan revision.
  *
- * Spawns a Claude CLI subprocess with a revision prompt bundling
- * open annotations, streams output line-by-line to SSE clients,
- * versions the current artifact, and overwrites with revised content.
+ * Uses the AI runner (Claude Agent SDK) to revise plan artifacts based on
+ * annotations. Streams output to SSE clients, versions the current artifact,
+ * and overwrites with revised content.
  *
  * Session-based tracking (one revision at a time).
- * Zero runtime dependencies — uses Node's built-in child_process and fs only.
  */
 
-const { spawn } = require('node:child_process');
+const { runAI } = require('./ai-runner');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -29,8 +28,6 @@ function buildRevisionPrompt(artifactContent, annotations) {
     .join('\n');
 
   return (
-    'You are revising a plan artifact based on reviewer annotations. ' +
-    'Do NOT implement anything — only update the plan document.\n\n' +
     '## Current plan content\n\n' +
     artifactContent + '\n\n' +
     '## Reviewer annotations to address\n\n' +
@@ -42,8 +39,13 @@ function buildRevisionPrompt(artifactContent, annotations) {
   );
 }
 
+const SYSTEM_PROMPT =
+  'You are revising a plan artifact based on reviewer annotations. ' +
+  'Do NOT implement anything — only update the plan document. ' +
+  'Output ONLY the revised content with no markdown fencing or preamble.';
+
 /**
- * Create a revision runner that spawns and tracks Claude CLI revision processes.
+ * Create a revision runner that uses the AI runner SDK for plan revision.
  *
  * @param {Set<import('http').ServerResponse>} sseClients - Active SSE clients to broadcast to
  * @param {string} cwd - Project root directory
@@ -51,7 +53,7 @@ function buildRevisionPrompt(artifactContent, annotations) {
  * @returns {{ revise: (nodeId: string, artifactPath: string, artifactContent: string, annotations: Array<{line: number, text: string}>) => { ok?: boolean, error?: string, status?: number, sessionId?: string }, stop: () => { ok?: boolean, error?: string, status?: number }, running: () => string|null }}
  */
 function createRevisionRunner(sseClients, cwd, onComplete, registry) {
-  /** @type {{ sessionId: string, proc: import('child_process').ChildProcess, nodeId: string, agentId?: string } | null} */
+  /** @type {{ sessionId: string, abortController: AbortController, nodeId: string, agentId?: string } | null} */
   let current = null;
 
   /**
@@ -68,38 +70,6 @@ function createRevisionRunner(sseClients, cwd, onComplete, registry) {
         sseClients.delete(client);
       }
     }
-  }
-
-  /**
-   * Create a line-buffered handler for a stream.
-   * Accumulates chunks, splits on newlines, emits complete lines via SSE.
-   *
-   * @param {string} sessionId
-   * @param {string} nodeId
-   * @param {string} streamName - 'stdout' or 'stderr'
-   * @param {{ text: string }} accumulator - Object to accumulate full text for stdout
-   * @returns {(chunk: Buffer) => void}
-   */
-  function createLineHandler(sessionId, nodeId, streamName, accumulator) {
-    let buffer = '';
-    return (chunk) => {
-      const text = chunk.toString();
-      if (streamName === 'stdout') {
-        accumulator.text += text;
-      }
-      buffer += text;
-      const lines = buffer.split('\n');
-      // Keep the last element as remainder (incomplete line)
-      buffer = lines.pop() || '';
-      for (const line of lines) {
-        broadcast('revision-output', {
-          sessionId,
-          nodeId,
-          text: line,
-          stream: streamName,
-        });
-      }
-    };
   }
 
   /**
@@ -120,7 +90,7 @@ function createRevisionRunner(sseClients, cwd, onComplete, registry) {
   }
 
   /**
-   * Spawn a Claude CLI process to revise a plan artifact.
+   * Run an AI agent to revise a plan artifact.
    *
    * @param {string} nodeId - Node being revised
    * @param {string} artifactPath - Full path to the artifact file
@@ -152,12 +122,7 @@ function createRevisionRunner(sseClients, cwd, onComplete, registry) {
       // If versioning fails, continue with the revision anyway
     }
 
-    const spawnEnv = { ...process.env, FORCE_COLOR: '0' };
-    delete spawnEnv.CLAUDECODE;
-    const proc = spawn('claude', ['-p', prompt, '--output-format', 'text'], {
-      cwd,
-      env: spawnEnv,
-    });
+    const abortController = new AbortController();
 
     /** @type {string|undefined} */
     let agentId;
@@ -166,91 +131,89 @@ function createRevisionRunner(sseClients, cwd, onComplete, registry) {
       agentId = agent.id;
     }
 
-    current = { sessionId, proc, nodeId, agentId };
+    current = { sessionId, abortController, nodeId, agentId };
 
-    // Accumulator for full stdout text
-    const stdout = { text: '' };
-
-    // Pipe stdout line-by-line
-    if (proc.stdout) {
-      proc.stdout.on('data', createLineHandler(sessionId, nodeId, 'stdout', stdout));
-    }
-
-    // Pipe stderr line-by-line
-    if (proc.stderr) {
-      proc.stderr.on('data', createLineHandler(sessionId, nodeId, 'stderr', stdout));
-    }
-
-    // Process exited
-    proc.on('close', (exitCode) => {
+    // Fire and forget — results stream via SSE
+    runAI(prompt, {
+      cwd,
+      model: 'sonnet',
+      systemPrompt: SYSTEM_PROMPT,
+      abortController,
+      onText: (chunk) => {
+        broadcast('revision-output', {
+          sessionId,
+          nodeId,
+          text: chunk,
+          stream: 'stdout',
+        });
+      },
+    }).then(({ text, error }) => {
       const completedNodeId = current ? current.nodeId : nodeId;
       const closingAgentId = current ? current.agentId : undefined;
       current = null;
 
-      if (exitCode === 0) {
-        try {
-          // Strip markdown fencing if present and write revised content
-          const revisedContent = stripMarkdownFencing(stdout.text);
-          fs.writeFileSync(artifactPath, revisedContent, 'utf-8');
-
-          // Increment revisionRound
-          const annPath = path.join(cwd, '.planning', 'annotations', completedNodeId.toUpperCase() + '.json');
-          let annData = { nodeId: completedNodeId.toUpperCase(), annotations: [], revisionRound: 0 };
-          if (fs.existsSync(annPath)) {
-            try {
-              annData = JSON.parse(fs.readFileSync(annPath, 'utf-8'));
-            } catch (_) { /* ignore */ }
-          }
-          const newRound = (annData.revisionRound || 0) + 1;
-          annData.revisionRound = newRound;
-          const annDir = path.dirname(annPath);
-          fs.mkdirSync(annDir, { recursive: true });
-          fs.writeFileSync(annPath, JSON.stringify(annData, null, 2), 'utf-8');
-
-          broadcast('revision-complete', {
-            sessionId,
-            nodeId: completedNodeId,
-            exitCode,
-            revisionRound: newRound,
-          });
-
-          // Call the onComplete callback to transition review state
-          if (onComplete) {
-            try { onComplete(completedNodeId); } catch (_) { /* ignore */ }
-          }
-          if (registry && closingAgentId) {
-            registry.complete(closingAgentId, {
-              nodeId: completedNodeId,
-              planPath: artifactPath,
-              revisionRound: newRound,
-            });
-          }
-        } catch (err) {
-          broadcast('revision-complete', {
-            sessionId,
-            nodeId: completedNodeId,
-            exitCode: -1,
-            error: true,
-          });
-          if (registry && closingAgentId) {
-            registry.fail(closingAgentId, -1, 'revision post-processing error');
-          }
-        }
-      } else {
+      if (error) {
         broadcast('revision-complete', {
           sessionId,
           nodeId: completedNodeId,
-          exitCode: exitCode ?? -1,
+          exitCode: 1,
           error: true,
         });
         if (registry && closingAgentId) {
-          registry.fail(closingAgentId, exitCode ?? -1, 'revision failed');
+          registry.fail(closingAgentId, 1, error);
+        }
+        return;
+      }
+
+      try {
+        // Strip markdown fencing if present and write revised content
+        const revisedContent = stripMarkdownFencing(text);
+        fs.writeFileSync(artifactPath, revisedContent, 'utf-8');
+
+        // Increment revisionRound
+        const annPath = path.join(cwd, '.planning', 'annotations', completedNodeId.toUpperCase() + '.json');
+        let annData = { nodeId: completedNodeId.toUpperCase(), annotations: [], revisionRound: 0 };
+        if (fs.existsSync(annPath)) {
+          try {
+            annData = JSON.parse(fs.readFileSync(annPath, 'utf-8'));
+          } catch (_) { /* ignore */ }
+        }
+        const newRound = (annData.revisionRound || 0) + 1;
+        annData.revisionRound = newRound;
+        const annDir = path.dirname(annPath);
+        fs.mkdirSync(annDir, { recursive: true });
+        fs.writeFileSync(annPath, JSON.stringify(annData, null, 2), 'utf-8');
+
+        broadcast('revision-complete', {
+          sessionId,
+          nodeId: completedNodeId,
+          exitCode: 0,
+          revisionRound: newRound,
+        });
+
+        // Call the onComplete callback to transition review state
+        if (onComplete) {
+          try { onComplete(completedNodeId); } catch (_) { /* ignore */ }
+        }
+        if (registry && closingAgentId) {
+          registry.complete(closingAgentId, {
+            nodeId: completedNodeId,
+            planPath: artifactPath,
+            revisionRound: newRound,
+          });
+        }
+      } catch (err) {
+        broadcast('revision-complete', {
+          sessionId,
+          nodeId: completedNodeId,
+          exitCode: -1,
+          error: true,
+        });
+        if (registry && closingAgentId) {
+          registry.fail(closingAgentId, -1, 'revision post-processing error');
         }
       }
-    });
-
-    // Process failed to spawn (e.g. claude not found)
-    proc.on('error', (_err) => {
+    }).catch((err) => {
       const errorAgentId = current ? current.agentId : undefined;
       current = null;
       broadcast('revision-complete', {
@@ -260,7 +223,7 @@ function createRevisionRunner(sseClients, cwd, onComplete, registry) {
         error: true,
       });
       if (registry && errorAgentId) {
-        registry.fail(errorAgentId, -1, 'spawn error');
+        registry.fail(errorAgentId, -1, 'error');
       }
     });
 
@@ -268,7 +231,7 @@ function createRevisionRunner(sseClients, cwd, onComplete, registry) {
   }
 
   /**
-   * Stop the currently running revision process with SIGTERM.
+   * Stop the currently running revision.
    *
    * @returns {{ ok?: boolean, error?: string, status?: number }}
    */
@@ -277,7 +240,7 @@ function createRevisionRunner(sseClients, cwd, onComplete, registry) {
       return { error: 'not_running', status: 404 };
     }
 
-    current.proc.kill('SIGTERM');
+    current.abortController.abort();
     return { ok: true };
   }
 

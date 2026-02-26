@@ -90,7 +90,7 @@
       background: var(--bg);
       color: var(--text);
       font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      font-size: 14px;
+      font-size: 16px;
       line-height: 1.5;
       height: 100vh;
       display: flex;
@@ -1157,6 +1157,50 @@
       border-color: var(--accent-border);
       color: var(--text-bright);
     }
+    .lifecycle-stage-btn + .lifecycle-stage-btn {
+      margin-left: 4px;
+    }
+
+    /* ── Card derivation progress ── */
+    .drill-card-deriving {
+      border-color: var(--executing-border) !important;
+      background: var(--executing-bg) !important;
+    }
+    .derive-card-indicator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      font-size: 12px;
+      color: var(--executing-color);
+      font-weight: 600;
+    }
+    .derive-spinner {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border: 2px solid var(--executing-border);
+      border-top-color: var(--executing-color);
+      border-radius: 50%;
+      animation: derive-spin 0.8s linear infinite;
+    }
+    @keyframes derive-spin {
+      to { transform: rotate(360deg); }
+    }
+    .derive-card-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      color: var(--executing-color);
+      font-weight: 600;
+      margin-left: 4px;
+    }
+    .derive-card-status .derive-spinner {
+      width: 10px;
+      height: 10px;
+      border-width: 1.5px;
+    }
 
     /* ── Filter chips ── */
     .lifecycle-filter-chips {
@@ -1219,8 +1263,8 @@
 
     /* ── Empty state / Onboarding ── */
     .onboarding-empty {
-      max-width: 480px;
-      margin: 80px auto 0;
+      max-width: 560px;
+      margin: 60px auto 0;
       text-align: center;
       display: flex;
       flex-direction: column;
@@ -1266,7 +1310,7 @@
     .onboarding-input:focus, .onboarding-textarea:focus {
       border-color: var(--accent-border);
     }
-    .onboarding-textarea { resize: vertical; min-height: 60px; }
+    .onboarding-textarea { resize: vertical; min-height: 240px; }
     .onboarding-btn {
       padding: 10px 24px;
       font-size: 14px;
@@ -1285,6 +1329,215 @@
       font-size: 13px;
       color: var(--broken-color);
       min-height: 18px;
+    }
+
+    /* ── Onboarding flow (vision → questions → proposals) ── */
+    .onboard-container {
+      width: 100%;
+      padding: 16px 0;
+    }
+    .onboard-stream {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 11px;
+      line-height: 1.5;
+      color: var(--text-muted);
+      max-height: 160px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin: 0 0 12px 0;
+      padding: 10px 12px;
+      background: var(--surface);
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+    }
+    .onboard-stream.streaming {
+      border-color: var(--accent-border);
+    }
+    .onboard-phase-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 12px;
+    }
+    .onboard-questions {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .onboard-question {
+      background: var(--surface);
+      border: 1px solid transparent;
+      border-radius: var(--radius-lg);
+      padding: 18px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      transition: border-color 0.15s ease;
+    }
+    .onboard-question:focus-within {
+      border-color: var(--accent-border);
+    }
+    .onboard-question .oq-number {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--accent);
+      letter-spacing: 0.04em;
+    }
+    .onboard-question label {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text-bright);
+      line-height: 1.4;
+    }
+    .onboard-question .oq-context {
+      font-size: 13px;
+      color: var(--text-dim);
+      line-height: 1.5;
+    }
+    .onboard-question .oq-options {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .onboard-question .oq-option {
+      padding: 6px 14px;
+      font-size: 13px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      color: var(--text);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .onboard-question .oq-option:hover { border-color: var(--accent); color: var(--accent); }
+    .onboard-question .oq-option.selected { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+    .onboard-question textarea {
+      width: 100%;
+      padding: 10px 14px;
+      font-size: 14px;
+      font-family: inherit;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      outline: none;
+      resize: vertical;
+      min-height: 48px;
+      line-height: 1.5;
+    }
+    .onboard-question textarea::placeholder { color: var(--text-dim); }
+    .onboard-question textarea:focus { border-color: var(--accent-border); background: var(--surface); }
+    .onboard-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 16px;
+      padding-top: 8px;
+    }
+    .onboard-actions button {
+      padding: 10px 24px;
+      font-size: 14px;
+      font-weight: 600;
+      font-family: inherit;
+      border-radius: var(--radius-lg);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .onboard-btn-primary {
+      background: var(--accent);
+      color: var(--bg);
+      border: none;
+    }
+    .onboard-btn-primary:hover { opacity: 0.9; }
+    .onboard-btn-secondary {
+      background: transparent;
+      color: var(--text-dim);
+      border: 1px solid var(--border);
+    }
+    .onboard-btn-secondary:hover { border-color: var(--text-dim); color: var(--text); }
+    .onboard-proposal {
+      background: var(--surface);
+      border: 1px solid transparent;
+      border-radius: var(--radius-lg);
+      padding: 18px 20px;
+      margin-bottom: 10px;
+      transition: all 0.2s;
+    }
+    .onboard-proposal:hover {
+      background: var(--surface2);
+    }
+    .onboard-proposal.current {
+      border-color: var(--accent);
+      background: linear-gradient(135deg, rgba(134, 239, 172, 0.03) 0%, var(--surface) 60%);
+    }
+    .onboard-proposal.approved {
+      border-left: 3px solid var(--done-color);
+      opacity: 0.65;
+    }
+    .onboard-proposal .op-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .onboard-proposal .op-check {
+      font-size: 18px;
+      color: var(--done-color);
+    }
+    .onboard-proposal .op-index {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-dim);
+      min-width: 20px;
+    }
+    .onboard-proposal .op-id {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--accent);
+    }
+    .onboard-title {
+      width: 100%;
+      padding: 8px 14px;
+      font-size: 15px;
+      font-weight: 600;
+      font-family: inherit;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text-bright);
+      outline: none;
+    }
+    .onboard-title:focus { border-color: var(--accent-border); background: var(--surface); }
+    .onboard-statement {
+      width: 100%;
+      padding: 8px 14px;
+      font-size: 14px;
+      font-family: inherit;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      outline: none;
+      resize: vertical;
+      min-height: 44px;
+      margin-top: 8px;
+      line-height: 1.5;
+    }
+    .onboard-statement:focus { border-color: var(--accent-border); background: var(--surface); }
+    .onboard-reason {
+      font-size: 13px;
+      color: var(--text-dim);
+      margin-top: 8px;
+      font-style: italic;
+      line-height: 1.4;
+    }
+    .onboard-progress {
+      font-size: 14px;
+      color: var(--text-dim);
+      margin-bottom: 12px;
+      font-weight: 600;
     }
 
     /* ── Reconnecting banner ── */
@@ -1306,28 +1559,7 @@
       transform: translateX(-50%) translateY(0);
     }
 
-    /* ── Lifecycle card transitions ── */
-    .lifecycle-cards .drill-card {
-      animation: lifecycleCardIn 0.2s ease-out both;
-    }
-    @keyframes lifecycleCardIn {
-      from { opacity: 0; transform: translateY(8px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-    .lifecycle-cards .drill-card:nth-child(1) { animation-delay: 0ms; }
-    .lifecycle-cards .drill-card:nth-child(2) { animation-delay: 30ms; }
-    .lifecycle-cards .drill-card:nth-child(3) { animation-delay: 60ms; }
-    .lifecycle-cards .drill-card:nth-child(4) { animation-delay: 90ms; }
-    .lifecycle-cards .drill-card:nth-child(5) { animation-delay: 120ms; }
-    .lifecycle-cards .drill-card:nth-child(n+6) { animation-delay: 150ms; }
-
-    .lifecycle-section {
-      animation: sectionIn 0.25s ease-out both;
-    }
-    @keyframes sectionIn {
-      from { opacity: 0; }
-      to { opacity: 1; }
-    }
+    /* ── Lifecycle card transitions (disabled — instant render) ── */
 
     /* ── Loading skeleton ── */
     .skeleton-card {
@@ -1947,14 +2179,80 @@
     }
     .col-empty-invite .output-log {
       width: 100%;
-      max-width: 420px;
+      max-width: 560px;
       text-align: left;
+      max-height: 200px;
+      overflow-y: auto;
+      font-size: 12px;
+      line-height: 1.6;
+      color: var(--text-dim);
+      padding: 12px 16px;
+      border-radius: var(--radius);
+      background: var(--surface);
+      border: 1px solid var(--border);
+    }
+    .col-empty-invite .output-log .derive-log-line {
+      opacity: 0.5;
+      transition: opacity 0.3s;
+    }
+    .col-empty-invite .output-log .derive-log-line:last-child {
+      opacity: 1;
+      color: var(--text);
     }
     .col-empty-invite .derivation-checklist {
       text-align: left;
       width: 100%;
-      max-width: 420px;
+      max-width: 560px;
     }
+    .col-empty-invite #derivation-proposals {
+      width: 100%;
+      max-width: 560px;
+      text-align: left;
+    }
+    .derivation-progress {
+      width: 100%;
+      max-width: 560px;
+      margin-top: 16px;
+      padding: 14px 18px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+    }
+    .derive-phase {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      animation: derive-phase-in 0.4s ease;
+    }
+    .derive-phase-icon {
+      font-size: 18px;
+      flex-shrink: 0;
+    }
+    .derive-phase-text {
+      font-size: 13px;
+      color: var(--text);
+      font-weight: 500;
+    }
+    @keyframes derive-phase-in {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .derive-stream-output {
+      margin-top: 10px;
+      padding: 10px 12px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 12px;
+      line-height: 1.5;
+      color: var(--text-dim);
+      max-height: 160px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+    }
+
     .derive-spinner {
       display: inline-block;
       width: 12px;
@@ -3979,6 +4277,6 @@
   </div>
 </div>
 
-<script src="/public/app.js?v=6"></script>
+<script src="/public/app.js?v=25"></script>
 </body>
 </html>

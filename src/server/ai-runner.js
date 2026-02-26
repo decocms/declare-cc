@@ -37,6 +37,7 @@ async function getQuery() {
  * @param {number} [opts.maxTurns] - Max turns (default: 1)
  * @param {boolean} [opts.withTools] - Enable file tools (Read, Write, Edit, Bash, Glob, Grep)
  * @param {string[]} [opts.allowedTools] - Specific tools to allow (overrides withTools default set)
+ * @param {string} [opts.systemPrompt] - Custom system prompt (overrides default)
  * @param {(text: string) => void} [opts.onText] - Callback for streaming text chunks
  * @param {AbortController} [opts.abortController] - For cancellation
  * @returns {Promise<{ text: string, error?: string }>}
@@ -44,6 +45,12 @@ async function getQuery() {
 async function runAI(prompt, opts = {}) {
   const queryFn = await getQuery();
   const abortController = opts.abortController || new AbortController();
+
+  // Auto-timeout: abort after 2 minutes for text-only, 10 minutes for tool-enabled
+  const timeoutMs = (opts.withTools || opts.allowedTools) ? 10 * 60 * 1000 : 2 * 60 * 1000;
+  const timeoutId = setTimeout(() => {
+    if (!abortController.signal.aborted) abortController.abort();
+  }, timeoutMs);
 
   // Clear CLAUDECODE env var to allow nested SDK usage
   const savedClaudeCode = process.env.CLAUDECODE;
@@ -60,7 +67,7 @@ async function runAI(prompt, opts = {}) {
       cwd: opts.cwd || process.cwd(),
       abortController,
       env,
-      systemPrompt: 'You are a helpful assistant. Respond concisely and directly.',
+      systemPrompt: opts.systemPrompt || 'You are a helpful assistant. Respond concisely and directly.',
     };
 
     if (opts.withTools || opts.allowedTools) {
@@ -96,18 +103,22 @@ async function runAI(prompt, opts = {}) {
         if (message.subtype === 'success' && message.result) {
           resultText = message.result;
         } else if (message.is_error) {
-          return { text: '', error: message.errors?.join(', ') || 'AI query failed' };
+          const errDetail = message.errors?.join(', ') || message.error || JSON.stringify(message);
+          console.error('[ai-runner] SDK error result:', errDetail);
+          return { text: '', error: errDetail || 'AI query failed' };
         }
       }
     }
 
     return { text: resultText };
   } catch (err) {
+    console.error('[ai-runner] Exception:', err.message || err);
     if (abortController.signal.aborted) {
       return { text: '', error: 'Cancelled' };
     }
     return { text: '', error: String(err.message || err) };
   } finally {
+    clearTimeout(timeoutId);
     // Restore CLAUDECODE env var
     if (savedClaudeCode) process.env.CLAUDECODE = savedClaudeCode;
   }

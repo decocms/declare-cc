@@ -108,6 +108,7 @@ function runAddMilestonesBatch(cwd, args) {
     milestones.push({
       id,
       title: input.title,
+      description: input.description || '',
       status: 'PENDING',
       realizes,
       hasPlan: false,
@@ -121,7 +122,7 @@ function runAddMilestonesBatch(cwd, args) {
       }
     }
 
-    results.push({ id, title: input.title, realizes, status: 'PENDING' });
+    results.push({ id, title: input.title, description: input.description || '', realizes, status: 'PENDING' });
   }
 
   // Write both files once
