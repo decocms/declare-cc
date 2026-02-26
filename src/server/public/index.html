@@ -1695,8 +1695,8 @@
       border-color: var(--accent-border);
     }
 
-    /* Expandable exec-plan preview */
-    .drill-exec-plan-toggle {
+    /* Expandable plan preview */
+    .drill-plan-toggle {
       font-size: 11px;
       color: var(--text-muted);
       cursor: pointer;
@@ -1705,8 +1705,8 @@
       font-weight: 500;
       transition: color 0.12s;
     }
-    .drill-exec-plan-toggle:hover { color: var(--text); }
-    .drill-exec-plan-content {
+    .drill-plan-toggle:hover { color: var(--text); }
+    .drill-plan-content {
       display: none;
       margin-top: 6px;
       padding: 12px 14px;
@@ -1719,7 +1719,7 @@
       max-height: 200px;
       overflow-y: auto;
     }
-    .drill-exec-plan-content.open { display: block; }
+    .drill-plan-content.open { display: block; }
 
     /* ── Bottom prompt bar ── */
     #drill-prompt {
@@ -1749,51 +1749,58 @@
     /* Command card in agents panel */
     #command-card {
       background: var(--surface2);
-      border: 1px dashed var(--border);
-      border-radius: var(--radius);
-      padding: 10px 12px;
-      cursor: pointer;
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 8px 14px;
+      cursor: default;
       transition: all 0.15s ease;
       margin-bottom: 4px;
     }
-    #command-card:hover { border-color: var(--accent-border); }
+    #command-card:hover, #command-card:focus-within { border-color: var(--accent-border); }
     #command-card .cmd-label {
+      display: none;
+    }
+    #command-card .cmd-key {
+      display: none;
+    }
+    #command-card .cmd-row {
       display: flex;
       align-items: center;
       gap: 8px;
-      font-size: 12px;
-      color: var(--text-dim);
     }
-    #command-card .cmd-key {
+    #command-card .cmd-shortcut {
       background: var(--surface3);
       border: 1px solid var(--border);
-      border-radius: 3px;
-      padding: 1px 5px;
+      border-radius: 4px;
+      padding: 1px 6px;
       font-size: 10px;
       font-weight: 700;
-      color: var(--text-muted);
+      color: var(--text-dim);
       font-family: 'SF Mono', 'Fira Code', monospace;
+      flex-shrink: 0;
+      line-height: 1.6;
     }
+    #command-card:focus-within .cmd-shortcut { display: none; }
     #command-card.editing {
       border-color: var(--accent);
       border-style: solid;
       cursor: default;
     }
     #command-card-input {
-      display: none;
+      display: block;
       width: 100%;
       background: transparent;
       border: none;
       color: var(--text);
       font-size: 13px;
-      padding: 4px 0;
+      padding: 2px 0;
       outline: none;
       font-family: inherit;
       resize: none;
       line-height: 1.4;
+      min-width: 0;
+      flex: 1;
     }
-    #command-card.editing .cmd-label { display: none; }
-    #command-card.editing #command-card-input { display: block; }
     #command-card-hint {
       display: none;
       font-size: 10px;
@@ -1801,6 +1808,23 @@
       margin-top: 4px;
     }
     #command-card.editing #command-card-hint { display: block; }
+    #command-card.running { border-color: var(--executing-color); border-style: solid; }
+    #command-card.running .cmd-label { display: none; }
+    #command-card.running #command-card-input { display: none; }
+    #command-card.running #command-card-hint { display: none; }
+    .command-output-stream {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 11px;
+      line-height: 1.5;
+      color: var(--text-muted);
+      max-height: 200px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin: 0;
+      padding: 0;
+    }
+    .command-output-stream.streaming { color: var(--executing-color); }
     .drill-next-btn {
       background: var(--accent-dim);
       border: 1px solid var(--accent-border);
@@ -2258,7 +2282,7 @@
       word-break: break-all;
       color: var(--text);
     }
-    /* Clickable file links in exec-plan detail */
+    /* Clickable file links in plan detail */
     .file-link {
       cursor: pointer;
       transition: border-color 0.15s;
@@ -2805,6 +2829,95 @@
     .agent-card-view-result:hover {
       background: var(--act-color);
       color: var(--surface1);
+    }
+
+    /* ── Discuss (interview) flow ── */
+    .discuss-container {
+      margin-top: 8px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 10px;
+      background: var(--surface2);
+    }
+    .discuss-loading { display: flex; flex-direction: column; gap: 8px; }
+    .discuss-streaming {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 11px;
+      color: var(--executing-color);
+      max-height: 120px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin: 0;
+    }
+    .discuss-header {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-bright);
+      margin-bottom: 8px;
+    }
+    .discuss-q {
+      margin-bottom: 10px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+    .discuss-q:last-of-type { border-bottom: none; }
+    .discuss-q-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-bright);
+      display: block;
+      margin-bottom: 4px;
+    }
+    .discuss-q-context {
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-bottom: 6px;
+      font-style: italic;
+    }
+    .discuss-q-options {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-bottom: 6px;
+    }
+    .discuss-option-btn {
+      padding: 3px 10px;
+      font-size: 11px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--surface3);
+      color: var(--text-muted);
+      cursor: pointer;
+    }
+    .discuss-option-btn:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    .discuss-q-input {
+      width: 100%;
+      background: var(--surface1);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text-bright);
+      font-size: 12px;
+      padding: 6px 8px;
+      resize: vertical;
+      font-family: inherit;
+    }
+    .discuss-q-input:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+    .discuss-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .discuss-error {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 8px;
     }
     .agent-timer-final {
       color: var(--text-muted);
@@ -3829,9 +3942,12 @@
     </div>
   </div>
   <div id="activity-cards" class="activity-tab-content active">
-    <div id="command-card" tabindex="0">
-      <div class="cmd-label"><span class="cmd-key">C</span> Command</div>
-      <textarea id="command-card-input" rows="2" placeholder="What should I do?"></textarea>
+    <div id="command-card" class="editing" tabindex="0">
+      <div class="cmd-label"><span class="cmd-key">C</span> Chat</div>
+      <div class="cmd-row">
+        <textarea id="command-card-input" rows="1" placeholder="Ask anything..."></textarea>
+        <kbd class="cmd-shortcut">C</kbd>
+      </div>
       <div id="command-card-hint">Enter to send &middot; Esc to cancel</div>
     </div>
     <div id="activity-cards-active"></div>
@@ -3863,6 +3979,6 @@
   </div>
 </div>
 
-<script src="/public/app.js?v=5"></script>
+<script src="/public/app.js?v=6"></script>
 </body>
 </html>

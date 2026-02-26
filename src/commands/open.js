@@ -16,6 +16,7 @@ const fs = require('fs');
 const path = require('path');
 const http = require('http');
 const { spawn } = require('child_process');
+const { runInit } = require('./init');
 
 /**
  * Check if the server is alive on the given port.
@@ -59,19 +60,14 @@ async function waitForServer(port, maxAttempts = 10, intervalMs = 100) {
  * @returns {Promise<void>}
  */
 async function runOpen(cwd, args) {
-  // 0. Guard: require .planning/ to exist
+  // 0. Auto-init if .planning/ doesn't exist
   const planningDir = path.join(cwd, '.planning');
   if (!fs.existsSync(planningDir)) {
-    console.log('');
-    console.log('  No .planning/ directory found in: ' + cwd);
-    console.log('');
-    console.log('  To initialize this project with Declare, run:');
-    console.log('    npx declare-cc');
-    console.log('');
-    console.log('  Or, if declare-cc is already installed globally:');
-    console.log('    declare-cc');
-    console.log('');
-    process.exit(0);
+    console.log('Initializing Declare project in: ' + cwd);
+    const result = runInit(cwd, []);
+    if (result.created && result.created.length > 0) {
+      console.log('Created: ' + result.created.join(', '));
+    }
   }
 
   // 1. Read port

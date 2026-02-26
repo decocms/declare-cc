@@ -1157,15 +1157,13 @@ var require_build_dag = __commonJS({
           milestoneProduces[milestone] = produces;
         }
         for (const action of actions) {
-          const execPlanPath = join(milestonesDir, entry.name, `${action.id}-EXEC-PLAN.md`);
           allActions.push({
             id: action.id,
             title: action.title,
             status: action.status,
             produces: action.produces,
             reviewState: action.reviewState || "draft",
-            causes: milestone ? [milestone] : [],
-            hasExecPlan: existsSync(execPlanPath)
+            causes: milestone ? [milestone] : []
           });
         }
       }
@@ -4560,6 +4558,10 @@ var require_ai_runner = __commonJS({
     async function runAI(prompt, opts = {}) {
       const queryFn = await getQuery();
       const abortController = opts.abortController || new AbortController();
+      const timeoutMs = opts.withTools || opts.allowedTools ? 5 * 60 * 1e3 : 2 * 60 * 1e3;
+      const timeoutId = setTimeout(() => {
+        if (!abortController.signal.aborted) abortController.abort();
+      }, timeoutMs);
       const savedClaudeCode = process.env.CLAUDECODE;
       delete process.env.CLAUDECODE;
       try {
@@ -4600,17 +4602,21 @@ var require_ai_runner = __commonJS({
             if (message.subtype === "success" && message.result) {
               resultText = message.result;
             } else if (message.is_error) {
-              return { text: "", error: message.errors?.join(", ") || "AI query failed" };
+              const errDetail = message.errors?.join(", ") || message.error || JSON.stringify(message);
+              console.error("[ai-runner] SDK error result:", errDetail);
+              return { text: "", error: errDetail || "AI query failed" };
             }
           }
         }
         return { text: resultText };
       } catch (err) {
+        console.error("[ai-runner] Exception:", err.message || err);
         if (abortController.signal.aborted) {
           return { text: "", error: "Cancelled" };
         }
         return { text: "", error: String(err.message || err) };
       } finally {
+        clearTimeout(timeoutId);
         if (savedClaudeCode) process.env.CLAUDECODE = savedClaudeCode;
       }
     }
@@ -4710,6 +4716,13 @@ data: ${JSON.stringify(data)}
             } else {
               registry.fail(closingAgentId, 1, error || "action derivation failed");
             }
+          }
+        }).catch((err) => {
+          const closingAgentId = current ? current.agentId : void 0;
+          current = null;
+          broadcast("action-derivation-complete", { sessionId, exitCode: 1, actions: null });
+          if (registry && closingAgentId) {
+            registry.fail(closingAgentId, 1, String(err));
           }
         });
         return { ok: true, sessionId };
@@ -7370,6 +7383,25 @@ data: ${JSON.stringify({ sessionId, nodeId: nId, exitCode, suggestion, error })}
             fs.appendFileSync(activityFile, JSON.stringify({ ts: (/* @__PURE__ */ new Date()).toISOString(), tool: "Task", phase, agent: "Refine", desc }) + "\n");
           } catch (_) {
           }
+        }).catch((err) => {
+          refineSession = null;
+          const payload = `event: refine-complete
+data: ${JSON.stringify({ sessionId, nodeId: nId, exitCode: 1, suggestion: "", error: String(err) })}
+
+`;
+          for (const client of sseClients) {
+            try {
+              client.write(payload);
+            } catch (_) {
+              sseClients.delete(client);
+            }
+          }
+          if (refineAgentId) {
+            try {
+              getAgentRegistry(cwd).fail(refineAgentId, 1, String(err));
+            } catch (_) {
+            }
+          }
         });
         const entry = { ts: (/* @__PURE__ */ new Date()).toISOString(), tool: "Task", phase: "start", agent: "Refine", desc: `Analyzing ${nodeId.toUpperCase()} for improvements` };
         fs.appendFileSync(activityFile, JSON.stringify(entry) + "\n");
@@ -7432,6 +7464,200 @@ data: ${JSON.stringify({ sessionId, nodeId: nId, exitCode, suggestion, error })}
         sendJson(res, 200, { ok: true });
       } catch (err) {
         sendJson(res, 500, { error: String(err) });
+      }
+    }
+    var discussSession = null;
+    async function handleDiscuss(req, res, cwd, nodeId) {
+      try {
+        if (discussSession) {
+          sendJson(res, 409, { error: "A discuss session is already running" });
+          return;
+        }
+        const graph = runLoadGraph2(cwd);
+        if ("error" in graph) {
+          sendJson(res, 500, { error: graph.error });
+          return;
+        }
+        const id = nodeId.toUpperCase();
+        const prefix = id.split("-")[0];
+        let nodeContext = "";
+        if (prefix === "D") {
+          const decl = graph.declarations.find((d) => d.id === id);
+          if (!decl) {
+            sendJson(res, 404, { error: "Declaration not found" });
+            return;
+          }
+          nodeContext = `Declaration ${decl.id}: ${decl.title}
+Statement: ${decl.statement || decl.title}`;
+          const myMiles = graph.milestones.filter((m) => (m.realizes || []).includes(id));
+          if (myMiles.length > 0) {
+            nodeContext += "\n\nExisting milestones:\n" + myMiles.map((m) => `- ${m.id}: ${m.title}`).join("\n");
+          }
+        } else if (prefix === "M") {
+          const mile = graph.milestones.find((m) => m.id === id);
+          if (!mile) {
+            sendJson(res, 404, { error: "Milestone not found" });
+            return;
+          }
+          nodeContext = `Milestone ${mile.id}: ${mile.title}`;
+          const myActions = graph.actions.filter((a) => (a.causes || []).includes(id));
+          if (myActions.length > 0) {
+            nodeContext += "\n\nExisting actions:\n" + myActions.map((a) => `- ${a.id}: ${a.title}`).join("\n");
+          }
+        }
+        const prompt = `You are helping a user plan their software project. You need to identify gray areas and ambiguities that should be resolved BEFORE creating detailed plans.
+
+Given this project artifact:
+
+${nodeContext}
+
+Identify 3-5 important questions that should be answered to avoid wasted work. Focus on:
+- Ambiguous scope (what's included vs excluded?)
+- Technical decisions that affect the plan
+- Dependencies or constraints not mentioned
+- Success criteria that need clarification
+
+Output ONLY a JSON array of question objects:
+[{"question": "The question text", "context": "Why this matters", "options": ["Option A", "Option B"]}]
+
+The options array is optional \u2014 include it only when there are clear alternatives to choose from.`;
+        const sessionId = `discuss-${Date.now()}`;
+        const { runAI } = require_ai_runner();
+        const activityFile = path.join(cwd, ".planning", "activity.jsonl");
+        let agentId;
+        try {
+          const reg = getAgentRegistry(cwd);
+          const agent = reg.spawn("discuss", id, id);
+          agentId = agent.id;
+        } catch (_) {
+        }
+        const abortController = new AbortController();
+        discussSession = { sessionId, nodeId: id, abortController, agentId };
+        runAI(prompt, {
+          cwd,
+          model: "haiku",
+          maxTurns: 1,
+          abortController,
+          onText: (text) => {
+            const payload = `event: discuss-output
+data: ${JSON.stringify({ sessionId, nodeId: id, text })}
+
+`;
+            for (const client of sseClients) {
+              try {
+                client.write(payload);
+              } catch (_) {
+                sseClients.delete(client);
+              }
+            }
+          }
+        }).then(({ text, error }) => {
+          const closingSession = discussSession;
+          discussSession = null;
+          let questions = null;
+          if (!error && text) {
+            try {
+              questions = JSON.parse(text.trim());
+            } catch (_) {
+              const jsonMatch = text.match(/\[[\s\S]*\]/);
+              if (jsonMatch) {
+                try {
+                  questions = JSON.parse(jsonMatch[0]);
+                } catch (_2) {
+                }
+              }
+            }
+          }
+          const payload = `event: discuss-complete
+data: ${JSON.stringify({ sessionId, nodeId: id, questions, error })}
+
+`;
+          for (const client of sseClients) {
+            try {
+              client.write(payload);
+            } catch (_) {
+              sseClients.delete(client);
+            }
+          }
+          if (closingSession && closingSession.agentId) {
+            try {
+              const reg = getAgentRegistry(cwd);
+              if (!error) reg.complete(closingSession.agentId, { nodeId: id, questionCount: Array.isArray(questions) ? questions.length : 0 });
+              else reg.fail(closingSession.agentId, 1, error);
+            } catch (_) {
+            }
+          }
+          const phase = error ? "error" : "done";
+          const desc = error ? `Discuss ${id} failed: ${error}` : `Discuss ${id}: ${Array.isArray(questions) ? questions.length : 0} questions`;
+          try {
+            fs.appendFileSync(activityFile, JSON.stringify({ ts: (/* @__PURE__ */ new Date()).toISOString(), tool: "Task", phase, agent: "Discuss", desc }) + "\n");
+          } catch (_) {
+          }
+        }).catch((err) => {
+          discussSession = null;
+          if (agentId) {
+            try {
+              getAgentRegistry(cwd).fail(agentId, 1, String(err));
+            } catch (_) {
+            }
+          }
+        });
+        try {
+          fs.appendFileSync(activityFile, JSON.stringify({ ts: (/* @__PURE__ */ new Date()).toISOString(), tool: "Task", phase: "start", agent: "Discuss", desc: `Analyzing ${id} for discussion` }) + "\n");
+        } catch (_) {
+        }
+        sendJson(res, 202, { ok: true, sessionId });
+      } catch (err) {
+        sendJson(res, 500, { error: String(err) });
+      }
+    }
+    async function handleDiscussAnswer(req, res, cwd, nodeId) {
+      try {
+        const body = await readJsonBody(req);
+        const answers = body.answers;
+        if (!Array.isArray(answers) || answers.length === 0) {
+          sendJson(res, 400, { error: "Missing answers array" });
+          return;
+        }
+        const id = nodeId.toUpperCase();
+        const prefix = id.split("-")[0];
+        const planningDir = path.join(cwd, ".planning");
+        let contextContent = `# Context: ${id}
+
+`;
+        contextContent += `Generated: ${(/* @__PURE__ */ new Date()).toISOString()}
+
+`;
+        for (const item of answers) {
+          contextContent += `## ${item.question}
+
+${item.answer}
+
+`;
+        }
+        if (prefix === "M") {
+          const { ensureMilestoneFolder } = require_milestone_folders();
+          const graph = runLoadGraph2(cwd);
+          if ("error" in graph) {
+            sendJson(res, 500, { error: graph.error });
+            return;
+          }
+          const milestone = graph.milestones.find((m) => m.id === id);
+          if (!milestone) {
+            sendJson(res, 404, { error: "Milestone not found" });
+            return;
+          }
+          const folder = ensureMilestoneFolder(planningDir, milestone.id, milestone.title);
+          const contextPath = path.join(folder, "CONTEXT.md");
+          fs.writeFileSync(contextPath, contextContent, "utf-8");
+        } else {
+          const contextPath = path.join(planningDir, `CONTEXT-${id}.md`);
+          fs.writeFileSync(contextPath, contextContent, "utf-8");
+        }
+        sendJson(res, 200, { ok: true });
+        broadcastChange();
+      } catch (err) {
+        sendJson(res, 400, { error: String(err) });
       }
     }
     var commandSession = null;
@@ -7540,6 +7766,14 @@ data: ${JSON.stringify({ sessionId, exitCode, result: text, error })}
           try {
             fs.appendFileSync(activityFile, JSON.stringify({ ts: (/* @__PURE__ */ new Date()).toISOString(), tool: "Task", phase, agent: "Command", desc }) + "\n");
           } catch (_) {
+          }
+        }).catch((err) => {
+          commandSession = null;
+          if (agentId) {
+            try {
+              getAgentRegistry(cwd).fail(agentId, 1, String(err));
+            } catch (_) {
+            }
           }
         });
         try {
@@ -8032,6 +8266,16 @@ data: ${JSON.stringify({ reason: "delete", nodeId: id })}
           handleRefineAccept(req, res, cwd);
           return;
         }
+        const discussMatch = urlPath.match(/^\/api\/node\/([^/]+)\/discuss$/);
+        if (discussMatch) {
+          handleDiscuss(req, res, cwd, discussMatch[1]);
+          return;
+        }
+        const discussAnswerMatch = urlPath.match(/^\/api\/node\/([^/]+)\/discuss\/answer$/);
+        if (discussAnswerMatch) {
+          handleDiscussAnswer(req, res, cwd, discussAnswerMatch[1]);
+          return;
+        }
         if (urlPath === "/api/command") {
           handleCommand(req, res, cwd);
           return;
@@ -8225,6 +8469,8 @@ data: ${JSON.stringify({ reason: "delete", nodeId: id })}
           resolve(void 0);
         });
       });
+      const portFilePath = require("path").join(cwd, ".planning", "server.port");
+      require("fs").writeFileSync(portFilePath, String(resolvedPort), "utf-8");
       const reg = getAgentRegistry(cwd);
       const restored = reg.restoreFromDisk();
       if (restored.interrupted > 0) {
@@ -8242,6 +8488,7 @@ data: ${JSON.stringify({ reason: "delete", nodeId: id })}
 var require_serve = __commonJS({
   "src/commands/serve.js"(exports2, module2) {
     "use strict";
+    var { spawn } = require("child_process");
     var { startServer } = require_server();
     function parsePortFlag(args) {
       const idx = args.indexOf("--port");
@@ -8252,6 +8499,8 @@ var require_serve = __commonJS({
     async function runServe2(cwd, args) {
       const port = parsePortFlag(args) || parseInt(process.env.PORT || "", 10) || 3847;
       const { server, port: resolvedPort, url } = await startServer(cwd, port);
+      const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+      spawn(opener, [url], { stdio: "ignore", detached: true }).unref();
       process.on("SIGINT", () => {
         server.close(() => process.exit(0));
       });
@@ -8272,6 +8521,7 @@ var require_open = __commonJS({
     var path = require("path");
     var http = require("http");
     var { spawn } = require("child_process");
+    var { runInit: runInit2 } = require_init();
     function checkServer(port) {
       return new Promise((resolve) => {
         const req = http.get(`http://localhost:${port}/api/graph`, (res) => {
@@ -8295,16 +8545,11 @@ var require_open = __commonJS({
     async function runOpen2(cwd, args) {
       const planningDir = path.join(cwd, ".planning");
       if (!fs.existsSync(planningDir)) {
-        console.log("");
-        console.log("  No .planning/ directory found in: " + cwd);
-        console.log("");
-        console.log("  To initialize this project with Declare, run:");
-        console.log("    npx declare-cc");
-        console.log("");
-        console.log("  Or, if declare-cc is already installed globally:");
-        console.log("    declare-cc");
-        console.log("");
-        process.exit(0);
+        console.log("Initializing Declare project in: " + cwd);
+        const result = runInit2(cwd, []);
+        if (result.created && result.created.length > 0) {
+          console.log("Created: " + result.created.join(", "));
+        }
       }
       const portFile = path.join(cwd, ".planning", "server.port");
       const port = fs.existsSync(portFile) ? parseInt(fs.readFileSync(portFile, "utf8").trim(), 10) : 3847;

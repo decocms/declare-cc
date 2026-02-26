@@ -13,6 +13,7 @@
  *   node declare-tools.js serve [--port 3847] [--cwd /path/to/project]
  */
 
+const { spawn } = require('child_process');
 const { startServer } = require('../server/index');
 
 /**
@@ -39,6 +40,12 @@ async function runServe(cwd, args) {
   const port = parsePortFlag(args) || parseInt(process.env.PORT || '', 10) || 3847;
 
   const { server, port: resolvedPort, url } = await startServer(cwd, port);
+
+  // Open browser
+  const opener = process.platform === 'darwin' ? 'open'
+    : process.platform === 'win32' ? 'start'
+    : 'xdg-open';
+  spawn(opener, [url], { stdio: 'ignore', detached: true }).unref();
 
   // Keep the process alive — the server handles shutdown via SIGINT/SIGTERM
   process.on('SIGINT', () => {

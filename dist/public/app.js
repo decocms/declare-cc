@@ -1227,6 +1227,24 @@ function navigateToResult(agent) {
       }
       break;
     }
+    case 'refine':
+    case 'discuss': {
+      // Navigate to the refined/discussed node — same as revision
+      const nodeId = result.nodeId || agent.target;
+      if (nodeId && nodeId.startsWith('M-')) {
+        const mile = milestones.find(m => m.id === nodeId);
+        if (mile && mile.realizes && mile.realizes.length) {
+          drillDeclId = mile.realizes[0];
+        }
+        drillMileId = nodeId;
+        drillLevel = 'actions';
+      } else if (nodeId && nodeId.startsWith('D-')) {
+        drillDeclId = nodeId;
+        drillMileId = null;
+        drillLevel = 'milestones';
+      }
+      break;
+    }
     default: {
       // Unknown agent type — fall back to declarations
       drillDeclId = null;
@@ -1352,6 +1370,11 @@ function renderDrillView() {
   updateStatusBreadcrumb(enrichedDeclarations, enrichedMilestones);
   // Update next/execute button
   updateNextButton(enrichedDeclarations, enrichedMilestones, actions || []);
+
+  // Re-attach discuss container if a discuss session is active (survives re-renders)
+  if (discussActiveNodeId && discussActiveContainer) {
+    reattachDiscussContainer();
+  }
 }
 
 /**
@@ -1878,7 +1901,7 @@ function classifyDeclarationsToStages(declarations, milestones, actions) {
       let mStage;
       if (COMPLETED.has(mStatus) || m.displayStatus === 'DONE') {
         mStage = 'done';
-      } else if (!m.hasPlan && !(actions || []).some(a => (a.causes || []).includes(m.id))) {
+      } else if (!(actions || []).some(a => (a.causes || []).includes(m.id))) {
         mStage = 'needs-planning';
       } else if (m.reviewState !== 'approved') {
         mStage = 'needs-approval';
@@ -1915,9 +1938,7 @@ function classifyMilestonesToStages(milestones, actions) {
       const myActions = (actions || []).filter(a => (a.causes || []).includes(m.id));
       const hasActions = myActions.length > 0;
       const hasNoActionPlan = !m.hasPlan && !hasActions;
-      // If has actions but none have exec-plans, still needs planning
-      const actionsNeedPlanning = hasActions && myActions.every(a => !a.hasExecPlan && !COMPLETED.has((a.status || '').toUpperCase()));
-      if (hasNoActionPlan || actionsNeedPlanning) {
+      if (hasNoActionPlan) {
         stages['needs-planning'].push(m);
       } else if (m.reviewState !== 'approved') {
         stages['needs-approval'].push(m);
@@ -1942,9 +1963,6 @@ function classifyActionsToStages(actionsArr) {
       stages['done'].push(a);
     } else if (runningActions.has(a.id) || EXECUTING_STATUSES_SET.has(status)) {
       stages['in-execution'].push(a);
-    } else if (!a.hasExecPlan) {
-      // No exec-plan means the action still needs planning
-      stages['needs-planning'].push(a);
     } else if (a.reviewState !== 'approved') {
       stages['needs-approval'].push(a);
     } else {
@@ -2231,9 +2249,9 @@ function renderDrillMilestones(enrichedDeclarations, enrichedMilestones, actions
         myActions.map(a => {
           const aStatus = (a.status || 'PENDING').toUpperCase();
           const isDone = COMPLETED.has(aStatus);
-          const hasExec = a.hasExecPlan;
-          const icon = isDone ? '\u2713' : hasExec ? '\u25CB' : '\u00B7';
-          const cls = isDone ? 'done' : hasExec ? 'planned' : 'unplanned';
+          const isApproved = a.reviewState === 'approved';
+          const icon = isDone ? '\u2713' : isApproved ? '\u25CB' : '\u00B7';
+          const cls = isDone ? 'done' : isApproved ? 'planned' : 'unplanned';
           return `<li class="${cls}"><span class="al-icon">${icon}</span>${escHtml(a.title || a.id)}</li>`;
         }).join('') + '</ul>';
     } else {
@@ -2408,19 +2426,19 @@ function renderDrillActions(enrichedDeclarations, enrichedMilestones, actions) {
           <div class="drill-card-badges">${badgesHtml}</div>
         </div>
       </div>
-      <div class="drill-exec-plan-toggle" data-action-id="${escHtml(a.id)}">\u25B6 Show exec-plan</div>
-      <div class="drill-exec-plan-content" id="drill-plan-${escHtml(a.id)}"></div>
+      <div class="drill-plan-toggle" data-action-id="${escHtml(a.id)}">\u25B6 Show plan</div>
+      <div class="drill-plan-content" id="drill-plan-${escHtml(a.id)}"></div>
       ${renderEntityActions(a.id, a.reviewState)}
     `;
 
     // Exec-plan toggle
-    el.querySelector('.drill-exec-plan-toggle').addEventListener('click', async (e) => {
+    el.querySelector('.drill-plan-toggle').addEventListener('click', async (e) => {
       e.stopPropagation();
       const toggle = e.currentTarget;
-      const content = el.querySelector('.drill-exec-plan-content');
+      const content = el.querySelector('.drill-plan-content');
       if (content.classList.contains('open')) {
         content.classList.remove('open');
-        toggle.textContent = '\u25B6 Show exec-plan';
+        toggle.textContent = '\u25B6 Show plan';
         return;
       }
       toggle.textContent = '\u25BC Loading...';
@@ -2428,7 +2446,7 @@ function renderDrillActions(enrichedDeclarations, enrichedMilestones, actions) {
         const res = await fetch(`/api/action/${encodeURIComponent(a.id)}`);
         const data = await res.json();
         if (data.error || !data.execPlan) {
-          content.innerHTML = '<span style="opacity:0.5">No exec-plan found</span>';
+          content.innerHTML = '<span style="opacity:0.5">No plan found</span>';
         } else {
           const ep = data.execPlan;
           let planHtml = '';
@@ -2448,7 +2466,7 @@ function renderDrillActions(enrichedDeclarations, enrichedMilestones, actions) {
         content.innerHTML = `<span style="color:var(--broken-color)">Error: ${escHtml(err.message)}</span>`;
       }
       content.classList.add('open');
-      toggle.textContent = '\u25BC Hide exec-plan';
+      toggle.textContent = '\u25BC Hide plan';
     });
 
     return el;
@@ -2489,31 +2507,75 @@ function renderEntityActions(nodeId, reviewState, opts) {
   const k = (key) => shift ? `⇧${key}` : key;
   const needsApprove = reviewState !== 'approved';
   const prefix = nodeId.split('-')[0];
+  const isDone = graphData && (() => {
+    const allNodes = [...(graphData.declarations || []), ...(graphData.milestones || []), ...(graphData.actions || [])];
+    const node = allNodes.find(n => n.id === nodeId);
+    return node && COMPLETED.has((node.status || '').toUpperCase());
+  })();
+
+  if (isDone) {
+    // Done milestones show no actions; other done nodes show Review/Delete
+    if (prefix === 'M') return `<div class="drill-card-actions"></div>`;
+    return `<div class="drill-card-actions">
+      <button class="drill-action-btn" data-action="refine" data-mode="outdated" data-node-id="${escHtml(nodeId)}"><kbd>${k('R')}</kbd> Review</button>
+      <button class="drill-action-btn drill-action-danger" data-action="delete" data-node-id="${escHtml(nodeId)}"><kbd>${k('D')}</kbd> Delete</button>
+    </div>`;
+  }
 
   // Primary action: what this node needs most right now
   let primaryBtn = '';
   if (prefix === 'A' && graphData) {
     const action = (graphData.actions || []).find(a => a.id === nodeId);
-    if (action && !action.hasExecPlan && !COMPLETED.has((action.status || '').toUpperCase())) {
-      const mileId = (action.causes || [])[0];
-      primaryBtn = `<button class="drill-action-btn drill-action-primary" data-action="plan" data-node-id="${escHtml(nodeId)}" data-milestone-id="${escHtml(mileId || '')}"><kbd>${k('P')}</kbd> Plan</button>`;
+    if (action) {
+      const isExecuting = runningActions.has(nodeId) || EXECUTING_STATUSES_SET.has((action.status || '').toUpperCase());
+      if (isExecuting) {
+        primaryBtn = `<button class="drill-action-btn drill-action-primary" disabled><kbd>${k('V')}</kbd> Running...</button>`;
+      } else if (needsApprove) {
+        // Approve is primary — shown below
+      } else {
+        // Approved, not executing — Execute is primary
+        primaryBtn = `<button class="drill-action-btn drill-action-primary" data-action="execute" data-node-id="${escHtml(nodeId)}"><kbd>${k('E')}</kbd> Execute</button>`;
+      }
     }
   } else if (prefix === 'M' && graphData) {
     const milestone = (graphData.milestones || []).find(m => m.id === nodeId);
     const myActions = (graphData.actions || []).filter(a => (a.causes || []).includes(nodeId));
-    if (myActions.length === 0 && !COMPLETED.has((milestone?.status || '').toUpperCase())) {
+    if (myActions.length === 0) {
+      // No actions — Derive Actions is primary
       primaryBtn = `<button class="drill-action-btn drill-action-primary" data-action="derive-actions" data-node-id="${escHtml(nodeId)}"><kbd>${k('P')}</kbd> Derive Actions</button>`;
-    } else if (myActions.length > 0 && myActions.some(a => !a.hasExecPlan && !COMPLETED.has((a.status || '').toUpperCase()))) {
-      primaryBtn = `<button class="drill-action-btn drill-action-primary" data-action="plan" data-node-id="${escHtml(nodeId)}"><kbd>${k('P')}</kbd> Plan</button>`;
+    } else {
+      const allApproved = myActions.every(a => a.reviewState === 'approved');
+      const hasUnapproved = myActions.some(a => a.reviewState !== 'approved' && !COMPLETED.has((a.status || '').toUpperCase()));
+      if (hasUnapproved) {
+        // Has unapproved actions — primary is to navigate to review them
+        // The approve button on the milestone itself suffices
+      } else if (allApproved) {
+        // All actions approved — Execute is primary
+        primaryBtn = `<button class="drill-action-btn drill-action-primary" data-action="execute-milestone" data-node-id="${escHtml(nodeId)}"><kbd>${k('E')}</kbd> Execute</button>`;
+      }
     }
   } else if (prefix === 'D' && graphData) {
     const myMilestones = (graphData.milestones || []).filter(m => {
       const realizes = Array.isArray(m.realizes) ? m.realizes : [m.realizes];
       return realizes.includes(nodeId);
     });
-    if (myMilestones.length === 0 && !COMPLETED.has(((graphData.declarations || []).find(d => d.id === nodeId)?.status || '').toUpperCase())) {
+    if (myMilestones.length === 0) {
+      // No milestones — Derive Milestones is primary
       primaryBtn = `<button class="drill-action-btn drill-action-primary" data-action="derive-milestones" data-node-id="${escHtml(nodeId)}"><kbd>${k('P')}</kbd> Derive Milestones</button>`;
+    } else {
+      const hasUnapproved = myMilestones.some(m => m.reviewState !== 'approved' && !COMPLETED.has((m.status || '').toUpperCase()));
+      if (hasUnapproved) {
+        // Has unapproved milestones — no extra primary button, user can drill in
+      }
     }
+  }
+
+  // Milestones get a minimal button set (primary + approve only)
+  if (prefix === 'M') {
+    return `<div class="drill-card-actions">
+      ${primaryBtn}
+      ${needsApprove ? `<button class="drill-review-btn approve-btn" data-review-action="approved" data-node-id="${escHtml(nodeId)}"><kbd>${k('A')}</kbd> Approve</button>` : ''}
+    </div>`;
   }
 
   return `<div class="drill-card-actions">
@@ -2614,20 +2676,47 @@ function wireEntityMenus($container) {
         if (confirm(`Delete ${nodeId}? This cannot be undone.`)) {
           deleteNode(nodeId);
         }
-      } else if (action === 'plan') {
-        // Send a command to plan this node
-        const milestoneId = btn.dataset.milestoneId || nodeId;
-        sendCommand('Create EXEC-PLANs for ' + milestoneId + '. Read the PLAN.md, understand the actions, and generate detailed step-by-step execution plans.');
-      } else if (action === 'derive-actions') {
-        // Trigger action derivation for this milestone
-        fetch('/api/milestones/' + encodeURIComponent(nodeId) + '/actions/derive', {
+      } else if (action === 'execute') {
+        // Execute a single action
+        fetch('/api/action/' + encodeURIComponent(nodeId) + '/execute', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
         }).then(r => r.json()).then(data => {
-          if (data.error) console.error('Derive actions error:', data.error);
+          if (data.error) {
+            alert('Execute error: ' + data.error);
+          } else {
+            runningActions.add(nodeId);
+            renderDrillView();
+          }
         });
+      } else if (action === 'execute-milestone') {
+        // Execute all approved actions for this milestone
+        const myActions = (graphData.actions || []).filter(a =>
+          (a.causes || []).includes(nodeId) && a.reviewState === 'approved' && !COMPLETED.has((a.status || '').toUpperCase())
+        );
+        for (const a of myActions) {
+          fetch('/api/action/' + encodeURIComponent(a.id) + '/execute', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+          }).then(r => r.json()).then(data => {
+            if (!data.error) {
+              runningActions.add(a.id);
+              renderDrillView();
+            }
+          });
+        }
+      } else if (action === 'derive-actions') {
+        // Navigate into milestone's actions view, then derive
+        drillMileId = nodeId;
+        drillGoDeeper('actions');
+        renderDrillView();
+        triggerDerivation(nodeId);
       } else if (action === 'derive-milestones') {
-        sendCommand('Derive milestones for declaration ' + nodeId + '. Read FUTURE.md, understand the declaration, and propose concrete milestones that would realize it. Write them to MILESTONES.md.');
+        // Derive milestones directly
+        triggerDerivation(nodeId);
+      } else if (action === 'discuss') {
+        // Optional discuss phase before derivation
+        startDiscuss(nodeId);
       }
     });
   });
@@ -2696,7 +2785,126 @@ function createRefineArea(nodeId) {
   // Fallback: append to detail panel
   const det = document.getElementById(`refine-area-${nodeId}`);
   if (det) return det;
+  // Last resort: attach to drill-detail or drill-list so output is always visible
+  const fallbackParent = document.getElementById('drill-detail') || document.getElementById('drill-list');
+  if (fallbackParent) {
+    const area = document.createElement('div');
+    area.className = 'refine-container';
+    area.id = `refine-area-${nodeId}`;
+    fallbackParent.appendChild(area);
+    return area;
+  }
   return document.createElement('div'); // noop
+}
+
+/**
+ * Trigger the appropriate derivation after discuss phase completes.
+ * @param {string} nodeId
+ */
+function triggerDerivation(nodeId) {
+  const prefix = nodeId.split('-')[0];
+  if (prefix === 'D') {
+    // Derive milestones — capture sessionId for SSE handler
+    fetch('/api/milestones/derive', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ declarationId: nodeId }),
+    }).then(r => r.json()).then(data => {
+      if (data.error) {
+        console.error('Derive milestones error:', data.error);
+      } else if (data.sessionId) {
+        derivationSessionId = data.sessionId;
+        derivationProposals = null;
+      }
+    });
+  } else if (prefix === 'M') {
+    // Derive actions — capture sessionId for SSE handler
+    fetch('/api/milestones/' + encodeURIComponent(nodeId) + '/actions/derive', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    }).then(r => r.json()).then(data => {
+      if (data.error) {
+        console.error('Derive actions error:', data.error);
+      } else if (data.sessionId) {
+        actionDerivationSessionId = data.sessionId;
+        actionDerivationMilestoneId = nodeId;
+        actionDerivationProposals = null;
+      }
+    });
+  }
+}
+
+/** @type {string|null} Node ID with an active discuss session */
+let discussActiveNodeId = null;
+/** @type {HTMLElement|null} Detached discuss container preserved across re-renders */
+let discussActiveContainer = null;
+
+/**
+ * Start a discuss (interview) phase for a node.
+ * Shows a discuss area and kicks off the discuss agent.
+ * @param {string} nodeId
+ */
+function startDiscuss(nodeId) {
+  discussActiveNodeId = nodeId;
+
+  // Create the discuss container
+  const container = document.createElement('div');
+  container.className = 'discuss-container';
+  container.id = `discuss-area-${nodeId}`;
+  discussActiveContainer = container;
+
+  // Attach to current card
+  reattachDiscussContainer();
+
+  container.innerHTML = `<div class="discuss-loading">
+    <pre class="discuss-streaming" id="discuss-output-${nodeId}">Thinking...</pre>
+    <button class="drill-action-btn" id="discuss-skip-early-${nodeId}">Skip</button>
+  </div>`;
+  container.querySelector(`#discuss-skip-early-${nodeId}`).addEventListener('click', () => {
+    clearDiscussState();
+    triggerDerivation(nodeId);
+  });
+
+  fetch(`/api/node/${encodeURIComponent(nodeId)}/discuss`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  }).then(r => r.json()).then(data => {
+    if (data.error) {
+      clearDiscussState();
+      triggerDerivation(nodeId);
+    }
+  }).catch(() => {
+    clearDiscussState();
+    triggerDerivation(nodeId);
+  });
+}
+
+/** Clear discuss tracking state */
+function clearDiscussState() {
+  if (discussActiveContainer && discussActiveContainer.parentNode) {
+    discussActiveContainer.parentNode.removeChild(discussActiveContainer);
+  }
+  discussActiveNodeId = null;
+  discussActiveContainer = null;
+}
+
+/** Re-attach the discuss container to the card after a re-render */
+function reattachDiscussContainer() {
+  if (!discussActiveNodeId || !discussActiveContainer) return;
+  // Remove from old parent if still attached
+  if (discussActiveContainer.parentNode) {
+    discussActiveContainer.parentNode.removeChild(discussActiveContainer);
+  }
+  // Find the card for this node
+  const card = document.querySelector(`.drill-card[data-node-id="${discussActiveNodeId}"]`)
+    || document.querySelector(`.drill-action-btn[data-node-id="${discussActiveNodeId}"]`)?.closest('.drill-card');
+  if (card) {
+    card.appendChild(discussActiveContainer);
+  } else {
+    // Fallback: append to drill-list
+    const parent = document.getElementById('drill-list');
+    if (parent) parent.appendChild(discussActiveContainer);
+  }
 }
 
 async function doRefine(nodeId, mode, message) {
@@ -2893,6 +3101,8 @@ function clearColumnBrowserKbFocus() {
  */
 function handleColumnKeydown(e) {
   if (!isColumnBrowserActive()) return;
+  // Don't intercept keys when user is typing in an input/textarea
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
 
   const key = e.key;
 
@@ -2976,14 +3186,14 @@ document.addEventListener('keydown', (e) => {
     return;
   }
 
-  // Arrow Right / Enter — drill into focused card (or toggle exec-plan at action level)
+  // Arrow Right / Enter — drill into focused card (or toggle plan at action level)
   if (key === 'ArrowRight' || key === 'Enter') {
     const card = getFocusedCard();
     if (!card) return;
     e.preventDefault();
     if (drillLevel === 'actions') {
-      // At action level, toggle exec-plan open
-      const toggle = card.querySelector('.drill-exec-plan-toggle');
+      // At action level, toggle plan open
+      const toggle = card.querySelector('.drill-plan-toggle');
       if (toggle) toggle.click();
     } else {
       card.click();
@@ -2991,18 +3201,18 @@ document.addEventListener('keydown', (e) => {
     return;
   }
 
-  // Arrow Left — close exec-plan if open, otherwise go back one level
+  // Arrow Left — close plan if open, otherwise go back one level
   if (key === 'ArrowLeft') {
     if (drillLevel === 'actions') {
-      // If focused card has an open exec-plan, close it first
+      // If focused card has an open plan, close it first
       const card = getFocusedCard();
       if (card) {
-        const content = card.querySelector('.drill-exec-plan-content.open');
+        const content = card.querySelector('.drill-plan-content.open');
         if (content) {
           e.preventDefault();
           content.classList.remove('open');
-          const toggle = card.querySelector('.drill-exec-plan-toggle');
-          if (toggle) toggle.textContent = '\u25B6 Show exec-plan';
+          const toggle = card.querySelector('.drill-plan-toggle');
+          if (toggle) toggle.textContent = '\u25B6 Show plan';
           return;
         }
       }
@@ -3020,11 +3230,19 @@ document.addEventListener('keydown', (e) => {
     return;
   }
 
-  // P = Plan milestones (empty state or main Plan button)
+  // P = Plan / Derive (empty-state buttons, main Plan button, or focused card's derive button)
   if (kl === 'p') {
     const planBtn = document.getElementById('plan-milestones-btn');
     if (planBtn) { e.preventDefault(); planBtn.click(); return; }
+    const actionDeriveBtn = document.getElementById('action-derive-btn');
+    if (actionDeriveBtn && !actionDeriveBtn.disabled) { e.preventDefault(); actionDeriveBtn.click(); return; }
     if ($executeMainBtn && $executeMainBtn._planMode) { e.preventDefault(); $executeMainBtn.click(); return; }
+    // Focused card: click its derive-actions or derive-milestones button
+    const focused = document.querySelector('.drill-card.focused');
+    if (focused) {
+      const deriveBtn = focused.querySelector('[data-action="derive-actions"], [data-action="derive-milestones"]');
+      if (deriveBtn) { e.preventDefault(); deriveBtn.click(); return; }
+    }
     return;
   }
 
@@ -4496,8 +4714,8 @@ function renderPanelChain(item, type) {
 
       if (s.type === 'action') {
         // Exec-plan placeholder — filled asynchronously after render
-        html += `<div id="exec-plan-detail" style="margin-top:16px">
-          <div class="detail-label" style="opacity:0.4">Loading exec-plan…</div>
+        html += `<div id="plan-detail" style="margin-top:16px">
+          <div class="detail-label" style="opacity:0.4">Loading plan…</div>
         </div>`;
       }
     }
@@ -4643,7 +4861,7 @@ function renderPanelChain(item, type) {
     }
   }
 
-  // If an action is focused, fetch and render its exec-plan
+  // If an action is focused, fetch and render its plan
   if (focusSection && focusSection.type === 'action') {
     loadExecPlan(focusSection.item.id);
   }
@@ -4917,7 +5135,7 @@ async function renderWorkabilityPath(nodeId, nodeType) {
 
     html += `</div>`;
 
-    const execPlanEl = $panelBody.querySelector('#exec-plan-detail');
+    const execPlanEl = $panelBody.querySelector('#plan-detail');
     const tempDiv = document.createElement('div');
     tempDiv.innerHTML = html;
     const wpEl = tempDiv.firstElementChild;
@@ -4985,11 +5203,11 @@ function extractProducedFiles(summaryContent) {
 }
 
 /**
- * Fetch /api/action/:id and render the exec-plan into #exec-plan-detail.
+ * Fetch /api/action/:id and render the plan into #plan-detail.
  * @param {string} actionId
  */
 async function loadExecPlan(actionId) {
-  const container = document.getElementById('exec-plan-detail');
+  const container = document.getElementById('plan-detail');
   if (!container) return;
 
   try {
@@ -4997,7 +5215,7 @@ async function loadExecPlan(actionId) {
     const data = await res.json();
 
     if (data.error || !data.execPlan) {
-      container.innerHTML = `<div class="detail-label" style="opacity:0.4">No exec-plan found</div>`;
+      container.innerHTML = `<div class="detail-label" style="opacity:0.4">No plan found</div>`;
       return;
     }
 
@@ -5154,7 +5372,7 @@ async function loadExecPlan(actionId) {
     // Output log panel (hidden by default, shown when executing)
     html += `<div id="output-log" class="output-log" style="display:none"></div>`;
 
-    container.innerHTML = html || `<div class="detail-label" style="opacity:0.4">No exec-plan details</div>`;
+    container.innerHTML = html || `<div class="detail-label" style="opacity:0.4">No plan details</div>`;
 
     // Wire button click handlers
     const execBtn = document.getElementById('exec-action-btn');
@@ -5193,7 +5411,7 @@ async function loadExecPlan(actionId) {
     }
 
   } catch (e) {
-    if (container) container.innerHTML = `<div class="detail-label" style="opacity:0.4">Could not load exec-plan</div>`;
+    if (container) container.innerHTML = `<div class="detail-label" style="opacity:0.4">Could not load plan</div>`;
   }
 }
 
@@ -5784,7 +6002,8 @@ async function startDerivation(declarationId) {
 function handleDerivationOutput(e) {
   try {
     const { sessionId, text } = JSON.parse(e.data);
-    if (sessionId !== derivationSessionId) return;
+    if (derivationSessionId && sessionId !== derivationSessionId) return;
+    if (!derivationSessionId) derivationSessionId = sessionId;
     const logEl = document.getElementById('derivation-log');
     if (!logEl) return;
     if (logEl.style.display === 'none') logEl.style.display = '';
@@ -5800,7 +6019,7 @@ function handleDerivationOutput(e) {
 function handleDerivationComplete(e) {
   try {
     const { sessionId, exitCode, milestones } = JSON.parse(e.data);
-    if (sessionId !== derivationSessionId) return;
+    if (derivationSessionId && sessionId !== derivationSessionId) return;
 
     derivationSessionId = null;
 
@@ -6048,7 +6267,10 @@ async function startActionDerivation(milestoneId) {
 function handleActionDerivationOutput(e) {
   try {
     const { sessionId, text } = JSON.parse(e.data);
-    if (sessionId !== actionDerivationSessionId) return;
+    // Accept output if session matches OR if we haven't captured the session ID yet
+    if (actionDerivationSessionId && sessionId !== actionDerivationSessionId) return;
+    // Capture session ID from first output event if we missed it
+    if (!actionDerivationSessionId) actionDerivationSessionId = sessionId;
     const logEl = document.getElementById('action-derivation-log');
     if (!logEl) return;
     logEl.appendChild(document.createTextNode(text + '\n'));
@@ -6059,7 +6281,8 @@ function handleActionDerivationOutput(e) {
 function handleActionDerivationComplete(e) {
   try {
     const { sessionId, exitCode, actions } = JSON.parse(e.data);
-    if (sessionId !== actionDerivationSessionId) return;
+    // Accept completion if session matches OR if we haven't captured the session ID yet
+    if (actionDerivationSessionId && sessionId !== actionDerivationSessionId) return;
     actionDerivationSessionId = null;
     const btn = document.getElementById('action-derive-btn');
     if (btn) { btn.disabled = false; btn.textContent = 'Derive Actions'; }
@@ -7360,7 +7583,7 @@ function renderAgentCard(agent) {
   // Timer class: final for completed/failed, ticking for running
   const timerClass = (isDone || agent.status === 'failed') ? 'agent-card-timer agent-timer-final' : 'agent-card-timer';
 
-  return `<div class="agent-card status-${escHtml(agent.status)}" data-agent-id="${escHtml(agent.id)}">
+  return `<div class="agent-card status-${escHtml(agent.status)}" data-agent-id="${escHtml(agent.id)}" data-target="${escHtml(agent.target || '')}" style="cursor:pointer">
   <div class="agent-card-header">
     <span class="agent-card-icon">${icon}</span>
     <span class="agent-card-target">${escHtml(agent.target || '')}</span>
@@ -7447,6 +7670,43 @@ function handleViewResultClick(e) {
   const agent = agentCardState.get(agentId);
   if (agent) navigateToResult(agent);
 }
+// Delegated click handler: clicking an agent card navigates to its target node
+function handleAgentCardClick(e) {
+  // Don't navigate if clicking a button (View Result, etc.)
+  if (e.target.closest('button')) return;
+  const card = e.target.closest('.agent-card');
+  if (!card) return;
+  const target = card.getAttribute('data-target');
+  if (!target || !graphData) return;
+  const prefix = target.split('-')[0];
+  if (prefix === 'D') {
+    drillDeclId = target;
+    drillLevel = 'milestones';
+    drillMileId = null;
+    pushDrillHash();
+    renderDrillView();
+  } else if (prefix === 'M') {
+    const mile = (graphData.milestones || []).find(m => m.id === target);
+    if (mile && mile.realizes && mile.realizes.length) drillDeclId = mile.realizes[0];
+    drillMileId = target;
+    drillLevel = 'actions';
+    pushDrillHash();
+    renderDrillView();
+  } else if (prefix === 'A') {
+    const action = (graphData.actions || []).find(a => a.id === target);
+    if (action && action.causes && action.causes.length) {
+      drillMileId = action.causes[0];
+      const parentMile = (graphData.milestones || []).find(m => m.id === drillMileId);
+      if (parentMile && parentMile.realizes && parentMile.realizes.length) drillDeclId = parentMile.realizes[0];
+      drillLevel = 'actions';
+      pushDrillHash();
+      renderDrillView();
+    }
+  }
+}
+if ($activityCardsActive) $activityCardsActive.addEventListener('click', handleAgentCardClick);
+if ($activityCardsRecent) $activityCardsRecent.addEventListener('click', handleAgentCardClick);
+
 if ($activityCardsActive) $activityCardsActive.addEventListener('click', handleViewResultClick);
 if ($activityCardsRecent) $activityCardsRecent.addEventListener('click', handleViewResultClick);
 
@@ -7468,7 +7728,7 @@ document.querySelectorAll('.activity-tab').forEach(tab => {
 async function loadAgentCards() {
   try {
     const res = await fetch('/api/agents');
-    if (!res.ok) return; // API not available yet (M-43 not deployed) — fail silently
+    if (!res.ok) return;
     const data = await res.json();
     const agents = [].concat(data.active || [], data.recent || []);
 
@@ -7478,8 +7738,11 @@ async function loadAgentCards() {
       agentCardState.set(agent.id, agent);
     }
     renderAgentPanel();
-  } catch (_) {
-    // /api/agents not available — M-43 not yet deployed, silently skip
+    if (agents.length > 0) {
+      console.log('[agents]', agents.length, 'agents loaded, active:', agents.filter(a => a.status === 'running').length);
+    }
+  } catch (err) {
+    console.error('[agents] loadAgentCards failed:', err);
   }
 }
 
@@ -7744,10 +8007,39 @@ function connectSSE() {
     // Re-sync agent state on reconnect
     loadAgentCards();
   });
+  let sseChangeTimer = null;
   es.addEventListener('change', () => {
     if (focusNodeId || focusCleanupTimer) return; // skip during animation
-    loadData();
-    loadAgentCards(); // refresh agent cards on any .planning/ change
+    // Debounce rapid SSE change events (e.g. approve writes multiple files)
+    clearTimeout(sseChangeTimer);
+    sseChangeTimer = setTimeout(() => {
+      // If a refine or discuss session is active, save and restore the area across re-renders
+      if (refineActiveNodeId || discussActiveNodeId) {
+        // Save refine area content before re-render
+        let savedRefineHtml = null;
+        const savedRefineNodeId = refineActiveNodeId;
+        if (savedRefineNodeId) {
+          const existingArea = document.getElementById(`refine-area-${savedRefineNodeId}`);
+          savedRefineHtml = existingArea ? existingArea.innerHTML : null;
+        }
+        // Save discuss container (detached element — just need to re-attach after render)
+        const savedDiscussNodeId = discussActiveNodeId;
+        loadData().then(() => {
+          // Restore refine area
+          if (savedRefineHtml && savedRefineNodeId) {
+            const restoredArea = document.getElementById(`refine-area-${savedRefineNodeId}`);
+            if (restoredArea) restoredArea.innerHTML = savedRefineHtml;
+          }
+          // Re-attach discuss container
+          if (savedDiscussNodeId && discussActiveContainer) {
+            reattachDiscussContainer();
+          }
+        });
+      } else {
+        loadData();
+      }
+      loadAgentCards(); // refresh agent cards on any .planning/ change
+    }, 300);
   });
   es.addEventListener('activity', () => {
     loadActivity();
@@ -7888,6 +8180,90 @@ function connectSSE() {
       }
     } catch (_) {}
   });
+  // ─── Discuss (interview) SSE events ──────────────────────────────────────
+  es.addEventListener('discuss-output', function(e) {
+    try {
+      const data = JSON.parse(e.data);
+      const outputEl = document.getElementById(`discuss-output-${data.nodeId}`);
+      if (outputEl) {
+        if (outputEl.textContent === 'Thinking...') outputEl.textContent = '';
+        outputEl.textContent += data.text;
+      }
+    } catch (_) {}
+  });
+  es.addEventListener('discuss-complete', function(e) {
+    try {
+      const data = JSON.parse(e.data);
+      const container = document.getElementById(`discuss-area-${data.nodeId}`);
+      if (!container) return;
+      if (data.error || !Array.isArray(data.questions) || data.questions.length === 0) {
+        container.innerHTML = `<div class="discuss-result">
+          <div class="discuss-error">${escHtml(data.error || 'No questions generated. Proceed with derivation.')}</div>
+          <button class="drill-action-btn" id="discuss-skip-${data.nodeId}">Proceed</button>
+        </div>`;
+        container.querySelector(`#discuss-skip-${data.nodeId}`).addEventListener('click', () => {
+          clearDiscussState();
+          triggerDerivation(data.nodeId);
+        });
+        return;
+      }
+      // Show questions as a form
+      let html = '<div class="discuss-questions">';
+      html += '<div class="discuss-header">Answer these questions to improve the plan:</div>';
+      data.questions.forEach((q, i) => {
+        html += `<div class="discuss-q">
+          <label class="discuss-q-label">${escHtml(q.question)}</label>
+          ${q.context ? `<div class="discuss-q-context">${escHtml(q.context)}</div>` : ''}
+          ${q.options && q.options.length > 0
+            ? `<div class="discuss-q-options">${q.options.map(opt =>
+                `<button class="discuss-option-btn" data-q="${i}" data-opt="${escHtml(opt)}">${escHtml(opt)}</button>`
+              ).join('')}</div>`
+            : ''}
+          <textarea class="discuss-q-input" data-q="${i}" rows="2" placeholder="Your answer..."></textarea>
+        </div>`;
+      });
+      html += `<div class="discuss-actions">
+        <button class="drill-action-btn drill-action-primary" id="discuss-submit-${data.nodeId}">Save &amp; Proceed</button>
+        <button class="drill-action-btn" id="discuss-skip-${data.nodeId}">Skip</button>
+      </div></div>`;
+      container.innerHTML = html;
+
+      // Wire option buttons to fill textarea
+      container.querySelectorAll('.discuss-option-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const idx = btn.dataset.q;
+          const ta = container.querySelector(`.discuss-q-input[data-q="${idx}"]`);
+          if (ta) ta.value = btn.dataset.opt;
+        });
+      });
+
+      // Wire submit
+      container.querySelector(`#discuss-submit-${data.nodeId}`).addEventListener('click', async () => {
+        const answers = [];
+        data.questions.forEach((q, i) => {
+          const ta = container.querySelector(`.discuss-q-input[data-q="${i}"]`);
+          answers.push({ question: q.question, answer: ta ? ta.value.trim() : '' });
+        });
+        const filtered = answers.filter(a => a.answer);
+        if (filtered.length > 0) {
+          await fetch(`/api/node/${encodeURIComponent(data.nodeId)}/discuss/answer`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ answers: filtered }),
+          });
+        }
+        clearDiscussState();
+        triggerDerivation(data.nodeId);
+      });
+
+      // Wire skip
+      container.querySelector(`#discuss-skip-${data.nodeId}`).addEventListener('click', () => {
+        clearDiscussState();
+        triggerDerivation(data.nodeId);
+      });
+    } catch (_) {}
+  });
+
   // ─── Agent lifecycle SSE events (M-44) ───────────────────────────────────
   es.addEventListener('agent-start', function(e) {
     try {
@@ -7926,12 +8302,36 @@ function connectSSE() {
     } catch (_) {}
   });
 
+  // Command output — stream text into command output area
+  es.addEventListener('command-output', function(e) {
+    try {
+      const data = JSON.parse(e.data);
+      const outputEl = document.getElementById('command-output-stream');
+      if (outputEl) {
+        if (outputEl.textContent === 'Running...') outputEl.textContent = '';
+        outputEl.textContent += data.text;
+        outputEl.scrollTop = outputEl.scrollHeight;
+      }
+    } catch (_) {}
+  });
+
   // Command complete — reload graph to reflect changes
   es.addEventListener('command-complete', function(e) {
     try {
       const data = JSON.parse(e.data);
+      // Update command card UI
+      const outputEl = document.getElementById('command-output-stream');
+      if (outputEl) {
+        if (data.error) {
+          outputEl.textContent += '\n\nError: ' + data.error;
+        }
+        outputEl.classList.remove('streaming');
+      }
+      const cmdCard = document.getElementById('command-card');
+      if (cmdCard) { cmdCard.classList.remove('running'); cmdCard.classList.add('editing'); }
       if (data.exitCode === 0) {
-        loadData(); // refresh graph since command may have modified files
+        loadData().then(() => renderDrillView()); // refresh graph since command may have modified files
+        loadActivity();
       }
     } catch (_) {}
   });
@@ -7992,10 +8392,11 @@ if ($commandCard && $commandInput) {
     }
   });
 
-  // Esc to collapse
+  // Esc to blur — stop propagation to prevent drill-level back-navigation
   $commandInput.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') {
-      $commandCard.classList.remove('editing');
+      e.stopPropagation();
+      $commandInput.value = '';
       $commandInput.blur();
     }
     // Enter to send (without shift)
@@ -8003,19 +8404,10 @@ if ($commandCard && $commandInput) {
       e.preventDefault();
       const msg = $commandInput.value.trim();
       if (!msg) return;
-      $commandCard.classList.remove('editing');
+      $commandInput.value = '';
       $commandInput.blur();
       sendCommand(msg);
     }
-  });
-
-  // Blur to collapse (unless clicking inside)
-  $commandInput.addEventListener('blur', function() {
-    setTimeout(() => {
-      if (!$commandInput.value.trim()) {
-        $commandCard.classList.remove('editing');
-      }
-    }, 150);
   });
 
   // Global shortcut: C key (when not in input)
@@ -8040,16 +8432,34 @@ function sendCommand(message) {
     context.viewDescription = 'Declaration list (lifecycle view)';
     const cards = document.querySelectorAll('#drill-list .drill-card');
     context.nodeIds = Array.from(cards).map(c => c.dataset.nodeId).filter(Boolean);
-  } else if (drillLevel === 'milestones' && selectedDeclId) {
-    context.nodeId = selectedDeclId;
-    context.viewDescription = 'Milestones for ' + selectedDeclId;
+  } else if (drillLevel === 'milestones' && drillDeclId) {
+    context.nodeId = drillDeclId;
+    context.viewDescription = 'Milestones for ' + drillDeclId;
     const cards = document.querySelectorAll('#drill-list .drill-card');
     context.nodeIds = Array.from(cards).map(c => c.dataset.nodeId).filter(Boolean);
-  } else if (drillLevel === 'actions' && selectedMilestoneId) {
-    context.nodeId = selectedMilestoneId;
-    context.viewDescription = 'Actions for ' + selectedMilestoneId;
+  } else if (drillLevel === 'actions' && drillMileId) {
+    context.nodeId = drillMileId;
+    context.viewDescription = 'Actions for ' + drillMileId;
     const cards = document.querySelectorAll('#drill-list .drill-card');
     context.nodeIds = Array.from(cards).map(c => c.dataset.nodeId).filter(Boolean);
+  }
+
+  // Show streaming output area in command card
+  const cmdCard = document.getElementById('command-card');
+  if (cmdCard) {
+    cmdCard.classList.add('running');
+    cmdCard.classList.remove('editing');
+    // Create or reuse output area
+    let outputEl = document.getElementById('command-output-stream');
+    if (!outputEl) {
+      outputEl = document.createElement('pre');
+      outputEl.id = 'command-output-stream';
+      outputEl.className = 'command-output-stream streaming';
+      cmdCard.appendChild(outputEl);
+    } else {
+      outputEl.className = 'command-output-stream streaming';
+    }
+    outputEl.textContent = 'Running...';
   }
 
   fetch('/api/command', {
@@ -8059,8 +8469,14 @@ function sendCommand(message) {
   }).then(r => r.json()).then(data => {
     if (data.error) {
       console.error('Command error:', data.error);
+      const outputEl = document.getElementById('command-output-stream');
+      if (outputEl) outputEl.textContent = 'Error: ' + data.error;
     }
-  }).catch(err => console.error('Command failed:', err));
+  }).catch(err => {
+    console.error('Command failed:', err);
+    const outputEl = document.getElementById('command-output-stream');
+    if (outputEl) outputEl.textContent = 'Error: ' + err.message;
+  });
 }
 
 // ─── Clickable activity log items ─────────────────────────────────────────────

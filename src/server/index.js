@@ -1613,6 +1613,12 @@ async function handleRefine(req, res, cwd, nodeId) {
         ? `Review of ${nId} failed: ${error}`
         : `Review of ${nId} complete` + (suggestion.includes('LGTM') ? ' — no changes needed' : ' — suggestion ready');
       try { fs.appendFileSync(activityFile, JSON.stringify({ ts: new Date().toISOString(), tool: 'Task', phase, agent: 'Refine', desc }) + '\n'); } catch (_) {}
+    }).catch((err) => {
+      // Safety net: always clear refineSession even on unexpected errors
+      refineSession = null;
+      const payload = `event: refine-complete\ndata: ${JSON.stringify({ sessionId, nodeId: nId, exitCode: 1, suggestion: '', error: String(err) })}\n\n`;
+      for (const client of sseClients) { try { client.write(payload); } catch (_) { sseClients.delete(client); } }
+      if (refineAgentId) { try { getAgentRegistry(cwd).fail(refineAgentId, 1, String(err)); } catch (_) {} }
     });
 
     // Log activity
@@ -1684,6 +1690,188 @@ async function handleRefineAccept(req, res, cwd) {
     sendJson(res, 200, { ok: true });
   } catch (err) {
     sendJson(res, 500, { error: String(err) });
+  }
+}
+
+// ─── Discuss (interview) flow ─────────────────────────────────────────────────
+
+/** @type {{ sessionId: string, nodeId: string, abortController: AbortController, agentId?: string } | null} */
+let discussSession = null;
+
+/**
+ * Handle POST /api/node/:id/discuss
+ * Spawns a "discuss" agent that identifies gray areas in a declaration/milestone
+ * and returns questions for the user to answer before derivation.
+ */
+async function handleDiscuss(req, res, cwd, nodeId) {
+  try {
+    if (discussSession) {
+      sendJson(res, 409, { error: 'A discuss session is already running' });
+      return;
+    }
+
+    const graph = runLoadGraph(cwd);
+    if ('error' in graph) {
+      sendJson(res, 500, { error: graph.error });
+      return;
+    }
+
+    const id = nodeId.toUpperCase();
+    const prefix = id.split('-')[0];
+
+    // Build context about the node
+    let nodeContext = '';
+    if (prefix === 'D') {
+      const decl = graph.declarations.find(d => d.id === id);
+      if (!decl) { sendJson(res, 404, { error: 'Declaration not found' }); return; }
+      nodeContext = `Declaration ${decl.id}: ${decl.title}\nStatement: ${decl.statement || decl.title}`;
+      const myMiles = graph.milestones.filter(m => (m.realizes || []).includes(id));
+      if (myMiles.length > 0) {
+        nodeContext += '\n\nExisting milestones:\n' + myMiles.map(m => `- ${m.id}: ${m.title}`).join('\n');
+      }
+    } else if (prefix === 'M') {
+      const mile = graph.milestones.find(m => m.id === id);
+      if (!mile) { sendJson(res, 404, { error: 'Milestone not found' }); return; }
+      nodeContext = `Milestone ${mile.id}: ${mile.title}`;
+      const myActions = graph.actions.filter(a => (a.causes || []).includes(id));
+      if (myActions.length > 0) {
+        nodeContext += '\n\nExisting actions:\n' + myActions.map(a => `- ${a.id}: ${a.title}`).join('\n');
+      }
+    }
+
+    const prompt = `You are helping a user plan their software project. You need to identify gray areas and ambiguities that should be resolved BEFORE creating detailed plans.
+
+Given this project artifact:
+
+${nodeContext}
+
+Identify 3-5 important questions that should be answered to avoid wasted work. Focus on:
+- Ambiguous scope (what's included vs excluded?)
+- Technical decisions that affect the plan
+- Dependencies or constraints not mentioned
+- Success criteria that need clarification
+
+Output ONLY a JSON array of question objects:
+[{"question": "The question text", "context": "Why this matters", "options": ["Option A", "Option B"]}]
+
+The options array is optional — include it only when there are clear alternatives to choose from.`;
+
+    const sessionId = `discuss-${Date.now()}`;
+    const { runAI } = require('./ai-runner');
+    const activityFile = path.join(cwd, '.planning', 'activity.jsonl');
+
+    // Register agent
+    let agentId;
+    try {
+      const reg = getAgentRegistry(cwd);
+      const agent = reg.spawn('discuss', id, id);
+      agentId = agent.id;
+    } catch (_) {}
+
+    const abortController = new AbortController();
+    discussSession = { sessionId, nodeId: id, abortController, agentId };
+
+    runAI(prompt, {
+      cwd,
+      model: 'haiku',
+      maxTurns: 1,
+      abortController,
+      onText: (text) => {
+        const payload = `event: discuss-output\ndata: ${JSON.stringify({ sessionId, nodeId: id, text })}\n\n`;
+        for (const client of sseClients) {
+          try { client.write(payload); } catch (_) { sseClients.delete(client); }
+        }
+      },
+    }).then(({ text, error }) => {
+      const closingSession = discussSession;
+      discussSession = null;
+
+      let questions = null;
+      if (!error && text) {
+        try {
+          questions = JSON.parse(text.trim());
+        } catch (_) {
+          const jsonMatch = text.match(/\[[\s\S]*\]/);
+          if (jsonMatch) { try { questions = JSON.parse(jsonMatch[0]); } catch (_2) {} }
+        }
+      }
+
+      const payload = `event: discuss-complete\ndata: ${JSON.stringify({ sessionId, nodeId: id, questions, error })}\n\n`;
+      for (const client of sseClients) {
+        try { client.write(payload); } catch (_) { sseClients.delete(client); }
+      }
+
+      // Update agent registry
+      if (closingSession && closingSession.agentId) {
+        try {
+          const reg = getAgentRegistry(cwd);
+          if (!error) reg.complete(closingSession.agentId, { nodeId: id, questionCount: Array.isArray(questions) ? questions.length : 0 });
+          else reg.fail(closingSession.agentId, 1, error);
+        } catch (_) {}
+      }
+
+      // Log
+      const phase = error ? 'error' : 'done';
+      const desc = error ? `Discuss ${id} failed: ${error}` : `Discuss ${id}: ${Array.isArray(questions) ? questions.length : 0} questions`;
+      try { fs.appendFileSync(activityFile, JSON.stringify({ ts: new Date().toISOString(), tool: 'Task', phase, agent: 'Discuss', desc }) + '\n'); } catch (_) {}
+    }).catch((err) => {
+      discussSession = null;
+      if (agentId) { try { getAgentRegistry(cwd).fail(agentId, 1, String(err)); } catch (_) {} }
+    });
+
+    // Log start
+    try { fs.appendFileSync(activityFile, JSON.stringify({ ts: new Date().toISOString(), tool: 'Task', phase: 'start', agent: 'Discuss', desc: `Analyzing ${id} for discussion` }) + '\n'); } catch (_) {}
+
+    sendJson(res, 202, { ok: true, sessionId });
+  } catch (err) {
+    sendJson(res, 500, { error: String(err) });
+  }
+}
+
+/**
+ * Handle POST /api/node/:id/discuss/answer
+ * Saves user answers to milestone's CONTEXT.md file.
+ */
+async function handleDiscussAnswer(req, res, cwd, nodeId) {
+  try {
+    const body = await readJsonBody(req);
+    const answers = body.answers; // Array of { question, answer }
+    if (!Array.isArray(answers) || answers.length === 0) {
+      sendJson(res, 400, { error: 'Missing answers array' });
+      return;
+    }
+
+    const id = nodeId.toUpperCase();
+    const prefix = id.split('-')[0];
+    const planningDir = path.join(cwd, '.planning');
+
+    // Build CONTEXT.md content
+    let contextContent = `# Context: ${id}\n\n`;
+    contextContent += `Generated: ${new Date().toISOString()}\n\n`;
+    for (const item of answers) {
+      contextContent += `## ${item.question}\n\n${item.answer}\n\n`;
+    }
+
+    // Determine where to save
+    if (prefix === 'M') {
+      const { ensureMilestoneFolder } = require('../artifacts/milestone-folders');
+      const graph = runLoadGraph(cwd);
+      if ('error' in graph) { sendJson(res, 500, { error: graph.error }); return; }
+      const milestone = graph.milestones.find(m => m.id === id);
+      if (!milestone) { sendJson(res, 404, { error: 'Milestone not found' }); return; }
+      const folder = ensureMilestoneFolder(planningDir, milestone.id, milestone.title);
+      const contextPath = path.join(folder, 'CONTEXT.md');
+      fs.writeFileSync(contextPath, contextContent, 'utf-8');
+    } else {
+      // For declarations, save to .planning/CONTEXT-D-XX.md
+      const contextPath = path.join(planningDir, `CONTEXT-${id}.md`);
+      fs.writeFileSync(contextPath, contextContent, 'utf-8');
+    }
+
+    sendJson(res, 200, { ok: true });
+    broadcastChange();
+  } catch (err) {
+    sendJson(res, 400, { error: String(err) });
   }
 }
 
@@ -1792,6 +1980,9 @@ Apply the user's request by editing the relevant files. Be concise in your respo
       const phase = error ? 'error' : 'done';
       const desc = error ? `Command failed: ${error}` : `Command complete: ${text.slice(0, 80)}`;
       try { fs.appendFileSync(activityFile, JSON.stringify({ ts: new Date().toISOString(), tool: 'Task', phase, agent: 'Command', desc }) + '\n'); } catch (_) {}
+    }).catch((err) => {
+      commandSession = null;
+      if (agentId) { try { getAgentRegistry(cwd).fail(agentId, 1, String(err)); } catch (_) {} }
     });
 
     // Log start
@@ -2351,6 +2542,18 @@ function route(req, res, cwd) {
       return;
     }
 
+    // Discuss (interview) routes
+    const discussMatch = urlPath.match(/^\/api\/node\/([^/]+)\/discuss$/);
+    if (discussMatch) {
+      handleDiscuss(req, res, cwd, discussMatch[1]);
+      return;
+    }
+    const discussAnswerMatch = urlPath.match(/^\/api\/node\/([^/]+)\/discuss\/answer$/);
+    if (discussAnswerMatch) {
+      handleDiscussAnswer(req, res, cwd, discussAnswerMatch[1]);
+      return;
+    }
+
     // Command bar: POST /api/command — natural language commands with context
     if (urlPath === '/api/command') {
       handleCommand(req, res, cwd);
@@ -2616,6 +2819,10 @@ async function startServer(cwd, port) {
       resolve(undefined);
     });
   });
+
+  // Write port file so `dcl` can find us on next invocation
+  const portFilePath = require('path').join(cwd, '.planning', 'server.port');
+  require('fs').writeFileSync(portFilePath, String(resolvedPort), 'utf-8');
 
   // Restore agent state from previous run
   const reg = getAgentRegistry(cwd);
