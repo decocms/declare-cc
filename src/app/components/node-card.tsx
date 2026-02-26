@@ -1,0 +1,166 @@
+import { type ReactNode } from "react";
+
+export type NodeType = "declaration" | "milestone" | "action";
+export type ReviewState = "draft" | "approved" | "rejected";
+
+interface NodeCardProps {
+  id: string;
+  type: NodeType;
+  title: string;
+  description?: string;
+  status?: string;
+  review?: ReviewState;
+  wholeness?: string;
+  focused?: boolean;
+  selected?: boolean;
+  children?: ReactNode;
+  onClick?: () => void;
+  onApprove?: () => void;
+  onEdit?: () => void;
+  onDelete?: () => void;
+}
+
+const TYPE_COLORS: Record<NodeType, { id: string; border: string; bg: string }> = {
+  declaration: {
+    id: "text-blue-400",
+    border: "border-blue-500/20",
+    bg: "hover:bg-blue-500/5",
+  },
+  milestone: {
+    id: "text-purple-400",
+    border: "border-purple-500/20",
+    bg: "hover:bg-purple-500/5",
+  },
+  action: {
+    id: "text-green-400",
+    border: "border-green-500/20",
+    bg: "hover:bg-green-500/5",
+  },
+};
+
+export function NodeCard({
+  id,
+  type,
+  title,
+  description,
+  status,
+  review,
+  focused,
+  onClick,
+  onApprove,
+  onEdit,
+  onDelete,
+}: NodeCardProps) {
+  const colors = TYPE_COLORS[type];
+
+  return (
+    <div
+      onClick={onClick}
+      role="button"
+      tabIndex={0}
+      className={[
+        "rounded-lg border p-4 transition-all cursor-pointer",
+        colors.border,
+        colors.bg,
+        focused
+          ? "ring-2 ring-brand/40 bg-accent"
+          : "bg-card",
+      ].join(" ")}
+    >
+      {/* Header: ID + Title */}
+      <div className="flex items-baseline gap-2">
+        <span className={`text-xs font-mono font-semibold ${colors.id}`}>
+          {id}
+        </span>
+        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+      </div>
+
+      {/* Description */}
+      {description && (
+        <p className="mt-1 text-sm text-muted-foreground line-clamp-2">
+          {description}
+        </p>
+      )}
+
+      {/* Badges */}
+      <div className="mt-2 flex items-center gap-2">
+        {status && (
+          <span className="text-[10px] font-medium uppercase px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+            {status}
+          </span>
+        )}
+        {review && review !== "draft" && (
+          <span
+            className={[
+              "text-[10px] font-medium uppercase px-1.5 py-0.5 rounded",
+              review === "approved"
+                ? "bg-success/10 text-success"
+                : "bg-destructive/10 text-destructive",
+            ].join(" ")}
+          >
+            {review}
+          </span>
+        )}
+      </div>
+
+      {/* Actions — identical at every level */}
+      <div className="mt-3 flex items-center gap-2">
+        {onApprove && review !== "approved" && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onApprove(); }}
+            className="h-7 px-3 text-xs font-medium rounded-md bg-brand text-brand-foreground hover:opacity-90 transition-opacity"
+          >
+            <kbd className="mr-1 opacity-60">A</kbd>Approve
+          </button>
+        )}
+        {onEdit && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onEdit(); }}
+            className="h-7 px-3 text-xs font-medium rounded-md border bg-card hover:bg-accent transition-colors"
+          >
+            <kbd className="mr-1 opacity-60">E</kbd>Edit
+          </button>
+        )}
+        {onDelete && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onDelete(); }}
+            className="h-7 px-3 text-xs font-medium rounded-md border bg-card hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30 transition-colors"
+          >
+            <kbd className="mr-1 opacity-60">D</kbd>Delete
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Batch action bar — shown at bottom when there are items to batch-approve */
+export function BatchBar({
+  count,
+  onApproveAll,
+  onCancel,
+}: {
+  count: number;
+  onApproveAll: () => void;
+  onCancel?: () => void;
+}) {
+  if (count === 0) return null;
+  return (
+    <div className="sticky bottom-0 flex items-center gap-3 border-t bg-card p-3">
+      <button
+        onClick={onApproveAll}
+        className="h-8 px-4 text-xs font-medium rounded-md bg-brand text-brand-foreground hover:opacity-90 transition-opacity"
+      >
+        Approve All ({count})
+      </button>
+      {onCancel && (
+        <button
+          onClick={onCancel}
+          className="h-8 px-4 text-xs font-medium rounded-md border bg-card hover:bg-accent transition-colors"
+        >
+          Cancel
+        </button>
+      )}
+    </div>
+  );
+}
