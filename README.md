@@ -21,7 +21,7 @@ npx declare-cc@latest
 
 Most planning tools start from the present and work forward — "what should we do first?" Declare starts from the future and works backward — "what must be true for this to succeed?"
 
-You declare present-tense statements of fact about your project's future. The system derives milestones ("what must be true?") and actions ("what must be done?") through causal structure, then executes them in topological order with wave-based parallelism — visible in real time through a browser-based dashboard.
+You declare present-tense statements of fact about your project's future. The system derives milestones ("what must be true?") and actions ("what must be done?") through causal structure, then executes them — visible in real time through a browser dashboard.
 
 Built on the Erhard/Jensen/Zaffron ontological model:
 - **Integrity** as wholeness and completeness (not morality)
@@ -64,21 +64,25 @@ Works backward from declarations: "What must be true for D-01 to hold?" Each mil
 
 **Creates:** `MILESTONES.md` with milestones (M-01, M-02, ...)
 
-### 4. Plan & Execute
+### 4. Plan Actions
 
 ```
-/declare:actions M-01     # Derive actions for the milestone
-/declare:plan M-01        # Research → plan → verify loop (planner + checker agents)
-/declare:execute M-01     # Wave-based execution with parallel agents
+/declare:actions M-01
 ```
 
-The planner agent derives concrete actions, the checker agent validates them, and the executor runs them in topological waves. Each action gets its own atomic commit.
+Or press **P** on any milestone card in the dashboard. The AI derives 2-5 concrete actions per milestone by asking "What work must be done to achieve this?" Actions are auto-accepted and appear as cards immediately — the action list IS the plan.
 
-Or use the dashboard — review plans in the column browser, approve them, then hit Go in execution mode. The pipeline runner handles wave scheduling, progress tracking, and failure recovery.
+Each action has a title and a "produces" field describing its deliverable. No separate exec-plan files — the milestone's action list is the execution plan.
 
-**Creates:** `.planning/milestones/M-XX-*/PLAN.md` and `EXEC-PLAN-*.md` files
+**Creates:** `.planning/milestones/M-XX-*/PLAN.md`
 
-### 5. Verify & Complete
+### 5. Review & Execute
+
+In the dashboard, review each action card. Press **A** to approve, **E** to edit, **D** to delete. Once all actions for a milestone are approved, press **E** to execute.
+
+The executor gets the full why-chain context: declaration statement → milestone description → action details + sibling actions. It reads your codebase, implements the changes, and commits.
+
+### 6. Verify & Complete
 
 ```
 /declare:verify M-01              # Conversational UAT — validates deliverables
@@ -86,15 +90,13 @@ Or use the dashboard — review plans in the column browser, approve them, then 
 /declare:complete-milestone M-01  # Archive, tag release, prepare next cycle
 ```
 
-### 6. Navigate
-
-Understand your graph at any point:
+### 7. Navigate
 
 ```
-/declare:trace A-03       # Why does this action exist? Walk the why-chain up to its declaration
+/declare:trace A-03       # Why does this action exist? Walk the why-chain
 /declare:visualize        # ASCII tree of the full DAG with status markers
-/declare:prioritize M-01  # Rank actions by unblocking power (dependency weight)
-/declare:status           # Layer counts, health indicators, integrity/alignment metrics
+/declare:prioritize M-01  # Rank actions by unblocking power
+/declare:status           # Layer counts, health indicators
 /declare:dashboard        # Live interactive DAG in the browser
 ```
 
@@ -124,31 +126,49 @@ The graph engine (`DeclareDag`) uses dual adjacency lists for O(1) bidirectional
 /declare:dashboard
 ```
 
-Starts a local server and opens an interactive browser view of your project. The dashboard is the primary interface for planning and execution.
+Starts a local server and opens an interactive browser view. The dashboard is the primary interface for planning, review, and execution.
 
-### Column Browser (Planning Mode)
+### Lifecycle Column Browser
 
-The three-layer DAG rendered as a navigable column browser — Declarations on the left, Milestones in the center, Actions on the right. Click any node to see its detail panel with full causal chain, context, and status. Chain nodes are clickable for navigation.
+Drill into the three-layer DAG: Declarations → Milestones → Actions. Each level groups cards into lifecycle stages:
 
-Declarations, milestones, and actions can be created, reviewed, and approved directly in the browser. The review/annotation panel supports iterative cycles: generate plan, annotate corrections, send back for revision, repeat until approved.
+| Stage | Meaning |
+|-------|---------|
+| **Needs Planning** | Approved but no actions derived yet |
+| **Needs Approval** | Has unapproved items (milestones or actions) |
+| **Ready to Execute** | All items approved, ready to run |
+| **In Execution** | Currently being executed by an agent |
+| **Done** | Completed (collapsible) |
 
-### Execution Mode
+Cards show inline status: title, description, status badges, action counts, and review state. The action buttons row (Plan, Edit, Delete, Approve, Execute) is always visible — no hidden menus.
 
-When all plans in scope are approved, transition to execution mode — a dedicated full-screen view showing the ordered execution pipeline. Features include:
+### Keyboard Shortcuts
 
-- **Pre-execution wave order** — Review the execution sequence before starting, with drag-to-reorder within dependency constraints
-- **Pipeline runner** — Manifest-driven execution with wave scheduling, transient retry, and execution reports
-- **Live progress** — Progress bar, status dots per action, elapsed time
-- **Failure handling** — Pause-on-failure with View Output, Skip, and Stop options
-- **State persistence** — Execution state survives browser refresh
+Single keys act on the focused card (use arrow keys to navigate):
+
+| Key | Action |
+|-----|--------|
+| **P** | Plan — derive actions/milestones |
+| **A** | Approve the focused card |
+| **E** | Edit (opens inline textarea) |
+| **D** | Delete |
+| **Arrow Up/Down** | Move focus between cards |
+| **Arrow Right/Enter** | Drill into card |
+| **Arrow Left** | Go back one level |
+| **Ctrl+Shift+A** | Approve all visible |
+| **Ctrl+Shift+P** | Global plan (top-right button) |
 
 ### Activity Panel
 
-A right-side panel showing real-time agent activity. Every agent spawn — execution, revision, research — appears as a persistent activity card showing agent type, target node, elapsed time, and live status. Cards survive page refresh and navigation. Completed agents show a "View Result" button that navigates to the produced output.
+Right-side panel showing real-time agent activity. Every agent spawn — planning, execution, revision — appears as a persistent card with type, target, elapsed time, and status. Cards survive page refresh. Completed agents show "View Result".
 
-### Status Colors
+### Command Bar
 
-DONE nodes retain their type hue (dimmed blue for declarations, dimmed purple for milestones, dimmed green for actions) so the graph stays readable as a living document rather than collapsing to grey. Integrity state is visualized per-node with wholeness indicators.
+Press **C** to open the command input at the bottom. Type natural language or slash commands. The command bar dispatches to the server API.
+
+### Mesh UI Integration
+
+The server writes `.planning/server.port` on startup (deleted on shutdown) so external tools like the Mesh UI Declare plugin can discover and embed the dashboard.
 
 ---
 
@@ -158,8 +178,6 @@ Declare doesn't just track what's done — it tracks whether commitments are bei
 
 ### Integrity States
 
-Every node in the graph has an integrity status:
-
 | Status | Meaning |
 |--------|---------|
 | `KEPT` | Commitment fulfilled as declared |
@@ -167,13 +185,12 @@ Every node in the graph has an integrity status:
 | `BROKEN` | Commitment not fulfilled, no acknowledgment |
 | `RENEGOTIATED` | Commitment explicitly changed through renegotiation flow |
 
-The **honor protocol** for a commitment you can't keep: acknowledge the break, inform affected parties, clean up the mess, renegotiate a new commitment. This matches the Erhard/Jensen model — integrity isn't about being perfect, it's about restoring wholeness when things break.
+The **honor protocol** for a commitment you can't keep: acknowledge the break, inform affected parties, clean up the mess, renegotiate a new commitment.
 
 ### Alignment Monitoring
 
 - **Drift detection** — Are current actions still aligned with declared futures?
 - **Occurrence checks** — AI verifies declarations still hold at milestone completion
-- **Performance scoring** — Alignment x Integrity as qualitative HIGH/MEDIUM/LOW (never numeric scores)
 - **Renegotiation flow** — When a declaration no longer fits, renegotiate it into `FUTURE-ARCHIVE.md`
 - **Wholeness visualization** — Each node shows its computed wholeness state in the dashboard
 
@@ -189,8 +206,7 @@ The **honor protocol** for a commitment you can't keep: acknowledge the break, i
 | `/declare:future` | Guided conversation to capture declared futures |
 | `/declare:milestones` | Derive milestones backward from declarations |
 | `/declare:actions [M-XX]` | Derive actions for a milestone |
-| `/declare:plan [M-XX]` | Research → plan → verify loop (planner + checker agents) |
-| `/declare:execute [M-XX]` | Wave-based execution with parallel agents |
+| `/declare:execute [M-XX]` | Execute actions with full context |
 
 ### Planning Support
 
@@ -266,41 +282,15 @@ FUTURE-ARCHIVE.md                      # Completed cycle declarations
 ├── PROJECT.md                         # Project context and goals
 ├── STATE.md                           # Current work state
 ├── config.json                        # Project settings
-├── agent-state.json                   # Agent lifecycle state (server-side tracking)
+├── agent-state.json                   # Agent lifecycle state
+├── server.port                        # Active server port (auto-managed)
 ├── milestones/
 │   ├── M-XX-slug/
 │   │   ├── PLAN.md                    # Actions for this milestone
-│   │   ├── EXEC-PLAN-*.md            # Per-action execution plans
+│   │   ├── execution.log             # Execution output log
 │   │   └── VERIFICATION.md           # Integrity proof after execution
 │   └── v1.0/                          # Archived milestone cycle
 └── codebase/                          # Codebase analysis artifacts
-
-agents/                                # Agent definitions (10 specialized agents)
-├── declare-planner.md
-├── declare-plan-checker.md
-├── declare-executor.md
-├── declare-researcher.md
-├── declare-research-synthesizer.md
-├── declare-codebase-mapper.md
-├── declare-roadmapper.md
-├── declare-verifier.md
-├── declare-integration-checker.md
-└── declare-debugger.md
-
-workflows/                             # Conversational workflow definitions
-├── actions.md
-├── discuss.md
-├── future.md
-├── milestones.md
-├── scope.md
-└── verify.md
-
-dist/declare-tools.cjs                 # Bundled CLI (zero runtime deps)
-src/                                   # Source (~26K LOC)
-├── graph/engine.js                    # DeclareDag — dual adjacency lists, Kahn's sort
-├── artifacts/                         # Markdown parsers/writers
-├── commands/                          # 40+ CLI command implementations
-└── server/                            # HTTP API, SSE streaming, dashboard frontend
 ```
 
 ---
@@ -320,14 +310,6 @@ npm install -g declare-cc
 declare                    # Opens dashboard for current directory
 ```
 
-Or clone and install locally:
-
-```bash
-git clone https://github.com/decocms/declare-cc.git
-cd declare-cc
-node bin/install.js --claude --local
-```
-
 Requires Node.js 18+.
 
 ### Quick Start
@@ -336,10 +318,10 @@ Requires Node.js 18+.
 /declare:init                  # Scaffold the project
 /declare:future                # Declare 3-5 futures
 /declare:milestones            # Derive milestones backward
-/declare:plan M-01             # Research + plan first milestone
-/declare:execute M-01          # Execute with wave scheduling
-/declare:dashboard             # View the live DAG
+/declare:dashboard             # Open the live dashboard
 ```
+
+Then in the dashboard: press **P** to plan actions, **A** to approve, **E** to execute. Everything flows through the card-based UI.
 
 ### Recommended: Skip Permissions Mode
 
@@ -375,27 +357,28 @@ Add to `.claude/settings.json`:
 
 ## Architecture
 
-### Wave-Based Execution
+### Concurrent Planning
 
-Actions are grouped into waves based on their dependencies in the DAG. Within each wave, independent actions run in parallel via spawned agents. Waves run sequentially.
+Multiple milestones can be planned simultaneously. The action derivation runner uses a session Map — no singleton locks, no 409 errors. Each session broadcasts independently via SSE.
+
+### Rich Execution Context
+
+When an action executes, the AI agent receives the full why-chain:
 
 ```
-WAVE 1 (parallel)        WAVE 2 (parallel)        WAVE 3
-┌──────────┐ ┌──────────┐  ┌──────────┐ ┌──────────┐  ┌──────────┐
-│ A-01     │ │ A-02     │  │ A-03     │ │ A-04     │  │ A-05     │
-│ Schema   │ │ Auth     │→ │ API      │ │ Storage  │→ │ UI       │
-└──────────┘ └──────────┘  └──────────┘ └──────────┘  └──────────┘
-      │           │              ↑           ↑              ↑
-      └───────────┴──────────────┴───────────┘              │
-             A-03 needs A-01, A-04 needs A-02               │
-                        A-05 needs A-03 + A-04              │
+Declaration: D-01 — "The system handles all edge cases gracefully"
+    ↓
+Milestone: M-03 — Error Recovery and Resilience
+    ↓
+Action: A-07 — Implement retry logic with exponential backoff
+    Produces: Retry wrapper for all external API calls
+
+Other actions (context only):
+- A-06: Add circuit breaker pattern [DONE]
+- A-08: Build error reporting dashboard
 ```
 
-Each agent gets a fresh context window. Your main session stays light.
-
-### Agent Lifecycle Tracking
-
-Every spawned agent is tracked server-side with full lifecycle state: spawn, progress, completion. The `AgentRegistry` persists state to disk so agents survive server restarts and browser refreshes. The HTTP API exposes agent state for the dashboard's activity panel.
+The executor reads the codebase, implements changes, verifies them, and commits — all autonomously.
 
 ### Status Propagation
 
@@ -446,8 +429,8 @@ Declare is forked from [GSD (Get Shit Done)](https://github.com/gsd-build/get-sh
 |-----|---------|-----|
 | Linear phases (1, 2, 3...) | Three-layer DAG (D → M → A) | Phases are past-derived sequencing; DAGs represent causal structure |
 | `ROADMAP.md` | `FUTURE.md` + `MILESTONES.md` | The present is given by the future you're living into |
-| `STATE.md` tracking | Graph node statuses | Status lives in the graph, not a separate file |
-| Sequential execution | Topology-aware wave scheduling | Actions execute in causal order, not linear sequence |
+| Separate EXEC-PLAN files per action | Action list IS the plan | Actions define what to do; the executor gets full context automatically |
+| Sequential execution | Concurrent planning + execution | Multiple milestones plan/execute in parallel |
 | Phase numbers | Milestone IDs (M-XX) | Milestones derive from declarations, not arbitrary ordering |
 
 ---
