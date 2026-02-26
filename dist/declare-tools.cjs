@@ -8905,13 +8905,17 @@ data: ${JSON.stringify({ reason: "delete", nodeId: id })}
       });
     }
     async function startServer(cwd, port) {
-      const preferredPort = port || parseInt(process.env.PORT || "", 10) || 3847;
-      const resolvedPort = await findFreePort(preferredPort);
-      const server = createServer(cwd, resolvedPort);
-      await new Promise((resolve) => {
-        server.listen(resolvedPort, "127.0.0.1", () => {
+      const preferredPort = port || parseInt(process.env.PORT || "", 10) || 0;
+      const listenPort = preferredPort === 0 ? 0 : await findFreePort(preferredPort);
+      const server = createServer(cwd, listenPort);
+      const resolvedPort = await new Promise((resolve) => {
+        server.listen(listenPort, "127.0.0.1", () => {
+          const assigned = (
+            /** @type {import('net').AddressInfo} */
+            server.address().port
+          );
           watchPlanning(cwd);
-          resolve(void 0);
+          resolve(assigned);
         });
       });
       const portFilePath = require("path").join(cwd, ".planning", "server.port");
@@ -8941,7 +8945,6 @@ data: ${JSON.stringify({ reason: "delete", nodeId: id })}
 var require_serve = __commonJS({
   "src/commands/serve.js"(exports2, module2) {
     "use strict";
-    var { spawn } = require("child_process");
     var { startServer } = require_server();
     function parsePortFlag(args) {
       const idx = args.indexOf("--port");
@@ -8950,13 +8953,8 @@ var require_serve = __commonJS({
       return Number.isNaN(value) ? void 0 : value;
     }
     async function runServe2(cwd, args) {
-      const port = parsePortFlag(args) || parseInt(process.env.PORT || "", 10) || 3847;
+      const port = parsePortFlag(args);
       const { server, port: resolvedPort, url } = await startServer(cwd, port);
-      const noOpen = args.includes("--no-open") || process.env.DECLARE_NO_OPEN;
-      if (!noOpen) {
-        const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
-        spawn(opener, [url], { stdio: "ignore", detached: true }).unref();
-      }
       process.on("SIGINT", () => {
         server.close(() => process.exit(0));
       });
@@ -8991,12 +8989,17 @@ var require_open = __commonJS({
         });
       });
     }
-    async function waitForServer(port, maxAttempts = 10, intervalMs = 100) {
+    async function waitForPortFile(portFile, maxAttempts = 30, intervalMs = 200) {
       for (let i = 0; i < maxAttempts; i++) {
-        if (await checkServer(port)) return true;
+        try {
+          const content = fs.readFileSync(portFile, "utf8").trim();
+          const port = parseInt(content, 10);
+          if (!isNaN(port) && port > 0) return port;
+        } catch (_) {
+        }
         await new Promise((r) => setTimeout(r, intervalMs));
       }
-      return false;
+      return null;
     }
     async function runOpen2(cwd, args) {
       const planningDir = path.join(cwd, ".planning");
@@ -9008,25 +9011,33 @@ var require_open = __commonJS({
         }
       }
       const portFile = path.join(cwd, ".planning", "server.port");
-      const port = fs.existsSync(portFile) ? parseInt(fs.readFileSync(portFile, "utf8").trim(), 10) : 3847;
-      const isRunning = await checkServer(port);
-      if (!isRunning) {
-        const bundlePath = path.resolve(__dirname, "declare-tools.cjs");
-        const child = spawn(process.execPath, [bundlePath, "serve", "--port", String(port)], {
-          cwd,
-          detached: true,
-          stdio: "ignore"
-        });
-        child.unref();
-        const ready = await waitForServer(port);
-        if (!ready) {
-          console.error("[declare] Warning: server may not be ready yet");
+      if (fs.existsSync(portFile)) {
+        const existingPort = parseInt(fs.readFileSync(portFile, "utf8").trim(), 10);
+        if (!isNaN(existingPort) && existingPort > 0) {
+          const isRunning = await checkServer(existingPort);
+          if (isRunning) {
+            console.log(`Dashboard: http://localhost:${existingPort}`);
+            return;
+          }
+          try {
+            fs.unlinkSync(portFile);
+          } catch (_) {
+          }
         }
       }
-      const url = `http://localhost:${port}`;
-      const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
-      spawn(opener, [url], { stdio: "ignore", detached: true }).unref();
-      console.log(`Dashboard: ${url}`);
+      const bundlePath = path.resolve(__dirname, "declare-tools.cjs");
+      const child = spawn(process.execPath, [bundlePath, "serve"], {
+        cwd,
+        detached: true,
+        stdio: "ignore"
+      });
+      child.unref();
+      const port = await waitForPortFile(portFile);
+      if (!port) {
+        console.error("[declare] Server failed to start (no port file after 6s)");
+        process.exit(1);
+      }
+      console.log(`Dashboard: http://localhost:${port}`);
     }
     module2.exports = { runOpen: runOpen2 };
   }

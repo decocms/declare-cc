@@ -6,8 +6,8 @@
  *
  * Default invocation handler for `declare` (no subcommand), `declare .`,
  * and `declare /path/to/project`. Resolves the project root, checks if
- * the server is running, starts it in the background if needed, and opens
- * the dashboard in the default browser.
+ * the server is running, starts it in the background if needed, and prints
+ * the dashboard URL.
  *
  * Zero runtime dependencies. CJS module.
  */
@@ -38,22 +38,27 @@ function checkServer(port) {
 }
 
 /**
- * Wait for the server to become available, polling up to maxAttempts times.
- * @param {number} port
+ * Wait for the port file to appear and return the port number.
+ * The server writes this file after it's listening.
+ * @param {string} portFile
  * @param {number} maxAttempts
  * @param {number} intervalMs
- * @returns {Promise<boolean>}
+ * @returns {Promise<number|null>}
  */
-async function waitForServer(port, maxAttempts = 10, intervalMs = 100) {
+async function waitForPortFile(portFile, maxAttempts = 30, intervalMs = 200) {
   for (let i = 0; i < maxAttempts; i++) {
-    if (await checkServer(port)) return true;
+    try {
+      const content = fs.readFileSync(portFile, 'utf8').trim();
+      const port = parseInt(content, 10);
+      if (!isNaN(port) && port > 0) return port;
+    } catch (_) {}
     await new Promise((r) => setTimeout(r, intervalMs));
   }
-  return false;
+  return null;
 }
 
 /**
- * Run the open command: resolve project root, check/start server, open browser.
+ * Run the open command: resolve project root, check/start server, print URL.
  *
  * @param {string} cwd - The project root to open (already resolved by dispatcher)
  * @param {string[]} args - Remaining CLI args (unused for now)
@@ -70,42 +75,39 @@ async function runOpen(cwd, args) {
     }
   }
 
-  // 1. Read port
   const portFile = path.join(cwd, '.planning', 'server.port');
-  const port = fs.existsSync(portFile)
-    ? parseInt(fs.readFileSync(portFile, 'utf8').trim(), 10)
-    : 3847;
 
-  // 2. Check if server is running
-  const isRunning = await checkServer(port);
-
-  // 3. Start server if not running
-  if (!isRunning) {
-    // After esbuild bundling, __dirname === dist/ -- reference bundle by its own filename.
-    const bundlePath = path.resolve(__dirname, 'declare-tools.cjs');
-    const child = spawn(process.execPath, [bundlePath, 'serve', '--port', String(port)], {
-      cwd,
-      detached: true,
-      stdio: 'ignore',
-    });
-    child.unref();
-
-    // Poll until server is up (up to ~1s)
-    const ready = await waitForServer(port);
-    if (!ready) {
-      console.error('[declare] Warning: server may not be ready yet');
+  // 1. Check if server is already running for this project
+  if (fs.existsSync(portFile)) {
+    const existingPort = parseInt(fs.readFileSync(portFile, 'utf8').trim(), 10);
+    if (!isNaN(existingPort) && existingPort > 0) {
+      const isRunning = await checkServer(existingPort);
+      if (isRunning) {
+        console.log(`Dashboard: http://localhost:${existingPort}`);
+        return;
+      }
+      // Stale port file — server crashed without cleanup
+      try { fs.unlinkSync(portFile); } catch (_) {}
     }
   }
 
-  // 4. Open browser
-  const url = `http://localhost:${port}`;
-  const opener = process.platform === 'darwin' ? 'open'
-    : process.platform === 'win32' ? 'start'
-    : 'xdg-open';
-  spawn(opener, [url], { stdio: 'ignore', detached: true }).unref();
+  // 2. Start server in background with port 0 (OS picks free port)
+  const bundlePath = path.resolve(__dirname, 'declare-tools.cjs');
+  const child = spawn(process.execPath, [bundlePath, 'serve'], {
+    cwd,
+    detached: true,
+    stdio: 'ignore',
+  });
+  child.unref();
 
-  // 5. Print confirmation
-  console.log(`Dashboard: ${url}`);
+  // 3. Wait for the server to write its port file
+  const port = await waitForPortFile(portFile);
+  if (!port) {
+    console.error('[declare] Server failed to start (no port file after 6s)');
+    process.exit(1);
+  }
+
+  console.log(`Dashboard: http://localhost:${port}`);
 }
 
 module.exports = { runOpen };

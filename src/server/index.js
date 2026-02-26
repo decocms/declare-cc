@@ -3271,15 +3271,17 @@ function findFreePort(startPort) {
  * @returns {Promise<{ server: import('http').Server, port: number, url: string }>}
  */
 async function startServer(cwd, port) {
-  const preferredPort = port || parseInt(process.env.PORT || '', 10) || 3847;
-  const resolvedPort = await findFreePort(preferredPort);
+  const preferredPort = port || parseInt(process.env.PORT || '', 10) || 0;
 
-  const server = createServer(cwd, resolvedPort);
+  // Resolve port: 0 = OS picks a free port, otherwise find free from preferred
+  const listenPort = preferredPort === 0 ? 0 : await findFreePort(preferredPort);
+  const server = createServer(cwd, listenPort);
 
-  await new Promise((resolve) => {
-    server.listen(resolvedPort, '127.0.0.1', () => {
+  const resolvedPort = await new Promise((resolve) => {
+    server.listen(listenPort, '127.0.0.1', () => {
+      const assigned = /** @type {import('net').AddressInfo} */ (server.address()).port;
       watchPlanning(cwd);
-      resolve(undefined);
+      resolve(assigned);
     });
   });
 
