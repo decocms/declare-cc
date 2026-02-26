@@ -37,7 +37,7 @@ Run it:
 npm run plan
 ```
 
-This auto-initializes a `.planning/` directory if one doesn't exist, starts the Declare server, writes the port to `.planning/server.port`, and opens the dashboard in your browser.
+This auto-initializes a `.planning/` directory if one doesn't exist, starts the Declare server on a random free port, writes the port to `.planning/server.port`, and prints the dashboard URL.
 
 Or run directly:
 
@@ -59,7 +59,7 @@ You declare present-tense statements of fact about your project's future. The sy
 
 ## How It Works
 
-Everything happens through the dashboard. `dcl` opens it, and you drive the workflow with keyboard shortcuts and card-based UI.
+Everything happens through the dashboard. `dcl` starts the server and prints the URL — click it to open.
 
 ### 1. Declare Futures
 
@@ -125,9 +125,94 @@ Cards are grouped into stages at each level:
 | **Ctrl+Shift+A** | Approve all visible |
 | **C** | Command bar |
 
-### Server Discovery
+---
 
-On startup, the server writes the port number to `.planning/server.port` (plain text, e.g. `3847`). On shutdown, it deletes this file. External tools can read this file to embed the dashboard in an iframe.
+## Server & Port Discovery
+
+The Declare server uses OS-assigned ports so multiple projects can run simultaneously without collisions.
+
+### How it works
+
+1. `dcl` (or `dcl serve`) starts the server on **port 0** — the OS assigns a random free port
+2. After the server is listening, it writes the port number to `.planning/server.port` (plain text, e.g. `62964`)
+3. On shutdown (SIGINT, SIGTERM, process exit), the file is deleted
+4. Next time `dcl` runs, it reads the port file. If the server is still alive, it reuses it. If the file is stale (server crashed), it cleans up and starts fresh.
+
+### For external tools
+
+To discover a running Declare server for a project:
+
+```js
+const port = fs.readFileSync('<project>/.planning/server.port', 'utf8').trim();
+// Verify it's alive:
+// GET http://localhost:<port>/api/graph → 200 = running
+// Embed dashboard:
+// <iframe src="http://localhost:<port>/" />
+```
+
+If the file doesn't exist, the server isn't running. Start it:
+
+```bash
+cd <project> && npx dcl serve
+```
+
+Then poll for `.planning/server.port` to appear (~1 second).
+
+### Explicit port
+
+If you need a specific port:
+
+```bash
+dcl serve --port 4000
+```
+
+---
+
+## For Agents
+
+If you're an AI agent (Claude Code, Cursor, etc.) working in a project that uses Declare, here's what you need to know:
+
+### Project state lives in `.planning/`
+
+- **`FUTURE.md`** — Declared futures (present-tense statements about what's true when the project succeeds)
+- **`MILESTONES.md`** — Milestones derived backward from futures
+- **`.planning/milestones/M-XX-slug/PLAN.md`** — Actions for each milestone (title, produces, causes)
+- **`.planning/STATE.md`** — Current project state and decisions
+- **`.planning/PROJECT.md`** — Project context and background
+
+### The DAG structure
+
+Declarations (D-XX) → Milestones (M-XX) → Actions (A-XX). Each layer links to the one above via `realizes` (milestones → declarations) and `causes` (actions → milestones). Read the graph with:
+
+```bash
+node_modules/.bin/declare-cc load-graph
+```
+
+Returns JSON with `declarations`, `milestones`, `actions` arrays.
+
+### Slash commands available to you
+
+If you're running inside Claude Code with declare-cc installed, these slash commands are available:
+
+- `/declare:status` — See where the project stands
+- `/declare:execute M-XX` — Execute actions for a milestone
+- `/declare:verify M-XX` — Validate deliverables
+- `/declare:trace A-XX` — Understand why an action exists (walk the why-chain)
+- `/declare:progress` — Find the next thing to work on
+- `/declare:help` — See all commands
+
+### Dashboard API
+
+If the server is running (check `.planning/server.port`), you can use the HTTP API:
+
+| Method | Path | Returns |
+|--------|------|---------|
+| GET | `/api/graph` | Full DAG (declarations, milestones, actions) |
+| GET | `/api/status` | Integrity/alignment metrics |
+| GET | `/api/agents` | Running/completed agents |
+| GET | `/api/events` | SSE stream (real-time updates) |
+| POST | `/api/review` | Approve/reject a node |
+| POST | `/api/action/:id/execute` | Execute an action |
 
 ---
 
@@ -145,7 +230,7 @@ The dashboard is the primary interface. All operations are also available as sla
 | `/declare:audit M-XX` | Cross-reference against declarations |
 | `/declare:trace A-XX` | Walk the why-chain to its declaration |
 | `/declare:status` | Graph health and layer counts |
-| `/declare:dashboard` | Open the dashboard |
+| `/declare:dashboard` | Start server and print URL |
 | `/declare:help` | Show all commands |
 
 ---
