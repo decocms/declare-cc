@@ -59,29 +59,43 @@ function AgentItem({
     interrupted: "text-muted-foreground",
   };
 
+  // Extract node ID from prompt for navigation
+  const nodeMatch = agent.prompt.match(/\b([DMA]-\d+)\b/i);
+  const nodeId = nodeMatch ? nodeMatch[1].toUpperCase() : null;
+
   return (
-    <div className="px-4 py-3">
-      <button onClick={onToggle} className="w-full text-left">
-        <div className="flex items-center gap-2">
-          <span
-            className={`h-2 w-2 rounded-full ${
-              agent.status === "running" ? "bg-warning animate-pulse" : agent.status === "completed" ? "bg-success" : "bg-destructive"
-            }`}
-          />
-          <span className="text-xs font-medium text-foreground truncate flex-1">
-            {agent.prompt}
-          </span>
-        </div>
-        <div className="mt-0.5 flex items-center gap-2 text-[10px]">
-          <span className={statusColor[agent.status] ?? "text-muted-foreground"}>
-            {agent.status}
-          </span>
-          <span className="text-muted-foreground">{agent.type}</span>
-          <span className="text-muted-foreground">
-            {new Date(agent.startedAt).toLocaleTimeString()}
-          </span>
-        </div>
-      </button>
+    <div className="group px-4 py-3">
+      <div className="flex items-start gap-2">
+        <button onClick={onToggle} className="flex-1 text-left min-w-0">
+          <div className="flex items-center gap-2">
+            <span
+              className={`h-2 w-2 shrink-0 rounded-full ${
+                agent.status === "running" ? "bg-warning animate-pulse" : agent.status === "completed" ? "bg-success" : "bg-destructive"
+              }`}
+            />
+            <span className="text-xs font-medium text-foreground truncate">
+              {agent.prompt}
+            </span>
+          </div>
+          <div className="mt-0.5 flex items-center gap-2 text-[10px]">
+            <span className={statusColor[agent.status] ?? "text-muted-foreground"}>
+              {agent.status}
+            </span>
+            <span className="text-muted-foreground">{agent.type}</span>
+            <span className="text-muted-foreground">
+              {new Date(agent.startedAt).toLocaleTimeString()}
+            </span>
+          </div>
+        </button>
+        {nodeId && (
+          <a
+            href={`#${nodeId}`}
+            className="shrink-0 opacity-0 group-hover:opacity-100 text-[10px] px-1.5 py-0.5 rounded border bg-card hover:bg-accent transition-all text-muted-foreground"
+          >
+            Go to {nodeId}
+          </a>
+        )}
+      </div>
 
       {expanded && (
         <div className="mt-2 space-y-2">

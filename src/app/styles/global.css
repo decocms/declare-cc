@@ -48,7 +48,7 @@
   --node-decl-bg: oklch(0.95 0.02 260);
   --node-mile: oklch(0.50 0.18 290);         /* purple — milestones */
   --node-mile-bg: oklch(0.95 0.03 290);
-  --node-act: oklch(0.40 0.12 155);          /* green — actions */
+  --node-act: oklch(0.32 0.10 155);          /* green — actions */
   --node-act-bg: oklch(0.95 0.02 155);
 
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;

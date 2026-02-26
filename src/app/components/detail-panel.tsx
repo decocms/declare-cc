@@ -127,7 +127,7 @@ export function DetailPanel({ item, isRunning }: DetailPanelProps) {
               Agent running...
             </div>
           )}
-          {item.nodeType === "declaration" && (
+          {item.nodeType === "declaration" && (item.milestoneCount ?? 0) === 0 && (
             <button
               onClick={() => spawnAgent.mutate({ endpoint: "derive", body: { declarationId: item.id } })}
               disabled={spawnAgent.isPending || isRunning}

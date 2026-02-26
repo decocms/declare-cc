@@ -226,17 +226,27 @@ export function LifecycleView() {
     <div className="flex flex-1 overflow-hidden">
       {/* Main list area */}
       <div className="flex flex-1 flex-col overflow-hidden">
-      {/* Breadcrumb */}
-      <div className="flex items-center gap-2 border-b px-4 py-2 text-xs">
+      {/* Breadcrumb — always visible to avoid layout shift */}
+      <div className="flex items-center gap-2 border-b px-4 py-1.5 text-xs min-h-[28px]">
         {breadcrumbs.map((bc, i) => (
           <span key={i} className="flex items-center gap-2">
             {i > 0 && <span className="text-muted-foreground">&rsaquo;</span>}
-            {bc.onClick ? (
-              <button onClick={bc.onClick} className="text-muted-foreground hover:text-foreground transition-colors">
+            {bc.isHome ? (
+              bc.onClick ? (
+                <button onClick={bc.onClick} className="text-muted-foreground hover:text-foreground transition-colors" title="Back to declarations">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+                </button>
+              ) : (
+                <span className="text-muted-foreground/50">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+                </span>
+              )
+            ) : bc.onClick ? (
+              <button onClick={bc.onClick} className="text-muted-foreground hover:text-foreground transition-colors truncate max-w-xs">
                 {bc.label}
               </button>
             ) : (
-              <span className="font-semibold text-foreground">{bc.label}</span>
+              <span className="font-semibold text-foreground truncate max-w-md">{bc.label}</span>
             )}
           </span>
         ))}
@@ -346,16 +356,15 @@ function buildBreadcrumbs(
   graph: any,
   drill: DrillState,
   navigateTo: (level: DrillLevel) => void,
-): { label: string; onClick?: () => void }[] {
-  const crumbs: { label: string; onClick?: () => void }[] = [];
+): { label: string; isHome?: boolean; onClick?: () => void }[] {
+  const crumbs: { label: string; isHome?: boolean; onClick?: () => void }[] = [];
 
-  const projectName = graph?.projectName ?? "Project";
-
-  if (drill.level === "declarations") {
-    crumbs.push({ label: projectName });
-  } else {
-    crumbs.push({ label: projectName, onClick: () => navigateTo("declarations") });
-  }
+  // Always show home icon — clickable when drilled in, inert at top level
+  crumbs.push({
+    label: "",
+    isHome: true,
+    onClick: drill.level !== "declarations" ? () => navigateTo("declarations") : undefined,
+  });
 
   if (drill.level === "milestones" || drill.level === "actions") {
     const d = graph?.declarations?.find((d: any) => d.id === drill.declarationId);
