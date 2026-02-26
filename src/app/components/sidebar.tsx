@@ -61,7 +61,8 @@ export function Sidebar() {
         <p>
           <kbd className="font-mono">←</kbd> back &middot;{" "}
           <kbd className="font-mono">a</kbd> approve &middot;{" "}
-          <kbd className="font-mono">d</kbd> delete
+          <kbd className="font-mono">d</kbd> delete &middot;{" "}
+          <kbd className="font-mono">p</kbd> plan
         </p>
         <p>
           <kbd className="font-mono">A</kbd> approve all

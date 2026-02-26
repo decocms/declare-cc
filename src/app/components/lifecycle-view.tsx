@@ -3,7 +3,7 @@ import { NodeCard, BatchBar } from "./node-card";
 import { DetailPanel } from "./detail-panel";
 import { AgentPanel } from "./agent-panel";
 import { useGraph, useApprove, useDeleteNode, useSSE } from "../hooks/use-graph";
-import { useAgents } from "../hooks/use-agents";
+import { useAgents, useSpawnAgent } from "../hooks/use-agents";
 import { OnboardingFlow } from "./onboarding/onboarding-flow";
 
 type DrillLevel = "declarations" | "milestones" | "actions";
@@ -58,6 +58,7 @@ export function LifecycleView() {
   const approve = useApprove();
   const deleteNode = useDeleteNode();
   const { data: agents = [] } = useAgents();
+  const spawnAgent = useSpawnAgent();
 
   const items = getItems(graph, drill);
 
@@ -130,6 +131,17 @@ export function LifecycleView() {
           e.preventDefault();
           if (currentItems[currentFocus]) deleteNode.mutate({ id: currentItems[currentFocus].id, type: currentItems[currentFocus].nodeType });
           break;
+        case "p": {
+          e.preventDefault();
+          const item = currentItems[currentFocus];
+          if (!item) break;
+          if (item.nodeType === "declaration") {
+            spawnAgent.mutate({ endpoint: "derive", body: { declarationId: item.id } });
+          } else if (item.nodeType === "milestone") {
+            spawnAgent.mutate({ endpoint: "plan-actions", body: { milestoneId: item.id } });
+          }
+          break;
+        }
         case "A":
           e.preventDefault();
           {

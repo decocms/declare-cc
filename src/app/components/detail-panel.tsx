@@ -139,7 +139,7 @@ export function DetailPanel({ item, isRunning }: DetailPanelProps) {
           {item.nodeType === "milestone" && (
             <>
               <button
-                onClick={() => spawnAgent.mutate({ endpoint: "execute", body: { actionId: item.id } })}
+                onClick={() => spawnAgent.mutate({ endpoint: "plan-actions", body: { milestoneId: item.id } })}
                 disabled={spawnAgent.isPending || isRunning}
                 className="w-full h-8 text-xs font-medium rounded-md bg-green-500/10 text-green-400 border border-green-500/20 hover:bg-green-500/20 transition-colors disabled:opacity-50"
               >
