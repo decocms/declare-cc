@@ -3,6 +3,7 @@ import { NodeCard, BatchBar } from "./node-card";
 import { DetailPanel } from "./detail-panel";
 import { AgentPanel } from "./agent-panel";
 import { useGraph, useApprove, useDeleteNode, useSSE } from "../hooks/use-graph";
+import { useAgents } from "../hooks/use-agents";
 import { OnboardingFlow } from "./onboarding/onboarding-flow";
 
 type DrillLevel = "declarations" | "milestones" | "actions";
@@ -20,18 +21,57 @@ const INITIAL_DRILL: DrillState = {
   savedFocus: { declarations: 0, milestones: 0, actions: 0 },
 };
 
+/** Read drill state from URL hash (e.g. #D-01 or #D-01/M-03) */
+function drillFromHash(): DrillState {
+  const hash = window.location.hash.replace("#", "");
+  if (!hash) return INITIAL_DRILL;
+  const parts = hash.split("/");
+  if (parts.length === 2 && parts[0].startsWith("D-") && parts[1].startsWith("M-")) {
+    return { level: "actions", declarationId: parts[0], milestoneId: parts[1], savedFocus: { declarations: 0, milestones: 0, actions: 0 } };
+  }
+  if (parts.length === 1 && parts[0].startsWith("D-")) {
+    return { level: "milestones", declarationId: parts[0], savedFocus: { declarations: 0, milestones: 0, actions: 0 } };
+  }
+  return INITIAL_DRILL;
+}
+
 export function LifecycleView() {
   const { data: graph, isLoading } = useGraph();
   useSSE();
 
-  const [drill, setDrill] = useState<DrillState>(INITIAL_DRILL);
+  const [drill, setDrillRaw] = useState<DrillState>(drillFromHash);
   const [focusIdx, setFocusIdx] = useState(0);
+
+  // Sync drill state to URL hash
+  const setDrill = (d: DrillState) => {
+    setDrillRaw(d);
+    if (d.level === "actions" && d.declarationId && d.milestoneId) {
+      window.location.hash = `${d.declarationId}/${d.milestoneId}`;
+    } else if (d.level === "milestones" && d.declarationId) {
+      window.location.hash = d.declarationId;
+    } else {
+      window.location.hash = "";
+    }
+  };
   const listRef = useRef<HTMLDivElement>(null);
 
   const approve = useApprove();
   const deleteNode = useDeleteNode();
+  const { data: agents = [] } = useAgents();
 
   const items = getItems(graph, drill);
+
+  // Build a set of node IDs that have a running agent
+  const runningNodeIds = new Set(
+    agents
+      .filter((a) => a.status === "running")
+      .map((a) => {
+        // Extract node ID from agent prompt (e.g. "Execute M-03" → "M-03")
+        const match = a.prompt.match(/\b([DMA]-\d+)\b/i);
+        return match ? match[1].toUpperCase() : null;
+      })
+      .filter(Boolean) as string[],
+  );
 
   // Keep refs in sync so the keydown handler always sees latest state
   const drillRef = useRef(drill);
@@ -213,6 +253,7 @@ export function LifecycleView() {
               description={item.description}
               status={item.status}
               review={item.review as "draft" | "approved" | undefined}
+              isRunning={runningNodeIds.has(item.id)}
               focused={i === focusIdx}
               onClick={() => { setFocusIdx(i); handleDrillIn(items, i, drill); }}
               onApprove={() => approve.mutate([item.id])}
@@ -228,7 +269,7 @@ export function LifecycleView() {
 
       {/* Right panels */}
       <div className="flex shrink-0">
-        <DetailPanel item={detailItem} />
+        <DetailPanel item={detailItem} isRunning={focusedItem ? runningNodeIds.has(focusedItem.id) : false} />
         <AgentPanel />
       </div>
     </div>

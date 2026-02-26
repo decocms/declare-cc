@@ -11,6 +11,7 @@ interface NodeCardProps {
   status?: string;
   review?: ReviewState;
   wholeness?: string;
+  isRunning?: boolean;
   focused?: boolean;
   selected?: boolean;
   children?: ReactNode;
@@ -45,6 +46,7 @@ export function NodeCard({
   description,
   status,
   review,
+  isRunning,
   focused,
   onClick,
   onApprove,
@@ -65,6 +67,7 @@ export function NodeCard({
         focused
           ? "ring-2 ring-brand/40 bg-accent"
           : "bg-card",
+        isRunning ? "border-warning/40" : "",
       ].join(" ")}
     >
       {/* Header: ID + Title */}
@@ -84,6 +87,11 @@ export function NodeCard({
 
       {/* Badges */}
       <div className="mt-2 flex items-center gap-2 flex-wrap">
+        {isRunning && (
+          <span className="text-[10px] font-medium uppercase px-1.5 py-0.5 rounded bg-warning/10 text-warning animate-pulse">
+            Running
+          </span>
+        )}
         {status && (
           <span className="text-[10px] font-medium uppercase px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
             {status}

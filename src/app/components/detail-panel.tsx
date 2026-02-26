@@ -1,6 +1,7 @@
 import { useSpawnAgent } from "../hooks/use-agents";
 
 interface DetailPanelProps {
+  isRunning?: boolean;
   item: {
     id: string;
     nodeType: "declaration" | "milestone" | "action";
@@ -18,7 +19,7 @@ interface DetailPanelProps {
   } | null;
 }
 
-export function DetailPanel({ item }: DetailPanelProps) {
+export function DetailPanel({ item, isRunning }: DetailPanelProps) {
   const spawnAgent = useSpawnAgent();
 
   if (!item) {
@@ -120,30 +121,36 @@ export function DetailPanel({ item }: DetailPanelProps) {
 
         {/* Agent actions */}
         <div className="border-t pt-3 space-y-2">
+          {isRunning && (
+            <div className="flex items-center gap-2 text-xs text-warning animate-pulse">
+              <span className="h-2 w-2 rounded-full bg-warning" />
+              Agent running...
+            </div>
+          )}
           {item.nodeType === "declaration" && (
             <button
               onClick={() => spawnAgent.mutate({ endpoint: "derive", body: { declarationId: item.id } })}
-              disabled={spawnAgent.isPending}
+              disabled={spawnAgent.isPending || isRunning}
               className="w-full h-8 text-xs font-medium rounded-md bg-purple-500/10 text-purple-400 border border-purple-500/20 hover:bg-purple-500/20 transition-colors disabled:opacity-50"
             >
-              {spawnAgent.isPending ? "Deriving..." : "Derive Milestones"}
+              {isRunning ? "Running..." : spawnAgent.isPending ? "Deriving..." : "Derive Milestones"}
             </button>
           )}
           {item.nodeType === "milestone" && (
             <>
               <button
                 onClick={() => spawnAgent.mutate({ endpoint: "execute", body: { actionId: item.id } })}
-                disabled={spawnAgent.isPending}
+                disabled={spawnAgent.isPending || isRunning}
                 className="w-full h-8 text-xs font-medium rounded-md bg-green-500/10 text-green-400 border border-green-500/20 hover:bg-green-500/20 transition-colors disabled:opacity-50"
               >
-                Plan Actions
+                {isRunning ? "Running..." : "Plan Actions"}
               </button>
               <button
                 onClick={() => spawnAgent.mutate({ endpoint: "verify", body: { milestoneId: item.id } })}
-                disabled={spawnAgent.isPending}
+                disabled={spawnAgent.isPending || isRunning}
                 className="w-full h-8 text-xs font-medium rounded-md bg-blue-500/10 text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 transition-colors disabled:opacity-50"
               >
-                Verify
+                {isRunning ? "Running..." : "Verify"}
               </button>
             </>
           )}
