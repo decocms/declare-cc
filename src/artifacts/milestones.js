@@ -22,18 +22,19 @@ function parseMarkdownTable(text) {
   const lines = text.trim().split('\n').filter(l => l.trim().startsWith('|'));
   if (lines.length < 2) return [];
 
-  const headers = lines[0]
-    .split('|')
-    .map(h => h.trim())
-    .filter(Boolean);
+  const raw = lines[0].split('|').map(h => h.trim());
+  const headers = raw.slice(1, raw.length - 1);
 
   // Skip separator line (lines[1] is the |---|---| row)
   return lines.slice(2).map(line => {
-    const cells = line.split('|').map(c => c.trim()).filter(Boolean);
+    // Split on | but keep empty cells — don't filter(Boolean) or empty columns shift
+    const raw = line.split('|').map(c => c.trim());
+    // Drop first and last elements (empty strings from leading/trailing |)
+    const cells = raw.slice(1, raw.length - 1);
     /** @type {Record<string, string>} */
     const row = {};
     headers.forEach((h, i) => {
-      row[h] = cells[i] || '';
+      row[h] = (cells[i] || '').trim();
     });
     return row;
   });

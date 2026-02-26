@@ -319,12 +319,14 @@ var require_milestones = __commonJS({
     function parseMarkdownTable(text) {
       const lines = text.trim().split("\n").filter((l) => l.trim().startsWith("|"));
       if (lines.length < 2) return [];
-      const headers = lines[0].split("|").map((h) => h.trim()).filter(Boolean);
+      const raw = lines[0].split("|").map((h) => h.trim());
+      const headers = raw.slice(1, raw.length - 1);
       return lines.slice(2).map((line) => {
-        const cells = line.split("|").map((c) => c.trim()).filter(Boolean);
+        const raw2 = line.split("|").map((c) => c.trim());
+        const cells = raw2.slice(1, raw2.length - 1);
         const row = {};
         headers.forEach((h, i) => {
-          row[h] = cells[i] || "";
+          row[h] = (cells[i] || "").trim();
         });
         return row;
       });
