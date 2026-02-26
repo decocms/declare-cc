@@ -1,6 +1,7 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { NodeCard, BatchBar } from "./node-card";
 import { useGraph, useApprove, useDeleteNode, useSSE } from "../hooks/use-graph";
+import { OnboardingFlow } from "./onboarding/onboarding-flow";
 
 type DrillLevel = "declarations" | "milestones" | "actions";
 
@@ -8,24 +9,40 @@ interface DrillState {
   level: DrillLevel;
   declarationId?: string;
   milestoneId?: string;
+  /** Saved focus index per level so we restore position on drill-out */
+  savedFocus: { declarations: number; milestones: number; actions: number };
 }
+
+const INITIAL_DRILL: DrillState = {
+  level: "declarations",
+  savedFocus: { declarations: 0, milestones: 0, actions: 0 },
+};
 
 export function LifecycleView() {
   const { data: graph, isLoading } = useGraph();
   useSSE();
 
-  const [drill, setDrill] = useState<DrillState>({ level: "declarations" });
+  const [drill, setDrill] = useState<DrillState>(INITIAL_DRILL);
   const [focusIdx, setFocusIdx] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
 
   const approve = useApprove();
   const deleteNode = useDeleteNode();
 
-  // Current items based on drill level
   const items = getItems(graph, drill);
 
-  // Reset focus when drill level or items change
-  useEffect(() => { setFocusIdx(0); }, [drill.level, drill.declarationId, drill.milestoneId]);
+  // Show onboarding when no declarations exist
+  if (!isLoading && items.length === 0 && drill.level === "declarations") {
+    return <OnboardingFlow />;
+  }
+
+  // Keep refs in sync so the keydown handler always sees latest state
+  const drillRef = useRef(drill);
+  const focusRef = useRef(focusIdx);
+  const itemsRef = useRef(items);
+  drillRef.current = drill;
+  focusRef.current = focusIdx;
+  itemsRef.current = items;
 
   // Scroll focused item into view
   useEffect(() => {
@@ -33,76 +50,104 @@ export function LifecycleView() {
     el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [focusIdx]);
 
-  // Keyboard navigation
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent) => {
-      const len = items.length;
-      if (!len) return;
+  // Keyboard navigation — single stable listener, reads from refs
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      // Don't capture when typing in an input/textarea
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+
+      const currentItems = itemsRef.current;
+      const currentFocus = focusRef.current;
+      const currentDrill = drillRef.current;
+      const len = currentItems.length;
 
       switch (e.key) {
         case "ArrowDown":
         case "j":
           e.preventDefault();
-          setFocusIdx((i) => Math.min(i + 1, len - 1));
+          setFocusIdx(Math.min(currentFocus + 1, len - 1));
           break;
         case "ArrowUp":
         case "k":
           e.preventDefault();
-          setFocusIdx((i) => Math.max(i - 1, 0));
+          setFocusIdx(Math.max(currentFocus - 1, 0));
           break;
         case "Enter":
         case "ArrowRight":
         case "l":
           e.preventDefault();
-          drillIn(items[focusIdx]);
+          handleDrillIn(currentItems, currentFocus, currentDrill);
           break;
         case "Escape":
         case "ArrowLeft":
         case "h":
           e.preventDefault();
-          drillOut();
+          handleDrillOut(currentDrill);
           break;
         case "a":
           e.preventDefault();
-          if (items[focusIdx]) {
-            approve.mutate([items[focusIdx].id]);
-          }
+          if (currentItems[currentFocus]) approve.mutate([currentItems[currentFocus].id]);
           break;
         case "d":
           e.preventDefault();
-          if (items[focusIdx]) {
-            deleteNode.mutate({ id: items[focusIdx].id, type: items[focusIdx].nodeType });
-          }
+          if (currentItems[currentFocus]) deleteNode.mutate({ id: currentItems[currentFocus].id, type: currentItems[currentFocus].nodeType });
           break;
         case "A":
-          // Shift+A = approve all
           e.preventDefault();
-          approveAll();
+          {
+            const draftIds = currentItems.filter((i) => i.review !== "approved").map((i) => i.id);
+            if (draftIds.length > 0) approve.mutate(draftIds);
+          }
           break;
       }
-    },
-    [items, focusIdx, drill],
-  );
+    }
 
-  useEffect(() => {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handleKeyDown]);
+  }, []); // stable — never re-registers
 
-  function drillIn(item: ReturnType<typeof getItems>[number] | undefined) {
+  function handleDrillIn(currentItems: ItemShape[], idx: number, d: DrillState) {
+    const item = currentItems[idx];
     if (!item) return;
-    if (drill.level === "declarations") {
-      setDrill({ level: "milestones", declarationId: item.id });
-    } else if (drill.level === "milestones") {
-      setDrill({ level: "actions", declarationId: drill.declarationId, milestoneId: item.id });
+
+    if (d.level === "declarations") {
+      setDrill({
+        ...d,
+        level: "milestones",
+        declarationId: item.id,
+        savedFocus: { ...d.savedFocus, declarations: idx },
+      });
+      setFocusIdx(0);
+    } else if (d.level === "milestones") {
+      setDrill({
+        ...d,
+        level: "actions",
+        milestoneId: item.id,
+        savedFocus: { ...d.savedFocus, milestones: idx },
+      });
+      setFocusIdx(0);
     }
   }
 
-  function drillOut() {
-    if (drill.level === "actions") {
-      setDrill({ level: "milestones", declarationId: drill.declarationId });
-    } else if (drill.level === "milestones") {
-      setDrill({ level: "declarations" });
+  function handleDrillOut(d: DrillState) {
+    if (d.level === "actions") {
+      setDrill({ ...d, level: "milestones", milestoneId: undefined });
+      setFocusIdx(d.savedFocus.milestones);
+    } else if (d.level === "milestones") {
+      setDrill({ ...d, level: "declarations", declarationId: undefined });
+      setFocusIdx(d.savedFocus.declarations);
+    }
+  }
+
+  function navigateTo(level: DrillLevel) {
+    const d = drillRef.current;
+    if (level === "declarations") {
+      setDrill({ ...d, level: "declarations", declarationId: undefined, milestoneId: undefined });
+      setFocusIdx(d.savedFocus.declarations);
+    } else if (level === "milestones") {
+      setDrill({ ...d, level: "milestones", milestoneId: undefined });
+      setFocusIdx(d.savedFocus.milestones);
     }
   }
 
@@ -111,8 +156,7 @@ export function LifecycleView() {
     if (draftIds.length > 0) approve.mutate(draftIds);
   }
 
-  // Breadcrumb data
-  const breadcrumbs = buildBreadcrumbs(graph, drill);
+  const breadcrumbs = buildBreadcrumbs(graph, drill, navigateTo);
 
   if (isLoading) {
     return <div className="flex flex-1 items-center justify-center text-muted-foreground">Loading...</div>;
@@ -125,7 +169,7 @@ export function LifecycleView() {
       {/* Breadcrumb */}
       <div className="flex items-center gap-2 border-b px-4 py-2 text-xs">
         {breadcrumbs.map((bc, i) => (
-          <span key={bc.label} className="flex items-center gap-2">
+          <span key={i} className="flex items-center gap-2">
             {i > 0 && <span className="text-muted-foreground">&rsaquo;</span>}
             {bc.onClick ? (
               <button onClick={bc.onClick} className="text-muted-foreground hover:text-foreground transition-colors">
@@ -162,7 +206,7 @@ export function LifecycleView() {
               status={item.status}
               review={item.review as "draft" | "approved" | undefined}
               focused={i === focusIdx}
-              onClick={() => { setFocusIdx(i); drillIn(item); }}
+              onClick={() => { setFocusIdx(i); handleDrillIn(items, i, drill); }}
               onApprove={() => approve.mutate([item.id])}
               onDelete={() => deleteNode.mutate({ id: item.id, type: item.nodeType })}
             />
@@ -233,28 +277,31 @@ function getItems(graph: any, drill: DrillState): ItemShape[] {
 function buildBreadcrumbs(
   graph: any,
   drill: DrillState,
+  navigateTo: (level: DrillLevel) => void,
 ): { label: string; onClick?: () => void }[] {
   const crumbs: { label: string; onClick?: () => void }[] = [];
 
-  crumbs.push({
-    label: graph?.projectName ?? "Project",
-    onClick: drill.level !== "declarations" ? () => {} : undefined,
-  });
+  const projectName = graph?.projectName ?? "Project";
+
+  if (drill.level === "declarations") {
+    crumbs.push({ label: projectName });
+  } else {
+    crumbs.push({ label: projectName, onClick: () => navigateTo("declarations") });
+  }
 
   if (drill.level === "milestones" || drill.level === "actions") {
     const d = graph?.declarations?.find((d: any) => d.id === drill.declarationId);
-    crumbs[0].onClick = undefined; // Will be set below
-    crumbs.push({
-      label: d ? `${d.id} ${d.title}` : drill.declarationId ?? "",
-      onClick: drill.level === "actions" ? () => {} : undefined,
-    });
+    const label = d ? `${d.id} ${d.title}` : drill.declarationId ?? "";
+    if (drill.level === "milestones") {
+      crumbs.push({ label });
+    } else {
+      crumbs.push({ label, onClick: () => navigateTo("milestones") });
+    }
   }
 
   if (drill.level === "actions") {
     const m = graph?.milestones?.find((m: any) => m.id === drill.milestoneId);
-    crumbs.push({
-      label: m ? `${m.id} ${m.title}` : drill.milestoneId ?? "",
-    });
+    crumbs.push({ label: m ? `${m.id} ${m.title}` : drill.milestoneId ?? "" });
   }
 
   return crumbs;

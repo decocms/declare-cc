@@ -2,7 +2,10 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { serveStatic } from "hono/bun";
 import { graphRoutes } from "./routes/graph";
+import { agentRoutes } from "./routes/agents";
+import { onboardRoutes } from "./routes/onboard";
 import { sseRoute } from "./sse";
+import { restoreAgents } from "../agents/runner";
 
 const app = new Hono();
 
@@ -10,6 +13,15 @@ app.use("*", cors());
 
 // API routes
 app.route("/api", graphRoutes);
+app.route("/api", agentRoutes);
+app.route("/api", onboardRoutes);
+
+// Restore agent state from previous run
+const cwd = process.env.DCL_PROJECT_ROOT || process.cwd();
+const interrupted = restoreAgents(cwd);
+if (interrupted > 0) {
+  console.error(`[declare] ${interrupted} agent(s) marked interrupted from previous run`);
+}
 
 // SSE
 app.route("/", sseRoute);
