@@ -14,4 +14,4 @@ Phase 4 — Verification (M-13 → M-15): full lifecycle E2E, production build
 - MCP-first: every operation is an MCP tool, dashboard and CLI are just clients
 - Test-first: E2E harness in Phase 1, lifecycle test in Phase 4
 - Copy @deco/ui components directly from mesh, adapt as needed
-- Dark mode only (Track 2 — AI Platform palette)
+- Both light and dark mode with system auto-detection (dual-track palette from design system)

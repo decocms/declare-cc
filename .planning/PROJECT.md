@@ -30,7 +30,7 @@ Edges flow upward only. No cycles. Wholeness computes bottom-up.
 - **Runtime**: Bun
 - **Frontend**: React 19 + Vite + TanStack Router + TanStack Query
 - **UI**: @deco/ui (Radix primitives + Tailwind 4) — copy components from mesh
-- **Styling**: Tailwind CSS 4 with OKLCH design tokens (dark mode, Track 2 palette)
+- **Styling**: Tailwind CSS 4 with OKLCH design tokens (dual-track: light + dark with system auto-detect)
 - **Backend**: Hono (lightweight HTTP) + SSE for real-time
 - **AI**: Vercel AI SDK (@ai-sdk) for streaming agent output
 - **MCP**: @modelcontextprotocol/sdk — expose prompts, resources, tools

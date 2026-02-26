@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+test-results/
+playwright-report/
+.planning/server.port
+.planning/agent-state.json
+.planning/activity.jsonl
