@@ -287,6 +287,7 @@ export function LifecycleView() {
               status={item.status}
               review={item.review as "draft" | "approved" | undefined}
               isRunning={runningNodeIds.has(item.id)}
+              childCount={item.childCount}
               focused={i === focusIdx}
               onClick={() => setFocusIdx(i)}
               onDoubleClick={() => handleDrillIn(items, i, drill)}

@@ -12,6 +12,7 @@ interface NodeCardProps {
   review?: ReviewState;
   wholeness?: string;
   isRunning?: boolean;
+  childCount?: number;
   focused?: boolean;
   selected?: boolean;
   children?: ReactNode;
@@ -35,6 +36,7 @@ export function NodeCard({
   status,
   review,
   isRunning,
+  childCount,
   focused,
   onClick,
   onApprove,
@@ -87,16 +89,14 @@ export function NodeCard({
             {status}
           </span>
         )}
-        {review && review !== "draft" && (
-          <span
-            className={[
-              "text-[10px] font-medium uppercase px-1.5 py-0.5 rounded",
-              review === "approved"
-                ? "bg-success/10 text-success"
-                : "bg-destructive/10 text-destructive",
-            ].join(" ")}
-          >
-            {review}
+        {review === "approved" && (childCount === undefined || childCount > 0) && (
+          <span className="text-[10px] font-medium uppercase px-1.5 py-0.5 rounded bg-success/10 text-success">
+            approved
+          </span>
+        )}
+        {review === "approved" && childCount === 0 && (
+          <span className="text-[10px] font-medium uppercase px-1.5 py-0.5 rounded bg-warning/10 text-warning animate-pulse">
+            planning...
           </span>
         )}
       </div>
