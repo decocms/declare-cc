@@ -21,6 +21,9 @@ const TMP = resolve(PROJECT_ROOT, "test-results/lifecycle-project");
 
 test.describe.configure({ mode: "serial" });
 
+/** Pace delay for headed mode — makes the test watchable */
+const PACE = process.env.CI ? 0 : 600;
+
 test.beforeAll(() => {
   // Create a clean project directory
   if (existsSync(TMP)) rmSync(TMP, { recursive: true });
@@ -70,6 +73,7 @@ test("empty project shows onboarding screen", async ({ page }) => {
   await expect(
     page.getByPlaceholder("When this project succeeds...")
   ).toBeVisible();
+  await page.waitForTimeout(PACE);
 });
 
 // ── Step 2: Enter vision and get AI questions ──
@@ -84,6 +88,8 @@ test("vision → AI questions flow works", async ({ page }) => {
     "A CLI tool that converts markdown files to professionally styled PDFs with custom themes, fast batch processing, and first-class GitHub-Flavored Markdown support."
   );
 
+  await page.waitForTimeout(PACE);
+
   // Click Next
   await page.getByRole("button", { name: /next/i }).click();
 
@@ -96,6 +102,7 @@ test("vision → AI questions flow works", async ({ page }) => {
   await expect(
     page.getByText("What types of markdown files")
   ).toBeVisible();
+  await page.waitForTimeout(PACE);
 });
 
 // ── Step 3: Answer questions and generate declarations ──
@@ -122,6 +129,8 @@ test("questions → declarations generation works", async ({ page }) => {
     await gfmOption.click();
   }
 
+  await page.waitForTimeout(PACE);
+
   // Click Generate Declarations
   await page.getByRole("button", { name: /generate declarations/i }).click();
 
@@ -129,6 +138,7 @@ test("questions → declarations generation works", async ({ page }) => {
   // The mocked AI returns 3 declarations, which get created via POST /api/declarations
   await expect(page.getByText("D-01").first()).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText("Markdown-to-PDF").first()).toBeVisible();
+  await page.waitForTimeout(PACE);
 });
 
 // ── Step 4: Verify declarations exist in graph ──
@@ -199,6 +209,7 @@ test("dashboard shows derived milestones", async ({ page }) => {
   // Look for the milestone title text (rendered as list items, not "M-01")
   await expect(page.getByText("GFM parser").first()).toBeVisible({ timeout: 10_000 });
   await expect(page.getByText("MILESTONES").first()).toBeVisible();
+  await page.waitForTimeout(PACE);
 });
 
 // ── Step 8: Approve milestones and plan actions ──
@@ -254,6 +265,7 @@ test("dashboard shows planned actions", async ({ page }) => {
   // Verify actions are accessible via API at minimum
   const graph = await (await page.request.get("/api/graph")).json();
   expect(graph.actions.length).toBeGreaterThanOrEqual(2);
+  await page.waitForTimeout(PACE);
 });
 
 // ── Step 10: Execute an action ──
