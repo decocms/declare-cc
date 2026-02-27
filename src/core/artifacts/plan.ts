@@ -20,6 +20,9 @@ export interface Action {
 export interface PlanMeta {
   successCriteria?: string[];
   mustHaves?: string[];
+  truths?: string[];
+  artifacts?: { path: string; provides: string }[];
+  keyLinks?: { from: string; to: string; via: string }[];
 }
 
 function extractField(lines: string[], field: string): string | null {
@@ -61,6 +64,25 @@ export function parsePlanFile(content: string): { actions: Action[]; meta: PlanM
     }
     if (/^\*\*Must Haves:\*\*/i.test(line)) {
       meta.mustHaves = parseListItems(lines, i + 1);
+    }
+    if (/^\*\*Truths:\*\*/i.test(line)) {
+      meta.truths = parseListItems(lines, i + 1);
+    }
+    if (/^\*\*Artifacts:\*\*/i.test(line)) {
+      const items = parseListItems(lines, i + 1);
+      meta.artifacts = items.map(item => {
+        const match = item.match(/^`([^`]+)`\s*[-—]\s*(.+)/);
+        if (match) return { path: match[1], provides: match[2].trim() };
+        return { path: item, provides: "" };
+      });
+    }
+    if (/^\*\*Key Links:\*\*/i.test(line)) {
+      const items = parseListItems(lines, i + 1);
+      meta.keyLinks = items.map(item => {
+        const match = item.match(/from:\s*`?([^`>]+)`?\s*->\s*to:\s*`?([^`>]+)`?\s*->\s*via:\s*(.+)/i);
+        if (match) return { from: match[1].trim(), to: match[2].trim(), via: match[3].trim() };
+        return { from: item, to: "", via: "" };
+      });
     }
   }
 
@@ -119,6 +141,26 @@ export function writePlanFile(actions: Action[], milestoneId: string, milestoneT
   if (meta?.mustHaves?.length) {
     lines.push('**Must Haves:**');
     for (const m of meta.mustHaves) lines.push(`- ${m}`);
+    lines.push('');
+  }
+
+  // Structured must-haves
+  if (meta?.truths?.length || meta?.artifacts?.length || meta?.keyLinks?.length) {
+    lines.push('## Must-Haves', '');
+  }
+  if (meta?.truths?.length) {
+    lines.push('**Truths:**');
+    for (const t of meta.truths) lines.push(`- ${t}`);
+    lines.push('');
+  }
+  if (meta?.artifacts?.length) {
+    lines.push('**Artifacts:**');
+    for (const a of meta.artifacts) lines.push(`- \`${a.path}\` — ${a.provides}`);
+    lines.push('');
+  }
+  if (meta?.keyLinks?.length) {
+    lines.push('**Key Links:**');
+    for (const k of meta.keyLinks) lines.push(`- from: \`${k.from}\` -> to: \`${k.to}\` -> via: ${k.via}`);
     lines.push('');
   }
 

@@ -8,7 +8,7 @@ import {
   buildActionContext,
   loadPrompt,
 } from "../../agents/runner";
-import { generate } from "../../agents/claude";
+import { generate, generateWave } from "../../agents/claude";
 import { extractActions, extractTableRows } from "../../agents/parse";
 import { broadcastEvent } from "../sse";
 import { writePlanFile, type PlanMeta } from "../../core/artifacts/plan";
@@ -219,6 +219,27 @@ agentRoutes.post("/agents/plan-actions", async (c) => {
               .map((l) => l.replace(/^[-*]\s+/, "").trim())
               .filter(Boolean);
           }
+          // Extract structured must-haves
+          const truthsMatch = result.match(/\*\*Truths:\*\*\s*\n((?:[-*]\s+.+\n?)+)/i);
+          if (truthsMatch) {
+            planMeta.truths = truthsMatch[1].split("\n").map(l => l.replace(/^[-*]\s+/, "").trim()).filter(Boolean);
+          }
+          const artifactsMatch = result.match(/\*\*Artifacts:\*\*\s*\n((?:[-*]\s+.+\n?)+)/i);
+          if (artifactsMatch) {
+            planMeta.artifacts = artifactsMatch[1].split("\n").map(l => l.replace(/^[-*]\s+/, "").trim()).filter(Boolean)
+              .map(item => {
+                const m = item.match(/^`([^`]+)`\s*[-—]\s*(.+)/);
+                return m ? { path: m[1], provides: m[2].trim() } : { path: item, provides: "" };
+              });
+          }
+          const keyLinksMatch = result.match(/\*\*Key Links:\*\*\s*\n((?:[-*]\s+.+\n?)+)/i);
+          if (keyLinksMatch) {
+            planMeta.keyLinks = keyLinksMatch[1].split("\n").map(l => l.replace(/^[-*]\s+/, "").trim()).filter(Boolean)
+              .map(item => {
+                const m = item.match(/from:\s*`?([^`>]+)`?\s*->\s*to:\s*`?([^`>]+)`?\s*->\s*via:\s*(.+)/i);
+                return m ? { from: m[1].trim(), to: m[2].trim(), via: m[3].trim() } : { from: item, to: "", via: "" };
+              });
+          }
 
           // Write PLAN.md
           const planningDir = resolve(cwd, ".planning");
@@ -318,6 +339,25 @@ agentRoutes.post("/agents/verify", async (c) => {
               .join("\n")
           : "(no actions found)";
 
+        // Build must-haves context from plan meta
+        const planMeta = milestone?.planMeta;
+        const mustHavesContext: string[] = [];
+        if (planMeta?.truths?.length) {
+          mustHavesContext.push("**Must-Have Truths:**");
+          for (const t of planMeta.truths) mustHavesContext.push(`- ${t}`);
+          mustHavesContext.push("");
+        }
+        if (planMeta?.artifacts?.length) {
+          mustHavesContext.push("**Must-Have Artifacts:**");
+          for (const a of planMeta.artifacts) mustHavesContext.push(`- \`${a.path}\` — ${a.provides}`);
+          mustHavesContext.push("");
+        }
+        if (planMeta?.keyLinks?.length) {
+          mustHavesContext.push("**Must-Have Key Links:**");
+          for (const k of planMeta.keyLinks) mustHavesContext.push(`- from: \`${k.from}\` -> to: \`${k.to}\` -> via: ${k.via}`);
+          mustHavesContext.push("");
+        }
+
         const result = await generate({
           system: systemPrompt,
           prompt: [
@@ -330,13 +370,134 @@ agentRoutes.post("/agents/verify", async (c) => {
             `Actions for this milestone:`,
             actionSummary,
             ``,
+            ...(mustHavesContext.length ? [`## Must-Haves to Verify`, ``, ...mustHavesContext] : []),
             `Check if the milestone condition is actually true.`,
             `Use the verification report format from your system prompt.`,
+            `Use tools to read files, run commands, and verify artifacts.`,
           ].join("\n"),
           onChunk: onOutput,
+          withTools: true,
+          maxTurns: 10,
+          cwd,
         });
 
         broadcastEvent("change", { reason: "verify", nodeId: body.milestoneId });
+        return result;
+      } catch (err) {
+        throw err;
+      }
+    },
+  });
+
+  return c.json(agent, 201);
+});
+
+/** Execute actions by wave — groups actions by wave number, runs each wave concurrently */
+agentRoutes.post("/agents/execute-waves", async (c) => {
+  const body = await c.req.json<{ milestoneId: string }>();
+  const cwd = getCwd();
+  const { buildGraphFromDisk } = await import("../../core/graph");
+  const graph = buildGraphFromDisk(cwd);
+  const mId = body.milestoneId.toUpperCase();
+
+  const msActions = graph.actions.filter((a: any) => a.milestoneId === mId);
+  if (msActions.length === 0) {
+    return c.json({ error: "No actions found for milestone" }, 404);
+  }
+
+  // Group by wave (default wave 1 if not set)
+  const waves = new Map<number, typeof msActions>();
+  for (const a of msActions) {
+    const w = a.wave ?? 1;
+    if (!waves.has(w)) waves.set(w, []);
+    waves.get(w)!.push(a);
+  }
+
+  const sortedWaves = Array.from(waves.entries()).sort((a, b) => a[0] - b[0]);
+  const agents: any[] = [];
+
+  // Spawn a coordinator agent that runs waves sequentially
+  const agent = spawnAgent({
+    type: "execution",
+    prompt: `Execute waves for ${mId}`,
+    context: `Milestone: ${mId}\nWaves: ${sortedWaves.length}\nTotal actions: ${msActions.length}`,
+    cwd,
+    execute: async (onOutput) => {
+      const systemPrompt = loadPrompt("05-execution");
+
+      for (const [waveNum, waveActions] of sortedWaves) {
+        onOutput(`\n--- Wave ${waveNum} (${waveActions.length} actions) ---\n`);
+
+        const waveResults = await generateWave(
+          waveActions.map((a) => {
+            const ctx = buildActionContext(cwd, a.id);
+            return {
+              system: systemPrompt,
+              prompt: [
+                `Execute the following action:`,
+                ``,
+                ctx,
+                ``,
+                `Follow the execution rules in your system prompt.`,
+                `Produce all specified artifacts. Stay in scope.`,
+              ].join("\n"),
+              withTools: true,
+              maxTurns: 10,
+              cwd,
+            };
+          })
+        );
+
+        for (let i = 0; i < waveActions.length; i++) {
+          onOutput(`\n[${waveActions[i].id}] completed\n`);
+          broadcastEvent("change", { reason: "execute", nodeId: waveActions[i].id });
+        }
+      }
+
+      broadcastEvent("change", { reason: "execute-waves", nodeId: mId });
+      return `Executed ${msActions.length} actions across ${sortedWaves.length} waves`;
+    },
+  });
+
+  return c.json(agent, 201);
+});
+
+/** Spawn a research agent to explore the project codebase */
+agentRoutes.post("/agents/research", async (c) => {
+  const body = await c.req.json<{ projectPath?: string; focus?: string }>();
+  const cwd = body.projectPath || getCwd();
+  const systemPrompt = loadPrompt("00-research");
+  const focus = body.focus || "general codebase overview";
+
+  const agent = spawnAgent({
+    type: "research",
+    prompt: `Research: ${focus}`,
+    context: `Project: ${cwd}\nFocus: ${focus}`,
+    cwd,
+    execute: async (onOutput) => {
+      try {
+        onOutput(`Researching codebase (focus: ${focus})...\n`);
+
+        const userPrompt = [
+          `Research the codebase at: ${cwd}`,
+          ``,
+          `Focus area: ${focus}`,
+          ``,
+          `Follow the research protocol in your system prompt.`,
+          `Write your findings to ${resolve(cwd, ".planning", "RESEARCH.md")}`,
+          `Use tools to explore — read files, search patterns, check structure.`,
+        ].join("\n");
+
+        const result = await generate({
+          system: systemPrompt,
+          prompt: userPrompt,
+          onChunk: onOutput,
+          withTools: true,
+          maxTurns: 15,
+          cwd,
+        });
+
+        broadcastEvent("change", { reason: "research" });
         return result;
       } catch (err) {
         throw err;

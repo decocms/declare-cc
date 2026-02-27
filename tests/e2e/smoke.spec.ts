@@ -5,6 +5,27 @@ import { test, expect } from "@playwright/test";
  * These run against the Hono server directly (no React client needed yet).
  */
 
+test.describe("Dashboard Smoke", () => {
+  test("dashboard loads without JS errors", async ({ page }) => {
+    const errors: string[] = [];
+    page.on("pageerror", (err) => errors.push(err.message));
+
+    await page.goto("/");
+    await page.waitForLoadState("networkidle");
+
+    expect(errors).toEqual([]);
+  });
+
+  test("dashboard renders main layout", async ({ page }) => {
+    await page.goto("/");
+    await page.waitForLoadState("networkidle");
+
+    // The page should have rendered something (not blank)
+    const body = await page.locator("body").textContent();
+    expect(body?.length).toBeGreaterThan(0);
+  });
+});
+
 test.describe("API Smoke", () => {
   test("GET /api/graph returns valid graph structure", async ({ request }) => {
     const response = await request.get("/api/graph");

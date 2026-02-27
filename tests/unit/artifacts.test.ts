@@ -158,9 +158,9 @@ describe('milestones parser', () => {
 // PLAN
 // ---------------------------------------------------------------------------
 describe('plan parser', () => {
-  test('empty content returns empty array', () => {
-    expect(parsePlanFile('')).toEqual([]);
-    expect(parsePlanFile('  \n  ')).toEqual([]);
+  test('empty content returns empty result', () => {
+    expect(parsePlanFile('')).toEqual({ actions: [], meta: {} });
+    expect(parsePlanFile('  \n  ')).toEqual({ actions: [], meta: {} });
   });
 
   test('parses actions from a plan file', () => {
@@ -180,9 +180,9 @@ Login page with email/password form.
 
 Middleware for session management.
 `;
-    const result = parsePlanFile(md);
-    expect(result).toHaveLength(2);
-    expect(result[0]).toEqual({
+    const { actions } = parsePlanFile(md);
+    expect(actions).toHaveLength(2);
+    expect(actions[0]).toEqual({
       id: 'A-01',
       title: 'Create login page',
       description: 'Login page with email/password form.',
@@ -190,19 +190,19 @@ Middleware for session management.
       produces: 'src/login.tsx',
       dependsOn: [],
     });
-    expect(result[1].dependsOn).toEqual(['A-01']);
-    expect(result[1].status).toBe('PENDING');
+    expect(actions[1].dependsOn).toEqual(['A-01']);
+    expect(actions[1].status).toBe('PENDING');
   });
 
   test('missing fields get defaults', () => {
     const md = `### A-01: Bare action
 `;
-    const result = parsePlanFile(md);
-    expect(result).toHaveLength(1);
-    expect(result[0].status).toBe('PENDING');
-    expect(result[0].description).toBe('');
-    expect(result[0].produces).toBeUndefined();
-    expect(result[0].dependsOn).toEqual([]);
+    const { actions } = parsePlanFile(md);
+    expect(actions).toHaveLength(1);
+    expect(actions[0].status).toBe('PENDING');
+    expect(actions[0].description).toBe('');
+    expect(actions[0].produces).toBeUndefined();
+    expect(actions[0].dependsOn).toEqual([]);
   });
 
   test('multi-value dependsOn parses correctly', () => {
@@ -210,8 +210,8 @@ Middleware for session management.
 **Status:** PENDING
 **Depends On:** A-01, A-02
 `;
-    const result = parsePlanFile(md);
-    expect(result[0].dependsOn).toEqual(['A-01', 'A-02']);
+    const { actions } = parsePlanFile(md);
+    expect(actions[0].dependsOn).toEqual(['A-01', 'A-02']);
   });
 
   test('round-trip: parse -> write -> parse yields same data', () => {
@@ -220,7 +220,7 @@ Middleware for session management.
       { id: 'A-02', title: 'Write API', description: 'REST endpoints', status: 'PENDING', dependsOn: ['A-01'] },
     ];
     const written = writePlanFile(actions, 'M-05', 'Backend');
-    const parsed = parsePlanFile(written);
+    const { actions: parsed } = parsePlanFile(written);
     expect(parsed).toEqual(actions);
   });
 
@@ -229,8 +229,50 @@ Middleware for session management.
       { id: 'A-01', title: 'Research', description: '', status: 'PENDING', dependsOn: [] },
     ];
     const written = writePlanFile(actions, 'M-01', 'Spike');
-    const parsed = parsePlanFile(written);
+    const { actions: parsed } = parsePlanFile(written);
     expect(parsed).toEqual(actions);
     expect(parsed[0].produces).toBeUndefined();
+  });
+
+  test('parses structured must-haves', () => {
+    const md = `# Plan: M-01 -- Auth
+
+**Truths:**
+- Users can log in with email/password
+- Session persists across page refreshes
+
+**Artifacts:**
+- \`src/auth.ts\` — Authentication module
+- \`src/session.ts\` — Session management
+
+**Key Links:**
+- from: \`src/auth.ts\` -> to: \`src/api/login.ts\` -> via: authenticateUser()
+
+## Actions
+
+### A-01: Build auth module
+**Status:** PENDING
+**Files:** src/auth.ts
+**Verify:** \`bun test\`
+**Done:** Auth module handles login
+**Wave:** 1
+`;
+    const { actions, meta } = parsePlanFile(md);
+    expect(actions).toHaveLength(1);
+    expect(meta.truths).toEqual([
+      'Users can log in with email/password',
+      'Session persists across page refreshes',
+    ]);
+    expect(meta.artifacts).toEqual([
+      { path: 'src/auth.ts', provides: 'Authentication module' },
+      { path: 'src/session.ts', provides: 'Session management' },
+    ]);
+    expect(meta.keyLinks).toEqual([
+      { from: 'src/auth.ts', to: 'src/api/login.ts', via: 'authenticateUser()' },
+    ]);
+    expect(actions[0].files).toEqual(['src/auth.ts']);
+    expect(actions[0].verify).toBe('`bun test`');
+    expect(actions[0].done).toBe('Auth module handles login');
+    expect(actions[0].wave).toBe(1);
   });
 });

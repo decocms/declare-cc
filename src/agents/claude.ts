@@ -4,8 +4,8 @@
  * Uses local Claude authentication (OAuth/subscription) — no separate API key needed.
  * The SDK is ESM-only, so we use dynamic import.
  *
- * Calls are serialized via a queue because the SDK spawns subprocesses
- * that share auth state and can conflict when running concurrently.
+ * CLAUDECODE env var is cleared once at module load to allow nested SDK usage.
+ * After this fix, concurrent calls are safe — no serial queue needed.
  */
 
 let _query: any;
@@ -23,14 +23,7 @@ async function getQuery() {
   return _query;
 }
 
-/** Simple serial queue — each generate() waits for the previous one to finish. */
-let _queue: Promise<any> = Promise.resolve();
-
-/**
- * Run a Claude prompt and get the result text.
- * Calls are serialized to avoid SDK subprocess conflicts.
- */
-export function generate(opts: {
+export interface GenerateOpts {
   system?: string;
   prompt: string;
   onChunk?: (text: string) => void;
@@ -39,23 +32,26 @@ export function generate(opts: {
   withTools?: boolean;
   allowedTools?: string[];
   cwd?: string;
-}): Promise<string> {
-  const p = _queue.then(() => _generate(opts));
-  // Update queue — always resolve so next item runs even if this one fails
-  _queue = p.catch(() => {});
-  return p;
 }
 
-async function _generate(opts: {
-  system?: string;
-  prompt: string;
-  onChunk?: (text: string) => void;
-  model?: string;
-  maxTurns?: number;
-  withTools?: boolean;
-  allowedTools?: string[];
-  cwd?: string;
-}): Promise<string> {
+/**
+ * Run a single Claude prompt and get the result text.
+ * Concurrent-safe — no queue needed since CLAUDECODE is cleared at module load.
+ */
+export function generate(opts: GenerateOpts): Promise<string> {
+  return _generate(opts);
+}
+
+/**
+ * Run multiple Claude prompts concurrently (wave execution).
+ * All tasks in the wave run in parallel; returns when all complete.
+ * Results array matches input order. Throws if any task fails.
+ */
+export async function generateWave(tasks: GenerateOpts[]): Promise<string[]> {
+  return Promise.all(tasks.map((t) => _generate(t)));
+}
+
+async function _generate(opts: GenerateOpts): Promise<string> {
   const queryFn = await getQuery();
   const abortController = new AbortController();
 

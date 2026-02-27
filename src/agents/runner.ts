@@ -13,7 +13,7 @@ import { resolve, join } from "path";
 import { randomUUID } from "crypto";
 import { broadcastEvent } from "../server/sse";
 
-export type AgentType = "derivation" | "execution" | "verification" | "onboarding";
+export type AgentType = "derivation" | "execution" | "verification" | "onboarding" | "research";
 export type AgentStatus = "running" | "completed" | "failed" | "interrupted";
 
 export interface AgentRecord {
@@ -26,6 +26,7 @@ export interface AgentRecord {
   startedAt: string;
   completedAt?: string;
   error?: string;
+  wave?: number;
 }
 
 /** In-memory registry of agents */

@@ -291,7 +291,7 @@ export function createServer(): Server {
         description: "Project description file contents",
         mimeType: "text/markdown",
       },
-      ...["01-vision", "02-declarations", "03-milestones", "04-actions", "05-execution", "06-verification"].map(
+      ...["00-research", "01-vision", "02-declarations", "03-milestones", "04-actions", "05-execution", "06-verification"].map(
         (name) => ({
           uri: `declare://prompt/${name}`,
           name: `Meta-prompt: ${name}`,

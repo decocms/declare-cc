@@ -1,12 +1,16 @@
 {
   "name": "declare-cc",
-  "version": "2.0.0-alpha.0",
+  "version": "2.0.0",
   "description": "Future-driven meta-prompting engine for agentic development",
   "type": "module",
   "bin": {
     "dcl": "dist/cli.js",
     "declare": "dist/cli.js"
   },
+  "files": [
+    "dist/",
+    "src/agents/prompts/"
+  ],
   "scripts": {
     "dev": "concurrently \"bun run dev:server\" \"bun run dev:client\"",
     "dev:server": "bun run --hot src/server/index.ts",
@@ -15,7 +19,8 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "test:demo": "playwright test tests/e2e/demo.spec.ts --headed",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.59",
