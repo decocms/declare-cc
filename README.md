@@ -2,7 +2,7 @@
 
 **Future-driven development for AI agents.**
 
-Declare flips the script on project planning. Instead of task lists, you write **declarations** — falsifiable statements about what will be true when your project succeeds. AI agents then derive milestones, plan actions, execute code, and verify results — all traceable back to the future you declared.
+Declare flips the script on project planning. Instead of task lists, you write **declarations** — verifiable statements about what will be true when your project succeeds. AI agents then derive milestones, plan actions, execute code, and verify results — all traceable back to the future you declared.
 
 ```
 npx dcl
