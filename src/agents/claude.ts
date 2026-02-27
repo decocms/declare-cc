@@ -35,10 +35,45 @@ export interface GenerateOpts {
 }
 
 /**
+ * Mock AI mode: when DCL_MOCK_AI env var points to a JSON file,
+ * generate() returns fixture responses matched by system prompt name.
+ */
+let _mockResponses: Record<string, string> | null = null;
+
+function getMockResponse(system?: string): string | null {
+  if (!process.env.DCL_MOCK_AI) return null;
+  if (!_mockResponses) {
+    try {
+      const { readFileSync } = require("fs");
+      _mockResponses = JSON.parse(readFileSync(process.env.DCL_MOCK_AI, "utf-8"));
+    } catch {
+      return null;
+    }
+  }
+  if (!system || !_mockResponses) return null;
+  // Match by prompt filename pattern (e.g., "01-vision" in the system text)
+  for (const [key, value] of Object.entries(_mockResponses)) {
+    if (system.includes(key) || key === system) return value;
+  }
+  return null;
+}
+
+/**
  * Run a single Claude prompt and get the result text.
  * Concurrent-safe — no queue needed since CLAUDECODE is cleared at module load.
+ * If DCL_MOCK_AI is set, returns fixture responses instead of calling the SDK.
  */
 export function generate(opts: GenerateOpts): Promise<string> {
+  const mock = getMockResponse(opts.system);
+  if (mock !== null) {
+    // Simulate async with small delay, stream chunks
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        opts.onChunk?.(mock);
+        resolve(mock);
+      }, 100);
+    });
+  }
   return _generate(opts);
 }
 
