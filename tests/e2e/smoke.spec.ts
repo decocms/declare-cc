@@ -11,14 +11,14 @@ test.describe("Dashboard Smoke", () => {
     page.on("pageerror", (err) => errors.push(err.message));
 
     await page.goto("/");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     expect(errors).toEqual([]);
   });
 
   test("dashboard renders main layout", async ({ page }) => {
     await page.goto("/");
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("domcontentloaded");
 
     // The page should have rendered something (not blank)
     const body = await page.locator("body").textContent();

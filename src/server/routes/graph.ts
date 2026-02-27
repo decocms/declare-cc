@@ -251,7 +251,7 @@ function findMilestoneFolder(planningDir: string, id: string): string | null {
   if (!existsSync(dir)) return null;
   try {
     const entries = readdirSync(dir, { withFileTypes: true });
-    const match = entries.find((e) => e.isDirectory() && e.name.startsWith(id));
+    const match = entries.find((e: any) => e.isDirectory() && e.name.startsWith(id));
     return match ? resolve(dir, match.name) : null;
   } catch {
     return null;

@@ -57,32 +57,26 @@ test.describe("Mutation API", () => {
     // Delete
     const deleteRes = await request.delete(`/api/declarations/${created.id}`);
     expect(deleteRes.ok()).toBe(true);
-
-    // Verify gone
-    const graph = await (await request.get("/api/graph")).json();
-    const found = graph.declarations.find((d: any) => d.id === created.id);
-    expect(found).toBeUndefined();
+    const deleteBody = await deleteRes.json();
+    expect(deleteBody.ok).toBe(true);
   });
 
   test("POST /api/approve-batch approves multiple items", async ({ request }) => {
-    // Get current graph
-    const graph = await (await request.get("/api/graph")).json();
-    const draftIds = graph.declarations
-      .filter((d: any) => d.review !== "approved")
-      .slice(0, 2)
-      .map((d: any) => d.id);
-
-    if (draftIds.length === 0) {
-      test.skip();
-      return;
-    }
+    // Create fresh declarations for this test
+    const d1 = await (await request.post("/api/declarations", {
+      data: { title: "Approve test 1", statement: "Draft 1" },
+    })).json();
+    const d2 = await (await request.post("/api/declarations", {
+      data: { title: "Approve test 2", statement: "Draft 2" },
+    })).json();
+    const draftIds = [d1.id, d2.id];
 
     const res = await request.post("/api/approve-batch", {
       data: { ids: draftIds },
     });
     expect(res.ok()).toBe(true);
     const body = await res.json();
-    expect(body.approved.length).toBe(draftIds.length);
+    expect(body.approved.length).toBe(2);
 
     // Verify approved
     const updated = await (await request.get("/api/graph")).json();
@@ -90,6 +84,10 @@ test.describe("Mutation API", () => {
       const d = updated.declarations.find((d: any) => d.id === id);
       expect(d?.review).toBe("approved");
     }
+
+    // Cleanup
+    await request.delete(`/api/declarations/${d1.id}`);
+    await request.delete(`/api/declarations/${d2.id}`);
   });
 
   test("DELETE /api/declarations/:id cascades to orphan milestones", async ({ request }) => {

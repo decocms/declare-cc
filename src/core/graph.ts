@@ -90,7 +90,7 @@ export function buildGraphFromDisk(cwd: string): GraphData {
     dag.addNode(d.id, "declaration", d.title, "PENDING");
   }
   for (const m of milestones) {
-    dag.addNode(m.id, "milestone", m.title, m.status || "PENDING");
+    dag.addNode(m.id, "milestone", m.title, (m.status || "PENDING") as import("./dag").NodeStatus);
     for (const dId of m.realizes) {
       try {
         dag.addEdge(m.id, dId);
@@ -98,7 +98,7 @@ export function buildGraphFromDisk(cwd: string): GraphData {
     }
   }
   for (const a of allActions) {
-    dag.addNode(a.id, "action", a.title, a.status || "PENDING");
+    dag.addNode(a.id, "action", a.title, (a.status || "PENDING") as import("./dag").NodeStatus);
     try {
       dag.addEdge(a.id, a.milestoneId);
     } catch {}
@@ -129,7 +129,7 @@ export function buildGraphFromDisk(cwd: string): GraphData {
     },
     projectName,
     validation: {
-      errors: validation.errors.map((e) => `${e.nodeId}: ${e.message}`),
+      errors: validation.errors.map((e) => `${e.node ?? "unknown"}: ${e.message}`),
     },
   };
 }

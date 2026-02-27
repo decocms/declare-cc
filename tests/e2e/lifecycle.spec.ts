@@ -235,11 +235,17 @@ test.describe("Declaration Lifecycle", () => {
   });
 
   test("SSE: event stream connects", async ({ page }) => {
-    // Test that SSE endpoint is accessible
-    const response = await page.request.get("/events", {
-      headers: { Accept: "text/event-stream" },
+    await page.goto("/");
+    // Verify SSE endpoint responds by checking from the browser context
+    const connected = await page.evaluate(async () => {
+      const baseUrl = window.location.origin;
+      return new Promise<boolean>((resolve) => {
+        const es = new EventSource(`${baseUrl}/events`);
+        es.onopen = () => { es.close(); resolve(true); };
+        es.onerror = () => { es.close(); resolve(false); };
+        setTimeout(() => { es.close(); resolve(false); }, 5000);
+      });
     });
-    // SSE endpoints return 200 with text/event-stream content type
-    expect(response.status()).toBe(200);
+    expect(connected).toBe(true);
   });
 });
