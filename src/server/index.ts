@@ -6,6 +6,7 @@ import { agentRoutes } from "./routes/agents";
 import { onboardRoutes } from "./routes/onboard";
 import { sseRoute } from "./sse";
 import { restoreAgents } from "../agents/runner";
+import { watchPlanningDir, stopWatcher } from "./watcher";
 
 const app = new Hono();
 
@@ -22,6 +23,12 @@ const interrupted = restoreAgents(cwd);
 if (interrupted > 0) {
   console.error(`[declare] ${interrupted} agent(s) marked interrupted from previous run`);
 }
+
+// File watcher for external changes
+watchPlanningDir(cwd);
+process.on("exit", stopWatcher);
+process.on("SIGINT", () => { stopWatcher(); process.exit(0); });
+process.on("SIGTERM", () => { stopWatcher(); process.exit(0); });
 
 // SSE
 app.route("/", sseRoute);

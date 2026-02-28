@@ -81,7 +81,7 @@ export function LifecycleView() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editFeedback, setEditFeedback] = useState("");
 
-  /** Approve → then auto-plan next level. If already approved, just retry the agent. */
+  /** Approve → then auto-plan next level. Skip if children already exist. */
   function approveAndPlan(ids: string[]) {
     // Split into already-approved (retry) vs new approvals
     const alreadyApproved = ids.filter((id) => {
@@ -94,14 +94,26 @@ export function LifecycleView() {
       for (const id of spawnIds) {
         const prefix = id.split("-")[0];
         if (prefix === "D") {
-          spawnAgent.mutate({ endpoint: "derive", body: { declarationId: id } });
+          // Only derive if this declaration has no milestones yet
+          const hasMilestones = (graph?.milestones ?? []).some(
+            (m: any) => m.realizes?.includes(id),
+          );
+          if (!hasMilestones) {
+            spawnAgent.mutate({ endpoint: "derive", body: { declarationId: id } });
+          }
         } else if (prefix === "M") {
-          spawnAgent.mutate({ endpoint: "plan-actions", body: { milestoneId: id } });
+          // Only plan if this milestone has no actions yet
+          const hasActions = (graph?.actions ?? []).some(
+            (a: any) => a.milestoneId === id,
+          );
+          if (!hasActions) {
+            spawnAgent.mutate({ endpoint: "plan-actions", body: { milestoneId: id } });
+          }
         }
       }
     }
 
-    // Retry already-approved items immediately
+    // Retry already-approved items — only spawn if children don't exist
     if (alreadyApproved.length > 0) {
       spawnAgents(alreadyApproved);
     }

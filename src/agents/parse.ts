@@ -1,9 +1,32 @@
 /**
  * Helpers to extract structured data from Claude responses.
- * Handles markdown code fences, tables, and action sections.
+ * Handles markdown code fences, tables, action sections, and verification reports.
  */
 
 import type { Action } from "../core/artifacts/plan";
+
+export interface VerificationArtifact {
+  path: string;
+  exists: string;
+  substantive: string;
+  wired: string;
+  notes: string;
+}
+
+export interface VerificationGap {
+  description: string;
+  impact: string;
+  fix: string;
+}
+
+export interface VerificationReport {
+  verdict: "VERIFIED" | "GAPS_FOUND";
+  milestoneId: string;
+  condition: string;
+  artifacts: VerificationArtifact[];
+  gaps: VerificationGap[];
+  evidence: string[];
+}
 
 /**
  * Extract JSON from a Claude response. Handles ```json fences.
@@ -111,4 +134,70 @@ export function extractActions(text: string): Action[] {
       } satisfies Action;
     })
     .filter((a): a is Action => a !== null);
+}
+
+/**
+ * Parse a verification report from Claude's markdown output.
+ */
+export function parseVerificationReport(text: string): VerificationReport | null {
+  // Extract verdict
+  const verdictMatch = text.match(/\*\*Verdict\*\*:\s*(VERIFIED|GAPS_FOUND)/);
+  if (!verdictMatch) return null;
+
+  const verdict = verdictMatch[1] as "VERIFIED" | "GAPS_FOUND";
+
+  // Extract milestone ID from ## M-XX: heading
+  const milestoneMatch = text.match(/^##\s+(M-\d+)/m);
+  const milestoneId = milestoneMatch ? milestoneMatch[1] : "";
+
+  // Extract condition
+  const conditionMatch = text.match(/\*\*Condition\*\*:\s*(.+)/);
+  const condition = conditionMatch ? conditionMatch[1].trim() : "";
+
+  // Extract artifacts table
+  const artifactsSection = text.match(/### Artifacts\n([\s\S]*?)(?=\n###|$)/);
+  const artifacts: VerificationArtifact[] = [];
+  if (artifactsSection) {
+    const rows = extractTableRows(artifactsSection[1]);
+    for (const row of rows) {
+      artifacts.push({
+        path: row["Path"] || "",
+        exists: row["Exists"] || "",
+        substantive: row["Substantive"] || "",
+        wired: row["Wired"] || "",
+        notes: row["Notes"] || "",
+      });
+    }
+  }
+
+  // Extract gaps
+  const gaps: VerificationGap[] = [];
+  const gapsSection = text.match(/### Gaps Found[\s\S]*?(?=\n##[^#]|$)/i);
+  if (gapsSection) {
+    const gapBlocks = gapsSection[0].split(/^- \*\*Gap\*\*:\s*/m).slice(1);
+    for (const block of gapBlocks) {
+      const lines = block.trim().split("\n");
+      const description = lines[0]?.trim() || "";
+      const impactMatch = block.match(/\*\*Impact\*\*:\s*(.+)/);
+      const fixMatch = block.match(/\*\*Fix\*\*:\s*(.+)/);
+      gaps.push({
+        description,
+        impact: impactMatch ? impactMatch[1].trim() : "",
+        fix: fixMatch ? fixMatch[1].trim() : "",
+      });
+    }
+  }
+
+  // Extract evidence
+  const evidence: string[] = [];
+  const evidenceSection = text.match(/### Evidence Checked\n([\s\S]*?)(?=\n###|$)/);
+  if (evidenceSection) {
+    const lines = evidenceSection[1].trim().split("\n");
+    for (const line of lines) {
+      const m = line.match(/^\d+\.\s+(.+)/);
+      if (m) evidence.push(m[1].trim());
+    }
+  }
+
+  return { verdict, milestoneId, condition, artifacts, gaps, evidence };
 }

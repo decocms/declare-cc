@@ -1,5 +1,6 @@
-import { memo } from "react";
-import { useSpawnAgent } from "../hooks/use-agents";
+import { memo, useMemo } from "react";
+import { useSpawnAgent, useAgents } from "../hooks/use-agents";
+import { parseVerificationReport } from "../../agents/parse";
 
 interface ActionItem {
   id: string;
@@ -49,6 +50,18 @@ interface DetailPanelProps {
 
 export const DetailPanel = memo(function DetailPanel({ item, isRunning, onDrillToMilestone }: DetailPanelProps) {
   const spawnAgent = useSpawnAgent();
+  const { data: agents = [] } = useAgents();
+
+  // Find latest verification verdict for milestones
+  const verificationVerdict = useMemo(() => {
+    if (!item || item.nodeType !== "milestone") return null;
+    const verifyAgents = agents
+      .filter((a) => a.type === "verification" && a.status === "completed" && a.prompt.includes(item.id))
+      .sort((a, b) => (b.completedAt ?? "").localeCompare(a.completedAt ?? ""));
+    if (verifyAgents.length === 0) return null;
+    const report = parseVerificationReport(verifyAgents[0].output);
+    return report?.verdict ?? null;
+  }, [item, agents]);
 
   if (!item) {
     return (
@@ -82,7 +95,20 @@ export const DetailPanel = memo(function DetailPanel({ item, isRunning, onDrillT
             {typeLabel}
           </p>
           <p className="text-xs font-mono text-muted-foreground mt-0.5">{item.id}</p>
-          <h3 className="text-sm font-semibold mt-1">{item.title}</h3>
+          <div className="flex items-center gap-2 mt-1">
+            <h3 className="text-sm font-semibold">{item.title}</h3>
+            {verificationVerdict && (
+              <span
+                className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
+                  verificationVerdict === "VERIFIED"
+                    ? "bg-success/10 text-success"
+                    : "bg-destructive/10 text-destructive"
+                }`}
+              >
+                {verificationVerdict === "VERIFIED" ? "✓ Verified" : "✗ Gaps"}
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Statement (declarations) */}
@@ -219,56 +245,64 @@ export const DetailPanel = memo(function DetailPanel({ item, isRunning, onDrillT
           </div>
         )}
 
-        {/* Inline Action Plan (milestones only) */}
-        {item.nodeType === "milestone" && (
-          <div className="border-t pt-3">
-            <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mb-2">
-              Action Plan
-            </p>
-            {(item.actions?.length ?? 0) > 0 ? (
-              waveGroups ? (
-                <div className="space-y-3">
-                  {waveGroups.map(({ wave, actions }) => (
-                    <div key={wave}>
-                      <div className="flex items-center gap-2 mb-1.5">
-                        <span className="flex-1 border-t border-dashed border-muted-foreground/30" />
-                        <span className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">
-                          Wave {wave}
-                        </span>
-                        <span className="flex-1 border-t border-dashed border-muted-foreground/30" />
-                      </div>
-                      <ol className="space-y-1">
-                        {actions.map((a, i) => renderActionItem(a, i))}
-                      </ol>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <ol className="space-y-1">
-                  {item.actions!.map((a, i) => renderActionItem(a, i))}
-                </ol>
-              )
-            ) : isRunning ? (
-              <p className="text-xs text-muted-foreground italic">Planning...</p>
-            ) : item.review === "approved" ? (
-              <button
-                onClick={() => spawnAgent.mutate({ endpoint: "plan-actions", body: { milestoneId: item.id } })}
-                disabled={spawnAgent.isPending}
-                className="w-full h-8 text-xs font-medium rounded-md bg-node-mile-bg text-node-mile border border-node-mile/20 hover:brightness-90 transition-colors disabled:opacity-50"
-              >
-                Plan Actions
-              </button>
-            ) : (
-              <p className="text-xs text-muted-foreground italic">
-                Action plan generates on approve
+        {/* Inline Action Plan (milestones only — skip for DONE milestones without plans) */}
+        {item.nodeType === "milestone" && (() => {
+          const isDone = item.status === "DONE" || item.status === "KEPT" || item.status === "HONORED";
+          const hasActions = (item.actions?.length ?? 0) > 0;
+
+          // DONE milestones with no actions were completed outside the pipeline — nothing to show
+          if (isDone && !hasActions) return null;
+
+          return (
+            <div className="border-t pt-3">
+              <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mb-2">
+                Action Plan
               </p>
-            )}
-          </div>
-        )}
+              {hasActions ? (
+                waveGroups ? (
+                  <div className="space-y-3">
+                    {waveGroups.map(({ wave, actions }) => (
+                      <div key={wave}>
+                        <div className="flex items-center gap-2 mb-1.5">
+                          <span className="flex-1 border-t border-dashed border-muted-foreground/30" />
+                          <span className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">
+                            Wave {wave}
+                          </span>
+                          <span className="flex-1 border-t border-dashed border-muted-foreground/30" />
+                        </div>
+                        <ol className="space-y-1">
+                          {actions.map((a, i) => renderActionItem(a, i))}
+                        </ol>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <ol className="space-y-1">
+                    {item.actions!.map((a, i) => renderActionItem(a, i))}
+                  </ol>
+                )
+              ) : isRunning ? (
+                <p className="text-xs text-muted-foreground italic">Planning...</p>
+              ) : item.review === "approved" ? (
+                <button
+                  onClick={() => spawnAgent.mutate({ endpoint: "plan-actions", body: { milestoneId: item.id } })}
+                  disabled={spawnAgent.isPending}
+                  className="w-full h-8 text-xs font-medium rounded-md bg-node-mile-bg text-node-mile border border-node-mile/20 hover:brightness-90 transition-colors disabled:opacity-50"
+                >
+                  Plan Actions
+                </button>
+              ) : (
+                <p className="text-xs text-muted-foreground italic">
+                  Action plan generates on approve
+                </p>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Agent actions */}
         <div className="border-t pt-3 space-y-2">
-          {isRunning && (
+          {isRunning && item.status !== "DONE" && item.status !== "KEPT" && item.status !== "HONORED" && (
             <div className="flex items-center gap-2 text-xs text-warning animate-pulse">
               <span className="h-2 w-2 rounded-full bg-warning" />
               Agent running...

@@ -1,4 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { useToast } from "../components/toast";
 
 const AGENTS_KEY = ["agents"] as const;
 
@@ -29,6 +30,7 @@ export function useAgents() {
 }
 
 export function useSpawnAgent() {
+  const toast = useToast();
   return useMutation({
     mutationFn: (opts: { endpoint: string; body: Record<string, unknown> }) =>
       fetch(`/api/agents/${opts.endpoint}`, {
@@ -37,5 +39,6 @@ export function useSpawnAgent() {
         body: JSON.stringify(opts.body),
       }).then((r) => r.json()),
     // Don't invalidate here — SSE "agent-start" event will trigger refetch
+    onError: (err: Error) => toast.show(err.message, "error"),
   });
 }

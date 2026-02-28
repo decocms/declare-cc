@@ -1,6 +1,8 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useAgents, type Agent } from "../hooks/use-agents";
 import { useGraph } from "../hooks/use-graph";
+import { parseVerificationReport } from "../../agents/parse";
+import { VerificationReport } from "./verification-report";
 
 export function AgentPanel() {
   const { data: agents = [] } = useAgents();
@@ -128,17 +130,10 @@ function AgentItem({
 
           {/* Output */}
           {agent.output && (
-            <div>
-              <p className="text-[10px] font-medium uppercase text-muted-foreground mb-1">
-                Output
-              </p>
-              <pre className="text-[11px] p-2 rounded bg-muted text-foreground max-h-40 overflow-y-auto whitespace-pre-wrap font-mono">
-                {agent.output}
-              </pre>
-            </div>
+            <AgentOutput agent={agent} />
           )}
 
-          {/* Error */}
+          {/* Error (inline — kept inside AgentItem) */}
           {agent.error && (
             <div>
               <p className="text-[10px] font-medium uppercase text-destructive mb-1">
@@ -151,6 +146,38 @@ function AgentItem({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function AgentOutput({ agent }: { agent: Agent }) {
+  const report = useMemo(
+    () =>
+      agent.type === "verification" && agent.status === "completed"
+        ? parseVerificationReport(agent.output)
+        : null,
+    [agent.type, agent.status, agent.output],
+  );
+
+  if (report) {
+    return (
+      <div>
+        <p className="text-[10px] font-medium uppercase text-muted-foreground mb-1">
+          Verification Report
+        </p>
+        <VerificationReport report={report} />
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <p className="text-[10px] font-medium uppercase text-muted-foreground mb-1">
+        Output
+      </p>
+      <pre className="text-[11px] p-2 rounded bg-muted text-foreground max-h-40 overflow-y-auto whitespace-pre-wrap font-mono">
+        {agent.output}
+      </pre>
     </div>
   );
 }

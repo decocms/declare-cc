@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useToast } from "../components/toast";
 
 const GRAPH_KEY = ["graph"] as const;
 const AGENTS_KEY = ["agents"] as const;
@@ -18,6 +19,7 @@ export function useGraph() {
 }
 
 export function useApprove() {
+  const toast = useToast();
   return useMutation({
     mutationFn: (ids: string[]) =>
       fetch("/api/approve-batch", {
@@ -25,19 +27,23 @@ export function useApprove() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ids }),
       }).then((r) => r.json()),
+    onError: (err: Error) => toast.show(err.message, "error"),
   });
 }
 
 export function useDeleteNode() {
+  const toast = useToast();
   return useMutation({
     mutationFn: ({ id, type }: { id: string; type: string }) => {
       const prefix = type === "declaration" ? "declarations" : type === "milestone" ? "milestones" : "actions";
       return fetch(`/api/${prefix}/${id}`, { method: "DELETE" }).then((r) => r.json());
     },
+    onError: (err: Error) => toast.show(err.message, "error"),
   });
 }
 
 export function useUpdateNode() {
+  const toast = useToast();
   return useMutation({
     mutationFn: ({ id, type, data }: { id: string; type: string; data: Record<string, unknown> }) => {
       const prefix = type === "declaration" ? "declarations" : type === "milestone" ? "milestones" : "actions";
@@ -47,6 +53,7 @@ export function useUpdateNode() {
         body: JSON.stringify(data),
       }).then((r) => r.json());
     },
+    onError: (err: Error) => toast.show(err.message, "error"),
   });
 }
 

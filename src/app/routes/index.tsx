@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { ErrorBoundary } from "../components/error-boundary";
 import { LifecycleView } from "../components/lifecycle-view";
 
 export const Route = createFileRoute("/")({
@@ -6,5 +7,9 @@ export const Route = createFileRoute("/")({
 });
 
 function DashboardPage() {
-  return <LifecycleView />;
+  return (
+    <ErrorBoundary>
+      <LifecycleView />
+    </ErrorBoundary>
+  );
 }

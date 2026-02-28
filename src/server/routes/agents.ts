@@ -113,10 +113,15 @@ agentRoutes.post("/agents/derive", async (c) => {
               dependsOn: [] as string[],
             }));
 
-          // Merge: skip IDs that already exist
-          const existingIds = new Set(existing.map((m) => m.id));
-          const toAdd = newMilestones.filter((m) => !existingIds.has(m.id));
-          const merged = [...existing, ...toAdd];
+          // Replace milestones for this declaration, keep others
+          const targetDeclId = body.declarationId.toUpperCase();
+          const kept = existing.filter(
+            (m) => !m.realizes.includes(targetDeclId) || m.status === "DONE" || m.status === "KEPT" || m.status === "HONORED",
+          );
+          // Also skip new milestones whose IDs already exist in kept set
+          const keptIds = new Set(kept.map((m) => m.id));
+          const toAdd = newMilestones.filter((m) => !keptIds.has(m.id));
+          const merged = [...kept, ...toAdd];
 
           if (!existsSync(planningDir)) mkdirSync(planningDir, { recursive: true });
           writeFileSync(msFilePath, writeMilestonesFile(merged, projectName), "utf-8");
