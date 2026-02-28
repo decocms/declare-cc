@@ -7,3 +7,5 @@ playwright-report/
 .planning/server.port
 .planning/agent-state.json
 .planning/activity.jsonl
+.planning-backup-cycle1/
+test-results/
