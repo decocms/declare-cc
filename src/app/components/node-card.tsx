@@ -94,7 +94,7 @@ export const NodeCard = memo(function NodeCard({
             approved
           </span>
         )}
-        {review === "approved" && childCount === 0 && (
+        {review === "approved" && childCount === 0 && status !== "DONE" && status !== "KEPT" && status !== "HONORED" && (
           <span className="text-[10px] font-medium uppercase px-1.5 py-0.5 rounded bg-warning/10 text-warning animate-pulse">
             planning...
           </span>
@@ -111,7 +111,7 @@ export const NodeCard = memo(function NodeCard({
             <kbd className="mr-1 opacity-60">A</kbd>Approve
           </button>
         )}
-        {onApprove && review === "approved" && childCount === 0 && !isRunning && (
+        {onApprove && review === "approved" && childCount === 0 && !isRunning && status !== "DONE" && status !== "KEPT" && status !== "HONORED" && (
           <button
             onClick={(e) => { e.stopPropagation(); onApprove(); }}
             className="h-7 px-3 text-xs font-medium rounded-md border border-warning/40 bg-warning/5 text-warning hover:bg-warning/10 transition-colors"
